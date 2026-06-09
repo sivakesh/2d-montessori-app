@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "679712248653",
+    "project_id": "montessori-app-95988",
+    "storage_bucket": "montessori-app-95988.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:679712248653:android:e1b1474c59898b6e57dd04",
+        "android_client_info": {
+          "package_name": "com.example.montessori_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC-ld2Gsw--k5avLWd33c9tdNEZ76di1C0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:679712248653:android:a156024737459dff57dd04",
+        "android_client_info": {
+          "package_name": "com.twod.montessori"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC-ld2Gsw--k5avLWd33c9tdNEZ76di1C0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

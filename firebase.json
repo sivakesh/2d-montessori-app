@@ -1,0 +1,36 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "montessori-app-95988",
+          "appId": "1:679712248653:android:e1b1474c59898b6e57dd04",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "montessori-app-95988",
+          "configurations": {
+            "android": "1:679712248653:android:e1b1474c59898b6e57dd04",
+            "web": "1:679712248653:web:83691e33d448b7f057dd04"
+          }
+        }
+      }
+    }
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}
