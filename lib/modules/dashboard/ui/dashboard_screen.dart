@@ -111,7 +111,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             IconButton(
               icon: const Icon(Icons.logout),
               onPressed: () async {
-                await ref.read(authServiceProvider).signOut();
+                await ref.read(authServiceProvider).logout(ref, context);
+                if (context.mounted) {
+                  Navigator.of(context).pushNamedAndRemoveUntil(
+                    '/login',
+                    (route) => false,
+                  );
+                }
               },
             ),
           ],
@@ -147,7 +153,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       IconButton(
                         icon: const Icon(Icons.logout),
                         onPressed: () async {
-                          await ref.read(authServiceProvider).signOut();
+                          await ref.read(authServiceProvider).logout(ref, context);
+                          if (context.mounted) {
+                            Navigator.of(context).pushNamedAndRemoveUntil(
+                              '/login',
+                              (route) => false,
+                            );
+                          }
                         },
                       ),
                     ],
