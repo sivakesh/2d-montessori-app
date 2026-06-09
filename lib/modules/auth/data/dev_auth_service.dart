@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:montessori_app/core/services/auth_interface.dart';
@@ -37,6 +38,7 @@ class DevAuthService implements AuthService {
 
   @override
   Future<void> logout(WidgetRef ref, BuildContext context) async {
+    await FirebaseAuth.instance.signOut();
     ref.read(currentUserProvider.notifier).state = null;
     ref.invalidate(currentUserProvider);
   }

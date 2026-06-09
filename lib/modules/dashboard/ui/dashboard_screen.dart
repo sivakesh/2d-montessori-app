@@ -4,7 +4,11 @@ import '../../../core/layout/bottom_nav.dart';
 import '../../../core/layout/responsive_layout.dart';
 import '../../../core/layout/sidebar.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../attendance/providers/attendance_provider.dart';
+import '../../attendance/ui/attendance_screen.dart';
+import '../../classes/ui/class_list_screen.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../students/ui/student_list_screen.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
@@ -27,7 +31,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       );
     }
 
-    Widget content = Center(
+    final hasMarkedTodayAsync = ref.watch(hasMarkedTodayProvider(user.id));
+
+    Widget dashboardContent = Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 600),
         child: Padding(
@@ -53,6 +59,29 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                     ),
               ),
               const SizedBox(height: 24),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  ActionChip(
+                    label: const Text('Manage Classes'),
+                    onPressed: () => setState(() => selectedIndex = 1),
+                  ),
+                  ActionChip(
+                    label: const Text('Manage Students'),
+                    onPressed: () => setState(() => selectedIndex = 2),
+                  ),
+                  ActionChip(
+                    label: const Text('Mark Student Attendance'),
+                    onPressed: () => setState(() => selectedIndex = 3),
+                  ),
+                  ActionChip(
+                    label: const Text('Mark Staff Attendance'),
+                    onPressed: () => setState(() => selectedIndex = 4),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
               if (user.role == 'staff') ...[
                 SizedBox(
                   width: double.infinity,
@@ -72,12 +101,103 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                             style: TextStyle(fontWeight: FontWeight.w600),
                           ),
                           const SizedBox(height: AppSpacing.md),
-                          SizedBox(
-                            height: isMobile ? 48 : 52,
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              onPressed: () {},
-                              child: const Text('Mark Attendance'),
+                          hasMarkedTodayAsync.when(
+                            data: (hasMarkedToday) {
+                              if (hasMarkedToday) {
+                                return SizedBox(
+                                  width: double.infinity,
+                                  height: isMobile ? 48 : 52,
+                                  child: ElevatedButton(
+                                    onPressed: null,
+                                    child: const Text('Attendance marked today'),
+                                  ),
+                                );
+                              }
+
+                              return SizedBox(
+                                height: isMobile ? 48 : 52,
+                                width: double.infinity,
+                                child: ElevatedButton(
+                                  onPressed: () async {
+                                    final attendanceService =
+                                        ref.read(attendanceServiceProvider);
+                                    try {
+                                      await attendanceService.markAttendance(
+                                        userId: user.id,
+                                        name: user.name ?? user.phone,
+                                        role: user.role,
+                                      );
+                                      ref.invalidate(
+                                        hasMarkedTodayProvider(user.id),
+                                      );
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('Attendance marked successfully.'),
+                                          ),
+                                        );
+                                      }
+                                    } on StateError catch (error) {
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(content: Text(error.message)),
+                                        );
+                                      }
+                                    } catch (error) {
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'Failed to mark attendance: $error',
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                    }
+                                  },
+                                  child: const Text('Mark Attendance'),
+                                ),
+                              );
+                            },
+                            loading: () => const SizedBox(
+                              height: 52,
+                              child: Center(child: CircularProgressIndicator()),
+                            ),
+                        error: (_, _) => SizedBox(
+                              height: isMobile ? 48 : 52,
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: () async {
+                                  final attendanceService =
+                                      ref.read(attendanceServiceProvider);
+                                  try {
+                                    await attendanceService.markAttendance(
+                                      userId: user.id,
+                                      name: user.name ?? user.phone,
+                                      role: user.role,
+                                    );
+                                    ref.invalidate(hasMarkedTodayProvider(user.id));
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Attendance marked successfully.'),
+                                        ),
+                                      );
+                                    }
+                                  } catch (error) {
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'Failed to mark attendance: $error',
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  }
+                                },
+                                child: const Text('Mark Attendance'),
+                              ),
                             ),
                           ),
                         ],
@@ -122,7 +242,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             ),
           ],
         ),
-        body: SafeArea(child: content),
+        body: SafeArea(
+          child: switch (selectedIndex) {
+            0 => dashboardContent,
+            1 => const ClassListScreen(),
+            2 => const StudentListScreen(),
+            3 => const AttendanceScreen(),
+            4 => const AttendanceScreen(),
+            _ => dashboardContent,
+          },
+        ),
         bottomNavigationBar: AppBottomNav(
           selectedIndex: selectedIndex,
           onItemTapped: (index) {
@@ -164,7 +293,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       ),
                     ],
                   ),
-                  Expanded(child: content),
+                  Expanded(
+                    child: switch (selectedIndex) {
+                      0 => dashboardContent,
+                      1 => const ClassListScreen(),
+                      2 => const StudentListScreen(),
+                      3 => const AttendanceScreen(),
+                      4 => const AttendanceScreen(),
+                      _ => dashboardContent,
+                    },
+                  ),
                 ],
               ),
             ),

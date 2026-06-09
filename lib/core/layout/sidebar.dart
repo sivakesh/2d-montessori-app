@@ -52,9 +52,24 @@ class AppSidebar extends StatelessWidget {
                   label: Text('Dashboard'),
                 ),
                 NavigationRailDestination(
+                  icon: Icon(Icons.class_outlined),
+                  selectedIcon: Icon(Icons.class_),
+                  label: Text('Classes'),
+                ),
+                NavigationRailDestination(
+                  icon: Icon(Icons.people_outline),
+                  selectedIcon: Icon(Icons.people),
+                  label: Text('Students'),
+                ),
+                NavigationRailDestination(
                   icon: Icon(Icons.check_circle_outline),
                   selectedIcon: Icon(Icons.check_circle),
                   label: Text('Attendance'),
+                ),
+                NavigationRailDestination(
+                  icon: Icon(Icons.badge_outlined),
+                  selectedIcon: Icon(Icons.badge),
+                  label: Text('Staff'),
                 ),
               ],
             ),
