@@ -1,4 +1,4 @@
-<img src="https://montessori-app-95988.web.app/assets/logo.png" width="120"/>
+<img src="./assets/logo.png" width="120"/>
 
 # 🌱 2D Montessori App
 
