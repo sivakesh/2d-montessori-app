@@ -1,3 +1,5 @@
+<img src="https://montessori-app-95988.web.app/assets/logo.png" width="120"/>
+
 # 🌱 2D Montessori App
 
 A modern, scalable Montessori school management web app built using **Flutter + Firebase**, designed with clean architecture, dual authentication flows, and a premium user experience.
