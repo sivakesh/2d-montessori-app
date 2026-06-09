@@ -10,21 +10,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Checkout code
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: 🛠 Setup Flutter
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "stable"
+          flutter-version: '3.22.2'
+          channel: 'stable'
 
-      - name: 📦 Install dependencies
+      - name: Install dependencies
         run: flutter pub get
 
-      - name: 🌐 Build Flutter Web (PROD)
+      - name: Build Flutter Web (PROD)
         run: flutter build web --release
 
-      - name: 🔥 Deploy to Firebase
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Deploy to Firebase
         run: firebase deploy --only hosting --token "$FIREBASE_TOKEN"
-        env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
