@@ -7,11 +7,9 @@ import 'package:montessori_app/modules/auth/models/app_user.dart';
 import 'package:montessori_app/modules/auth/providers/auth_provider.dart';
 
 class ProdAuthService implements AuthService {
-  ProdAuthService({
-    FirebaseAuth? firebaseAuth,
-    UserService? userService,
-  })  : _firebaseAuth = firebaseAuth,
-        _userService = userService ?? UserService();
+  ProdAuthService({FirebaseAuth? firebaseAuth, UserService? userService})
+    : _firebaseAuth = firebaseAuth,
+      _userService = userService ?? UserService();
 
   final FirebaseAuth? _firebaseAuth;
   final UserService _userService;
@@ -70,14 +68,16 @@ class ProdAuthService implements AuthService {
     return AppUser(
       id: firebaseUid,
       phone: phone,
-      role: 'staff',
+      role: 'parent',
       isActive: true,
     );
   }
 
   @override
   Future<AppUser?> signIn() async {
-    throw UnimplementedError('Use startPhoneVerification and verifyOtp in ProdAuthService.');
+    throw UnimplementedError(
+      'Use startPhoneVerification and verifyOtp in ProdAuthService.',
+    );
   }
 
   @override

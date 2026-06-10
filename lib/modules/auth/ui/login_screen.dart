@@ -16,8 +16,9 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
-  final TextEditingController _countryCodeController =
-      TextEditingController(text: '+91');
+  final TextEditingController _countryCodeController = TextEditingController(
+    text: '+91',
+  );
   final TextEditingController _phoneController = TextEditingController();
   bool _isLoading = false;
   String? _message;
@@ -46,7 +47,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         id: phone,
         phone: userData['phone'] ?? phone,
         name: userData['name'],
-        role: userData['role'] ?? 'staff',
+        role: userData['role'] ?? 'parent',
         isActive: userData['isActive'] ?? true,
       );
 
@@ -76,10 +77,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         Navigator.pushNamed(
           context,
           '/otp',
-          arguments: {
-            'verificationId': verificationId,
-            'phone': rawPhone,
-          },
+          arguments: {'verificationId': verificationId, 'phone': rawPhone},
         );
       },
       codeAutoRetrievalTimeout: (_) {},
@@ -150,22 +148,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const AppLogo(size: 120, padding: EdgeInsets.only(bottom: 24)),
+                  const AppLogo(
+                    size: 120,
+                    padding: EdgeInsets.only(bottom: 24),
+                  ),
                   Text(
                     'Welcome back',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary,
-                        ),
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Enter your phone number to continue',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: AppColors.textSecondary,
-                        ),
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                   const SizedBox(height: 32),
                   Row(
@@ -205,8 +206,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       _message!,
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: AppColors.textSecondary,
-                          ),
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                   ],
                 ],

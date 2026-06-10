@@ -56,7 +56,6 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     try {
       final service = ref.read(attendanceServiceProvider);
       final studentService = ref.read(studentServiceProvider);
-      final userService = UserService();
       final attendanceMap = await service.getTodayAttendanceMap();
       final records = await service.filterByClasses(
         classIds: _selectedClassIds.toList(),
@@ -66,23 +65,23 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
           : await Future.wait(
               _selectedClassIds.map(studentService.getStudentsByClass),
             ).then((lists) => lists.expand((x) => x).toList());
-      final staff = await userService.getStaffUsers();
+      final overview = await service.getAttendanceOverview(
+        classIds: _selectedClassIds.toList(),
+      );
       if (!mounted) return;
       setState(() {
         _todayRecords = records;
         _attendanceMap = attendanceMap;
-        _overviewStudentCount = students.length;
-        _overviewStaffCount = staff.length;
-        _overviewPresentCount = records
-            .where(
-              (record) =>
-                  (record['status']?.toString() ?? '').toLowerCase() ==
-                  'present',
-            )
-            .length;
-        _overviewTotalCount = students.length + staff.length;
-        _overviewAbsentCount = _overviewTotalCount - _overviewPresentCount;
+        _overviewStudentCount = overview.studentCount;
+        _overviewStaffCount = overview.staffCount;
+        _overviewPresentCount = overview.presentCount;
+        _overviewTotalCount = overview.totalCount;
+        _overviewAbsentCount = overview.absentCount;
       });
+      // ignore: avoid_print
+      print("Students count: ${students.length}");
+      // ignore: avoid_print
+      print("Staff count: ${overview.staffCount}");
       // ignore: avoid_print
       print('Attendance count: ${records.length}');
     } catch (e) {

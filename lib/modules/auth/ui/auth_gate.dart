@@ -7,6 +7,7 @@ import 'package:montessori_app/modules/auth/providers/user_loader_provider.dart'
 import 'package:montessori_app/modules/auth/ui/login_screen.dart';
 import 'package:montessori_app/modules/auth/ui/splash_screen.dart';
 import 'package:montessori_app/modules/dashboard/ui/dashboard_screen.dart';
+import 'package:montessori_app/modules/parent/ui/parent_dashboard.dart';
 
 class AuthGate extends ConsumerWidget {
   const AuthGate({super.key});
@@ -32,7 +33,13 @@ class AuthGate extends ConsumerWidget {
             }
 
             ref.read(currentUserProvider.notifier).state = user;
-            return const DashboardScreen();
+
+            final role = user.role;
+            if (role == 'admin' || role == 'staff') {
+              return const DashboardScreen();
+            }
+
+            return const ParentDashboard();
           },
           loading: () => const SplashScreen(),
           error: (_, _) => const LoginScreen(),

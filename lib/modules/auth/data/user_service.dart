@@ -27,9 +27,15 @@ class UserService {
   Future<List<AppUser>> getStaffUsers() async {
     final result = await _firestore
         .collection('users')
-        .where('role', isEqualTo: 'staff')
+        .where('role', whereIn: ['staff', 'Staff'])
         .where('isActive', isEqualTo: true)
         .get();
+
+    // ignore: avoid_print
+    for (final doc in result.docs) {
+      // ignore: avoid_print
+      print(doc.data()['role']);
+    }
 
     return result.docs
         .map((doc) => AppUser.fromMap(doc.id, doc.data()))
@@ -39,7 +45,7 @@ class UserService {
   Future<void> createUser(String uid, String phone) async {
     await _firestore.collection('users').doc(uid).set({
       'phone': phone,
-      'role': 'staff',
+      'role': 'parent',
       'createdAt': FieldValue.serverTimestamp(),
       'isActive': true,
     });

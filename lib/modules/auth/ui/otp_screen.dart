@@ -50,8 +50,9 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
         smsCode: otp,
       );
 
-      final userCredential =
-          await FirebaseAuth.instance.signInWithCredential(credential);
+      final userCredential = await FirebaseAuth.instance.signInWithCredential(
+        credential,
+      );
 
       final firebaseUser = userCredential.user;
 
@@ -73,10 +74,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                 .set(userData);
           } else {
             await userService.createUser(uid, phone);
-            userData = {
-              'phone': phone,
-              'role': 'staff',
-            };
+            userData = {'phone': phone, 'role': 'parent'};
           }
         }
 
@@ -84,7 +82,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
           id: uid,
           phone: userData['phone'] ?? phone,
           name: userData['name'],
-          role: userData['role'] ?? 'staff',
+          role: userData['role'] ?? 'parent',
           isActive: userData['isActive'] ?? true,
         );
 
@@ -159,8 +157,8 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                     'Enter the 6-digit code sent to ${widget.phoneNumber}',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: AppColors.textSecondary,
-                        ),
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                   const SizedBox(height: 24),
                   TextField(
@@ -188,8 +186,8 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                       _message!,
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: AppColors.textSecondary,
-                          ),
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                   ],
                 ],

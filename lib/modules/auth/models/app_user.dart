@@ -18,7 +18,7 @@ class AppUser {
       id: id,
       phone: data['phone'] ?? '',
       name: data['name'],
-      role: data['role'] ?? 'staff',
+      role: data['role'] ?? 'parent',
       isActive: data['isActive'] ?? true,
     );
   }

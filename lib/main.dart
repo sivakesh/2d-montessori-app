@@ -6,20 +6,14 @@ import 'core/theme/app_theme.dart';
 import 'modules/auth/ui/auth_gate.dart';
 import 'modules/auth/ui/login_screen.dart';
 import 'modules/auth/ui/otp_screen.dart';
-import 'modules/dashboard/ui/dashboard_screen.dart';
+import 'modules/auth/ui/role_based_home.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   // ignore: avoid_print
   print('Firebase initialized');
-  runApp(
-    const ProviderScope(
-      child: MontessoriApp(),
-    ),
-  );
+  runApp(const ProviderScope(child: MontessoriApp()));
 }
 
 class MontessoriApp extends StatelessWidget {
@@ -34,7 +28,7 @@ class MontessoriApp extends StatelessWidget {
       home: const AuthGate(),
       routes: {
         '/login': (context) => const LoginScreen(),
-        '/dashboard': (context) => const DashboardScreen(),
+        '/dashboard': (context) => const RoleBasedHome(),
       },
       onGenerateRoute: (settings) {
         if (settings.name == '/otp') {

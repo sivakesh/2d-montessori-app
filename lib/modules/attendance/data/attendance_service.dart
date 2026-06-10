@@ -21,6 +21,10 @@ class AttendanceService {
 
   CollectionReference<Map<String, dynamic>> get _attendance =>
       _firestore.collection('attendance');
+  CollectionReference<Map<String, dynamic>> get _students =>
+      _firestore.collection('students');
+  CollectionReference<Map<String, dynamic>> get _users =>
+      _firestore.collection('users');
 
   String _dateKey() {
     return DateFormat('yyyy-MM-dd').format(DateTime.now().toLocal());
@@ -63,6 +67,72 @@ class AttendanceService {
     }
 
     return map;
+  }
+
+  Future<int> getStudentCount({List<String> classIds = const []}) async {
+    Query<Map<String, dynamic>> query = _students.where(
+      'isActive',
+      isEqualTo: true,
+    );
+
+    if (classIds.isEmpty) {
+      final snapshot = await query.get();
+      return snapshot.docs.length;
+    }
+
+    final snapshots = await Future.wait(
+      classIds.map(
+        (classId) => query.where('classId', isEqualTo: classId).get(),
+      ),
+    );
+
+    final seen = <String>{};
+    for (final snapshot in snapshots) {
+      for (final doc in snapshot.docs) {
+        seen.add(doc.id);
+      }
+    }
+    return seen.length;
+  }
+
+  Future<int> getStaffCount() async {
+    final snapshot = await _users.where('isActive', isEqualTo: true).get();
+    final staff = snapshot.docs.where((doc) {
+      final role = doc.data()['role']?.toString() ?? 'parent';
+      // ignore: avoid_print
+      print(role);
+      return role.toLowerCase() != 'student';
+    }).toList();
+    return staff.length;
+  }
+
+  Future<AttendanceOverview> getAttendanceOverview({
+    List<String> classIds = const [],
+  }) async {
+    final studentCount = await getStudentCount(classIds: classIds);
+    final staffCount = await getStaffCount();
+    final dateKey = _dateKey();
+    final snapshot = await _attendance.where('date', isEqualTo: dateKey).get();
+    final presentIds = snapshot.docs
+        .where(
+          (doc) =>
+              (doc.data()['status']?.toString() ?? '').toLowerCase() ==
+              'present',
+        )
+        .map((doc) => doc.data()['entityId']?.toString() ?? '')
+        .where((entityId) => entityId.isNotEmpty)
+        .toSet();
+    final presentCount = presentIds.length;
+    final totalCount = studentCount + staffCount;
+    final absentCount = (totalCount - presentCount).clamp(0, totalCount);
+
+    return AttendanceOverview(
+      studentCount: studentCount,
+      staffCount: staffCount,
+      totalCount: totalCount,
+      presentCount: presentCount,
+      absentCount: absentCount,
+    );
   }
 
   String _attendanceId(String date, String entityType, String entityId) =>
@@ -297,6 +367,22 @@ class AttendanceService {
       status: status,
     );
   }
+}
+
+class AttendanceOverview {
+  const AttendanceOverview({
+    required this.studentCount,
+    required this.staffCount,
+    required this.totalCount,
+    required this.presentCount,
+    required this.absentCount,
+  });
+
+  final int studentCount;
+  final int staffCount;
+  final int totalCount;
+  final int presentCount;
+  final int absentCount;
 }
 
 // Firestore rules suggestion:

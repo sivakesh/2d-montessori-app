@@ -21,7 +21,7 @@ final userLoaderProvider = FutureProvider<AppUser?>((ref) async {
   return AppUser(
     id: uid,
     phone: userData['phone'] ?? '',
-    role: userData['role'] ?? 'staff',
+    role: userData['role'] ?? 'parent',
     isActive: userData['isActive'] ?? true,
     name: userData['name'] as String?,
   );
