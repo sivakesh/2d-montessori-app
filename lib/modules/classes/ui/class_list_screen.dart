@@ -49,7 +49,22 @@ class ClassListScreen extends ConsumerWidget {
                       elevation: 0,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       child: ListTile(
-                        title: Text(data['name']?.toString() ?? ''),
+                        title: Row(
+                          children: [
+                            Expanded(child: Text(data['name']?.toString() ?? '')),
+                            if (data['isApproved'] != true) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.shade100,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Text('Pending Approval'),
+                              ),
+                            ],
+                          ],
+                        ),
                         subtitle: Text(data['isActive'] == false ? 'Inactive' : 'Active'),
                         trailing: IconButton(
                           icon: const Icon(Icons.edit),

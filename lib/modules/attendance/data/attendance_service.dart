@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 
 class AttendanceService {
@@ -9,9 +11,9 @@ class AttendanceService {
     FirebaseFirestore? firestore,
     FirebaseStorage? storage,
     ImagePicker? imagePicker,
-  })  : _firestore = firestore ?? FirebaseFirestore.instance,
-        _storage = storage ?? FirebaseStorage.instance,
-        _imagePicker = imagePicker ?? ImagePicker();
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _storage = storage ?? FirebaseStorage.instance,
+       _imagePicker = imagePicker ?? ImagePicker();
 
   final FirebaseFirestore _firestore;
   final FirebaseStorage _storage;
@@ -21,12 +23,107 @@ class AttendanceService {
       _firestore.collection('attendance');
 
   String _dateKey() {
-    final now = DateTime.now().toLocal();
-    return '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    return DateFormat('yyyy-MM-dd').format(DateTime.now().toLocal());
+  }
+
+  Future<Map<String, dynamic>> getTodayAttendance({
+    required String entityType,
+  }) async {
+    final dateKey = DateFormat('yyyy-MM-dd').format(DateTime.now().toLocal());
+    // ignore: avoid_print
+    print('Fetching attendance for: $dateKey');
+
+    final snapshot = await _firestore
+        .collection('attendance')
+        .where('entityType', isEqualTo: entityType)
+        .where('date', isEqualTo: dateKey)
+        .get();
+
+    final Map<String, dynamic> map = {};
+
+    for (var doc in snapshot.docs) {
+      final data = doc.data();
+      map[data['entityId']] = data;
+    }
+
+    return map;
+  }
+
+  Future<Map<String, Map<String, dynamic>>> getTodayAttendanceMap() async {
+    final dateKey = DateFormat('yyyy-MM-dd').format(DateTime.now().toLocal());
+    final snapshot = await _attendance.where('date', isEqualTo: dateKey).get();
+    final Map<String, Map<String, dynamic>> map = {};
+
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+      final entityType = data['entityType']?.toString() ?? '';
+      final entityId = data['entityId']?.toString() ?? '';
+      if (entityType.isEmpty || entityId.isEmpty) continue;
+      map['${entityType}_$entityId'] = data;
+    }
+
+    return map;
   }
 
   String _attendanceId(String date, String entityType, String entityId) =>
       '${date}_${entityType}_$entityId';
+
+  String _environmentTag() => kReleaseMode ? 'prod' : 'dev';
+
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> filterByClasses({
+    required List<String> classIds,
+  }) async {
+    final dateKey = DateFormat('yyyy-MM-dd').format(DateTime.now().toLocal());
+    final snapshot = await _attendance
+        .where('date', isEqualTo: dateKey)
+        .orderBy('createdAt', descending: true)
+        .get();
+
+    if (classIds.isEmpty) {
+      return snapshot.docs;
+    }
+
+    return snapshot.docs.where((doc) {
+      final data = doc.data();
+      final entityType = data['entityType']?.toString();
+      if (entityType == 'staff') return true;
+      final classId = data['classId']?.toString();
+      return classIds.contains(classId);
+    }).toList();
+  }
+
+  Future<String> uploadImage({
+    required dynamic image,
+    required String path,
+  }) async {
+    try {
+      // ignore: avoid_print
+      print('Uploading image...');
+      final ref = _storage.ref().child(path);
+
+      UploadTask uploadTask;
+
+      if (kIsWeb) {
+        uploadTask = ref.putData(image as Uint8List);
+      } else {
+        uploadTask = ref.putFile(image as File);
+      }
+
+      final snapshot = await uploadTask;
+      final url = await snapshot.ref.getDownloadURL();
+      // ignore: avoid_print
+      print('Upload successful');
+      return url;
+    } on FirebaseException catch (e) {
+      // ignore: avoid_print
+      print('Firebase upload error: $e');
+      rethrow;
+    } catch (e) {
+      // ignore: avoid_print
+      print('Upload error: $e');
+      rethrow;
+    }
+  }
 
   Future<String?> captureAndUploadPhoto({
     required String entityType,
@@ -40,15 +137,16 @@ class AttendanceService {
     if (picked == null) return null;
 
     final date = _dateKey();
-    final ref = _storage
-        .ref()
-        .child('attendance_photos')
-        .child(entityType == 'student' ? 'students' : 'staff')
-        .child(date)
-        .child('$entityId.jpg');
+    final path =
+        'attendance_photos/${entityType == 'student' ? 'students' : 'staff'}/$date/$entityId.jpg';
 
-    await ref.putFile(File(picked.path));
-    return ref.getDownloadURL();
+    if (kIsWeb) {
+      final bytes = await picked.readAsBytes();
+      return uploadImage(image: bytes, path: path);
+    } else {
+      final file = File(picked.path);
+      return uploadImage(image: file, path: path);
+    }
   }
 
   Future<bool> hasAttendanceForDate({
@@ -68,15 +166,17 @@ class AttendanceService {
     required String classId,
     required String markedBy,
     required String photoUrl,
+    required String status,
   }) async {
     final date = _dateKey();
-    final id = _attendanceId(date, entityType, entityId);
+    final environment = _environmentTag();
+    final id = environment == 'dev'
+        ? '${date}_${entityType}_${entityId}_${DateTime.now().microsecondsSinceEpoch}'
+        : _attendanceId(date, entityType, entityId);
     final docRef = _attendance.doc(id);
-    final existing = await docRef.get();
-    if (existing.exists) {
-      throw StateError('Attendance already marked for today.');
-    }
 
+    // ignore: avoid_print
+    print('Saving attendance...');
     await docRef.set({
       'entityType': entityType,
       'entityId': entityId,
@@ -85,8 +185,39 @@ class AttendanceService {
       'date': date,
       'photoUrl': photoUrl,
       'markedBy': markedBy,
+      'status': status,
+      'environment': environment,
       'createdAt': FieldValue.serverTimestamp(),
-    });
+    }, SetOptions(merge: true));
+    // ignore: avoid_print
+    print('Attendance saved');
+  }
+
+  Future<void> updateAttendanceStatus({
+    required String entityId,
+    required String date,
+    required String status,
+    required String entityType,
+  }) async {
+    if (kReleaseMode) {
+      await _attendance.doc(_attendanceId(date, entityType, entityId)).set({
+        'status': status,
+        'date': date,
+        'entityType': entityType,
+        'entityId': entityId,
+        'environment': 'prod',
+        'createdAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      return;
+    }
+    await _attendance.doc(_attendanceId(date, entityType, entityId)).set({
+      'status': status,
+      'date': date,
+      'entityType': entityType,
+      'entityId': entityId,
+      'environment': 'dev',
+      'createdAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 
   Future<void> markAttendance({
@@ -115,13 +246,18 @@ class AttendanceService {
       'status': 'present',
       'name': name,
       'role': role,
+      'environment': _environmentTag(),
     });
   }
 
   Future<bool> hasMarkedToday(String userId) async {
     final date = _dateKey();
-    final staffDoc = await _attendance.doc(_attendanceId(date, 'staff', userId)).get();
-    final studentDoc = await _attendance.doc(_attendanceId(date, 'student', userId)).get();
+    final staffDoc = await _attendance
+        .doc(_attendanceId(date, 'staff', userId))
+        .get();
+    final studentDoc = await _attendance
+        .doc(_attendanceId(date, 'student', userId))
+        .get();
     return staffDoc.exists || studentDoc.exists;
   }
 
@@ -131,21 +267,16 @@ class AttendanceService {
     required String classId,
     required String markedBy,
     String? photoUrl,
+    String status = 'present',
   }) async {
-    photoUrl ??= await captureAndUploadPhoto(
-      entityType: 'student',
-      entityId: studentId,
-    );
-    if (photoUrl == null) {
-      throw StateError('Photo is required.');
-    }
     await _markAttendance(
       entityType: 'student',
       entityId: studentId,
       entityName: studentName,
       classId: classId,
       markedBy: markedBy,
-      photoUrl: photoUrl,
+      photoUrl: photoUrl ?? '',
+      status: status,
     );
   }
 
@@ -154,21 +285,16 @@ class AttendanceService {
     required String staffName,
     required String markedBy,
     String? photoUrl,
+    String status = 'present',
   }) async {
-    photoUrl ??= await captureAndUploadPhoto(
-      entityType: 'staff',
-      entityId: staffId,
-    );
-    if (photoUrl == null) {
-      throw StateError('Photo is required.');
-    }
     await _markAttendance(
       entityType: 'staff',
       entityId: staffId,
       entityName: staffName,
       classId: '',
       markedBy: markedBy,
-      photoUrl: photoUrl,
+      photoUrl: photoUrl ?? '',
+      status: status,
     );
   }
 }
