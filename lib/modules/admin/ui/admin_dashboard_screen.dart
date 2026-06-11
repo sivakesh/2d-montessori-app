@@ -1,9 +1,5 @@
 import 'package:flutter/material.dart';
-import 'admin_users_screen.dart';
-import 'admin_classes_screen.dart';
-import 'admin_documents_screen.dart';
 import 'admin_layout.dart';
-import '../students/ui/admin_students_screen.dart';
 
 class AdminDashboardScreen extends StatelessWidget {
   const AdminDashboardScreen({super.key});
@@ -15,76 +11,40 @@ class AdminDashboardScreen extends StatelessWidget {
       title: 'Admin Dashboard',
       body: Padding(
         padding: const EdgeInsets.all(24),
-        child: Wrap(
-          spacing: 16,
-          runSpacing: 16,
-          children: [
-            _Tile(
-              title: 'Users',
-              icon: Icons.manage_accounts,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const AdminUsersScreen()),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Card(
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
               ),
-            ),
-            _Tile(
-              title: 'Students',
-              icon: Icons.school,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const admin_students_screen()),
+              child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.admin_panel_settings,
+                      size: 42,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Admin Dashboard',
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Use the navigation to manage admin sections.',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: Colors.grey[600],
+                          ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            _Tile(
-              title: 'Classes',
-              icon: Icons.class_,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const AdminClassesScreen()),
-              ),
-            ),
-            _Tile(
-              title: 'Documents',
-              icon: Icons.description,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const AdminDocumentsScreen()),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Tile extends StatelessWidget {
-  const _Tile({
-    required this.title,
-    required this.icon,
-    required this.onTap,
-  });
-
-  final String title;
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 220,
-      child: Card(
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 36),
-                const SizedBox(height: 12),
-                Text(title),
-              ],
             ),
           ),
         ),

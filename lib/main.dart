@@ -7,6 +7,7 @@ import 'modules/auth/ui/auth_gate.dart';
 import 'modules/auth/ui/login_screen.dart';
 import 'modules/auth/ui/otp_screen.dart';
 import 'modules/auth/ui/role_based_home.dart';
+import 'modules/admin/ui/admin_dashboard_screen.dart';
 import 'modules/admin/ui/admin_profile_form.dart';
 
 Future<void> main() async {
@@ -30,6 +31,7 @@ class MontessoriApp extends StatelessWidget {
       routes: {
         '/login': (context) => const LoginScreen(),
         '/dashboard': (context) => const RoleBasedHome(),
+        '/admin_dashboard': (context) => const AdminDashboardScreen(),
         '/admin_profile_form': (context) => const AdminProfileForm(),
       },
       onGenerateRoute: (settings) {

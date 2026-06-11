@@ -228,6 +228,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             ],
           ),
           actions: [
+            if (user.role.toLowerCase() == 'admin')
+              IconButton(
+                icon: const Icon(Icons.admin_panel_settings),
+                onPressed: () {
+                  Navigator.of(context).pushNamed('/admin_dashboard');
+                },
+              ),
             IconButton(
               icon: const Icon(Icons.logout),
               onPressed: () async {
@@ -263,48 +270,59 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       ),
       web: Scaffold(
         backgroundColor: Colors.grey[50],
-        body: Row(
+        body: Stack(
           children: [
-            AppSidebar(
-              selectedIndex: selectedIndex,
-              onItemTapped: (index) {
-                setState(() {
-                  selectedIndex = index;
-                });
-              },
-            ),
-            Expanded(
-              child: Column(
-                children: [
-                  AppBar(
-                    title: const Text('Dashboard'),
-                    actions: [
-                      IconButton(
-                        icon: const Icon(Icons.logout),
-                        onPressed: () async {
-                          await ref.read(authServiceProvider).logout(ref, context);
-                          if (context.mounted) {
-                            Navigator.of(context).pushNamedAndRemoveUntil(
-                              '/login',
-                              (route) => false,
-                            );
-                          }
+            Row(
+              children: [
+                AppSidebar(
+                  selectedIndex: selectedIndex,
+                  onItemTapped: (index) {
+                    setState(() {
+                      selectedIndex = index;
+                    });
+                  },
+                ),
+                Expanded(
+                  child: Column(
+                    children: [
+                      AppBar(
+                        title: const Text('Dashboard'),
+                        actions: [
+                          if (user.role.toLowerCase() == 'admin')
+                            IconButton(
+                              icon: const Icon(Icons.admin_panel_settings),
+                              onPressed: () {
+                                Navigator.of(context).pushNamed('/admin_dashboard');
+                              },
+                            ),
+                          IconButton(
+                            icon: const Icon(Icons.logout),
+                            onPressed: () async {
+                              await ref.read(authServiceProvider).logout(ref, context);
+                              if (context.mounted) {
+                                Navigator.of(context).pushNamedAndRemoveUntil(
+                                  '/login',
+                                  (route) => false,
+                                );
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                      Expanded(
+                        child: switch (selectedIndex) {
+                          0 => dashboardContent,
+                          1 => const ClassListScreen(),
+                          2 => const StudentListScreen(),
+                          3 => const AttendanceScreen(),
+                          4 => const AttendanceScreen(),
+                          _ => dashboardContent,
                         },
                       ),
                     ],
                   ),
-                  Expanded(
-                    child: switch (selectedIndex) {
-                      0 => dashboardContent,
-                      1 => const ClassListScreen(),
-                      2 => const StudentListScreen(),
-                      3 => const AttendanceScreen(),
-                      4 => const AttendanceScreen(),
-                      _ => dashboardContent,
-                    },
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ],
         ),

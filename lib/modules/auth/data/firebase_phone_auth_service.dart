@@ -1,4 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
+// ignore: depend_on_referenced_packages
+import 'package:firebase_auth_platform_interface/firebase_auth_platform_interface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:montessori_app/core/config/app_env.dart';
 
@@ -9,6 +11,7 @@ class FirebasePhoneAuthService {
   final FirebaseAuth _firebaseAuth;
 
   ConfirmationResult? _webConfirmationResult;
+  RecaptchaVerifier? _recaptchaVerifier;
   String? _verificationId;
 
   Future<void> sendOtp(String phoneNumber) async {
@@ -20,8 +23,14 @@ class FirebasePhoneAuthService {
     }
 
     if (kIsWeb) {
-      _webConfirmationResult =
-          await _firebaseAuth.signInWithPhoneNumber(phoneNumber);
+      _recaptchaVerifier ??= RecaptchaVerifier(
+        container: 'recaptcha-container',
+        auth: FirebaseAuthPlatform.instance,
+      );
+      _webConfirmationResult = await _firebaseAuth.signInWithPhoneNumber(
+        phoneNumber,
+        _recaptchaVerifier!,
+      );
       return;
     }
 
@@ -55,7 +64,11 @@ class FirebasePhoneAuthService {
           message: 'Please request a new OTP.',
         );
       }
-      return confirmationResult.confirm(otp);
+      final result = await confirmationResult.confirm(otp);
+      _recaptchaVerifier?.clear();
+      _recaptchaVerifier = null;
+      _webConfirmationResult = null;
+      return result;
     }
 
     final verificationId = _verificationId;
@@ -70,7 +83,11 @@ class FirebasePhoneAuthService {
       verificationId: verificationId,
       smsCode: otp,
     );
-    return _firebaseAuth.signInWithCredential(credential);
+    final result = await _firebaseAuth.signInWithCredential(credential);
+    _recaptchaVerifier?.clear();
+    _recaptchaVerifier = null;
+    _webConfirmationResult = null;
+    return result;
   }
 
   Future<void> signOut() async {
