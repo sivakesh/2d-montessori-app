@@ -5,6 +5,7 @@ import '../data/admin_students_service.dart';
 import '../models/admin_student_model.dart';
 import 'admin_student_detail_screen.dart';
 import 'admin_student_form_screen.dart';
+import '../../ui/admin_layout.dart';
 
 class admin_students_screen extends StatefulWidget {
   const admin_students_screen({super.key});
@@ -66,14 +67,14 @@ class _admin_students_screenState extends State<admin_students_screen> {
       final name = (data['name']?.toString() ?? '').toLowerCase();
       final classId = data['classId']?.toString() ?? '';
       final matchesSearch = query.isEmpty || name.contains(query);
-      final matchesClass = _selectedClassIds.isEmpty || _selectedClassIds.contains(classId);
+      final matchesClass =
+          _selectedClassIds.isEmpty || _selectedClassIds.contains(classId);
       return matchesSearch && matchesClass;
     }).toList();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Students'),
-      ),
+    return AdminLayout(
+      selectedIndex: 2,
+      title: 'Students',
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -84,19 +85,6 @@ class _admin_students_screenState extends State<admin_students_screen> {
                 Text(
                   'Students',
                   style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const Spacer(),
-                ElevatedButton(
-                  onPressed: () async {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const admin_student_form_screen(),
-                      ),
-                    );
-                    await _loadData();
-                  },
-                  child: const Text('Add Student'),
                 ),
               ],
             ),
@@ -140,128 +128,144 @@ class _admin_students_screenState extends State<admin_students_screen> {
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
                   : filteredStudents.isEmpty
-                      ? _buildEmptyState(context)
-                      : ListView.builder(
-                          itemCount: filteredStudents.length,
-                          itemBuilder: (context, index) {
-                            final doc = filteredStudents[index];
-                            final data = doc.data();
-                            final student = AdminStudentModel.fromMap(doc.id, data);
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: Card(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(12),
-                                  child: Row(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      CircleAvatar(
-                                        radius: 24,
-                                        backgroundImage: student.profileImage.isNotEmpty
-                                            ? NetworkImage(student.profileImage)
-                                            : null,
-                                        child: student.profileImage.isEmpty
-                                            ? Text(
-                                                student.name.isNotEmpty
-                                                    ? student.name[0].toUpperCase()
-                                                    : '?',
-                                              )
-                                            : null,
-                                      ),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
+                  ? _buildEmptyState(context)
+                  : ListView.builder(
+                      itemCount: filteredStudents.length,
+                      itemBuilder: (context, index) {
+                        final doc = filteredStudents[index];
+                        final data = doc.data();
+                        final student = AdminStudentModel.fromMap(doc.id, data);
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  CircleAvatar(
+                                    radius: 24,
+                                    backgroundImage:
+                                        student.profileImage.isNotEmpty
+                                        ? NetworkImage(student.profileImage)
+                                        : null,
+                                    child: student.profileImage.isEmpty
+                                        ? Text(
+                                            student.name.isNotEmpty
+                                                ? student.name[0].toUpperCase()
+                                                : '?',
+                                          )
+                                        : null,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          student.name,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.titleMedium,
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Admission No: ${student.admissionNo}',
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodyMedium,
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'Class: ${_classNameFor(student.classId)}',
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodyMedium,
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 8,
                                           children: [
-                                            Text(
-                                              student.name,
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .titleMedium,
-                                            ),
-                                            const SizedBox(height: 4),
-                                            Text(
-                                              'Admission No: ${student.admissionNo}',
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .bodyMedium,
-                                            ),
-                                            const SizedBox(height: 2),
-                                            Text(
-                                              'Class: ${_classNameFor(student.classId)}',
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .bodyMedium,
-                                            ),
-                                            const SizedBox(height: 8),
-                                            Wrap(
-                                              spacing: 8,
-                                              runSpacing: 8,
-                                              children: [
-                                                Chip(
-                                                  label: Text(
-                                                    student.isApproved
-                                                        ? 'Approved'
-                                                        : 'Pending',
-                                                  ),
-                                                ),
-                                              ],
+                                            Chip(
+                                              label: Text(
+                                                student.isApproved
+                                                    ? 'Approved'
+                                                    : 'Pending',
+                                              ),
                                             ),
                                           ],
                                         ),
-                                      ),
-                                      Column(
-                                        children: [
-                                          IconButton(
-                                            icon: const Icon(Icons.visibility),
-                                            onPressed: () async {
-                                              await Navigator.push(
-                                                context,
-                                                MaterialPageRoute(
-                                                  builder: (_) =>
-                                                      admin_student_detail_screen(
+                                      ],
+                                    ),
+                                  ),
+                                  Column(
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(Icons.visibility),
+                                        onPressed: () async {
+                                          await Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  admin_student_detail_screen(
                                                     studentId: doc.id,
                                                   ),
-                                                ),
-                                              );
-                                              await _loadData();
-                                            },
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(Icons.edit),
-                                            onPressed: () async {
-                                              await Navigator.push(
-                                                context,
-                                                MaterialPageRoute(
-                                                  builder: (_) =>
-                                                      admin_student_form_screen(
+                                            ),
+                                          );
+                                          await _loadData();
+                                        },
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.edit),
+                                        onPressed: () async {
+                                          await Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  admin_student_form_screen(
                                                     studentId: doc.id,
                                                     initialData: data,
                                                   ),
-                                                ),
-                                              );
-                                              await _loadData();
-                                            },
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(Icons.delete),
-                                            onPressed: () async {
-                                              await _service.deleteStudent(doc.id);
-                                              await _loadData();
-                                            },
-                                          ),
-                                        ],
+                                            ),
+                                          );
+                                          await _loadData();
+                                        },
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete),
+                                        onPressed: () async {
+                                          await _service.deleteStudent(doc.id);
+                                          await _loadData();
+                                        },
                                       ),
                                     ],
                                   ),
-                                ),
+                                ],
                               ),
-                            );
-                          },
-                        ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
             ),
           ],
         ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: const Color(0xFF2E7D32),
+        elevation: 4,
+        onPressed: () async {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const admin_student_form_screen(),
+            ),
+          );
+          await _loadData();
+        },
+        child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }

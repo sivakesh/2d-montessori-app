@@ -7,6 +7,7 @@ import 'modules/auth/ui/auth_gate.dart';
 import 'modules/auth/ui/login_screen.dart';
 import 'modules/auth/ui/otp_screen.dart';
 import 'modules/auth/ui/role_based_home.dart';
+import 'modules/admin/ui/admin_profile_form.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,6 +30,7 @@ class MontessoriApp extends StatelessWidget {
       routes: {
         '/login': (context) => const LoginScreen(),
         '/dashboard': (context) => const RoleBasedHome(),
+        '/admin_profile_form': (context) => const AdminProfileForm(),
       },
       onGenerateRoute: (settings) {
         if (settings.name == '/otp') {

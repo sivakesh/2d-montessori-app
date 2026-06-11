@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'admin_users_screen.dart';
 import 'admin_classes_screen.dart';
 import 'admin_documents_screen.dart';
+import 'admin_layout.dart';
 import '../students/ui/admin_students_screen.dart';
 
 class AdminDashboardScreen extends StatelessWidget {
@@ -9,8 +10,9 @@ class AdminDashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Admin Dashboard')),
+    return AdminLayout(
+      selectedIndex: 0,
+      title: 'Admin Dashboard',
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Wrap(
