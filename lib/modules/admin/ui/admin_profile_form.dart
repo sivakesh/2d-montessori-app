@@ -36,6 +36,8 @@ class _AdminProfileFormState extends State<AdminProfileForm>
   AdminProfileModel? _profile;
   bool _loaded = false;
   String _userId = '';
+  Map<String, dynamic> _userData = <String, dynamic>{};
+  String _selectedGender = '';
   final Map<String, String> selectedRelations = {};
   List<Map<String, dynamic>> linkedStudents = [];
   final List<Map<String, dynamic>> documents = [];
@@ -53,7 +55,6 @@ class _AdminProfileFormState extends State<AdminProfileForm>
 
   late final _fullName = TextEditingController();
   late final _dob = TextEditingController();
-  late final _gender = TextEditingController();
   late final _bloodGroup = TextEditingController();
   late final _phone = TextEditingController();
   late final _alternatePhone = TextEditingController();
@@ -87,17 +88,25 @@ class _AdminProfileFormState extends State<AdminProfileForm>
 
   Future<void> _load() async {
     try {
+      final userSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_userId)
+          .get();
       final profile = await _service.fetchProfile(_userId);
       if (!mounted) return;
       _profile = profile;
+      _userData = userSnapshot.data() ?? <String, dynamic>{};
+      final userName = _userData['name']?.toString() ?? '';
+      final userEmail = _userData['email']?.toString() ?? '';
+      final userPhone = _userData['phone']?.toString() ?? '';
       if (profile != null) {
-        _fullName.text = profile.fullName;
+        _fullName.text = userName;
         _dob.text = profile.dateOfBirth;
-        _gender.text = profile.gender;
+        _selectedGender = profile.gender;
         _bloodGroup.text = profile.bloodGroup;
-        _phone.text = profile.phone;
+        _phone.text = userPhone;
         _alternatePhone.text = profile.alternatePhone;
-        _email.text = profile.email;
+        _email.text = userEmail;
         _addressLine1.text = profile.addressLine1;
         _addressLine2.text = profile.addressLine2;
         _city.text = profile.city;
@@ -131,6 +140,11 @@ class _AdminProfileFormState extends State<AdminProfileForm>
               },
             )
             .toList();
+      } else {
+        _fullName.text = userName;
+        _phone.text = userPhone;
+        _email.text = userEmail;
+        _selectedGender = '';
       }
     } finally {
       if (mounted) {
@@ -185,7 +199,6 @@ class _AdminProfileFormState extends State<AdminProfileForm>
     _tabController.dispose();
     _fullName.dispose();
     _dob.dispose();
-    _gender.dispose();
     _bloodGroup.dispose();
     _phone.dispose();
     _alternatePhone.dispose();
@@ -213,6 +226,21 @@ class _AdminProfileFormState extends State<AdminProfileForm>
     if (mounted) setState(() {});
   }
 
+  Future<void> _pickDob() async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _dob.text.isNotEmpty
+          ? (DateTime.tryParse(_dob.text) ?? DateTime.now())
+          : DateTime.now(),
+      firstDate: DateTime(1900),
+      lastDate: DateTime.now(),
+    );
+    if (selected == null) return;
+    setState(() {
+      _dob.text = selected.toIso8601String().split('T').first;
+    });
+  }
+
   Future<String> _uploadImage() async {
     if (_pickedImage == null) return _profile?.profileImageUrl ?? '';
     try {
@@ -230,11 +258,6 @@ class _AdminProfileFormState extends State<AdminProfileForm>
       final url = await ref.getDownloadURL();
 
       await FirebaseFirestore.instance.collection('profiles').doc(_userId).set({
-        'profileImageUrl': url,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-
-      await FirebaseFirestore.instance.collection('users').doc(_userId).set({
         'profileImageUrl': url,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
@@ -338,55 +361,60 @@ class _AdminProfileFormState extends State<AdminProfileForm>
     setState(() => isSaving = true);
     try {
       final imageUrl = await _uploadImage();
-      final profile = AdminProfileModel(
-        userId: _userId,
-        fullName: _fullName.text.trim(),
-        dateOfBirth: _dob.text.trim(),
-        gender: _gender.text.trim(),
-        bloodGroup: _bloodGroup.text.trim(),
-        phone: _phone.text.trim(),
-        alternatePhone: _alternatePhone.text.trim(),
-        email: _email.text.trim(),
-        addressLine1: _addressLine1.text.trim(),
-        addressLine2: _addressLine2.text.trim(),
-        city: _city.text.trim(),
-        state: _state.text.trim(),
-        country: _country.text.trim(),
-        pincode: _pincode.text.trim(),
-        emergencyContactName: _emergencyName.text.trim(),
-        emergencyContactPhone: _emergencyPhone.text.trim(),
-        occupation: _occupation.text.trim(),
-        nationality: _nationality.text.trim(),
-        profileImageUrl: imageUrl,
-        students: linkedStudents
+      final batch = FirebaseFirestore.instance.batch();
+      final profileRef = FirebaseFirestore.instance
+          .collection('profiles')
+          .doc(_userId);
+
+      final profileData = <String, dynamic>{
+        'fullName': _userData['name']?.toString() ?? _fullName.text.trim(),
+        'email': _userData['email']?.toString() ?? _email.text.trim(),
+        'phone': _userData['phone']?.toString() ?? _phone.text.trim(),
+        'dateOfBirth': _dob.text.trim(),
+        'gender': _selectedGender.trim(),
+        'bloodGroup': _bloodGroup.text.trim(),
+        'alternatePhone': _alternatePhone.text.trim(),
+        'addressLine1': _addressLine1.text.trim(),
+        'addressLine2': _addressLine2.text.trim(),
+        'city': _city.text.trim(),
+        'state': _state.text.trim(),
+        'country': _country.text.trim(),
+        'pincode': _pincode.text.trim(),
+        'emergencyContactName': _emergencyName.text.trim(),
+        'emergencyContactPhone': _emergencyPhone.text.trim(),
+        'occupation': _occupation.text.trim(),
+        'nationality': _nationality.text.trim(),
+        'profileImageUrl': imageUrl,
+        'students': linkedStudents
             .map(
-              (student) => AdminProfileStudentRef(
-                studentId: student['studentId']?.toString() ?? '',
-                studentName:
+              (student) => <String, dynamic>{
+                'studentId': student['studentId']?.toString() ?? '',
+                'studentName':
                     student['studentName']?.toString() ??
                     student['name']?.toString() ??
                     '',
-                classId:
+                'relation':
                     student['relation']?.toString() ??
                     student['classId']?.toString() ??
                     '',
-              ),
+              },
             )
             .toList(),
-        documents: documents
+        'documents': documents
             .map(
-              (e) => AdminProfileDocumentRef(
-                documentId: e['id']?.toString() ?? '',
-                documentType: e['type']?.toString() ?? '',
-                fileUrl: e['url']?.toString() ?? '',
-                fileName: e['name']?.toString() ?? '',
-              ),
+              (e) => <String, dynamic>{
+                'id': e['id']?.toString() ?? '',
+                'documentType': e['type']?.toString() ?? '',
+                'fileUrl': e['url']?.toString() ?? '',
+                'fileName': e['name']?.toString() ?? '',
+              },
             )
             .toList(),
-        createdAt: _profile?.createdAt ?? '',
-        updatedAt: DateTime.now().toIso8601String(),
-      );
-      await _service.upsertProfile(profile);
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      batch.set(profileRef, profileData, SetOptions(merge: true));
+      await batch.commit();
       if (!mounted) return;
       setState(() {
         isSaving = false;
@@ -1064,7 +1092,7 @@ class _AdminProfileFormState extends State<AdminProfileForm>
     setState(() {
       _fullName.text = 'Rajesh Kumar';
       _dob.text = '1990-05-15';
-      _gender.text = 'Male';
+      _selectedGender = 'Male';
       _bloodGroup.text = 'B+';
       _nationality.text = 'Indian';
       _occupation.text = 'Software Engineer';
@@ -1092,15 +1120,39 @@ class _AdminProfileFormState extends State<AdminProfileForm>
   List<Widget> _buildFormFields(bool isWide) {
     final width = isWide ? 400.0 : double.infinity;
     return [
-      SizedBox(width: width, child: _field(_fullName, 'Full Name *')),
-      SizedBox(width: width, child: _field(_dob, 'Date of Birth')),
-      SizedBox(width: width, child: _field(_gender, 'Gender')),
+      SizedBox(
+        width: width,
+        child: _field(
+          _fullName,
+          'Full Name *',
+          readOnly: true,
+          helperText: 'Managed from User details',
+        ),
+      ),
+      SizedBox(width: width, child: _dateField(_dob, 'Date of Birth')),
+      SizedBox(width: width, child: _genderField()),
       SizedBox(width: width, child: _field(_bloodGroup, 'Blood Group')),
       SizedBox(width: width, child: _field(_nationality, 'Nationality')),
       SizedBox(width: width, child: _field(_occupation, 'Occupation')),
-      SizedBox(width: width, child: _field(_phone, 'Phone *')),
+      SizedBox(
+        width: width,
+        child: _field(
+          _phone,
+          'Phone *',
+          readOnly: true,
+          helperText: 'Managed from User details',
+        ),
+      ),
       SizedBox(width: width, child: _field(_alternatePhone, 'Alternate Phone')),
-      SizedBox(width: width, child: _field(_email, 'Email *')),
+      SizedBox(
+        width: width,
+        child: _field(
+          _email,
+          'Email *',
+          readOnly: true,
+          helperText: 'Managed from User details',
+        ),
+      ),
       SizedBox(width: width, child: _field(_addressLine1, 'Address Line 1')),
       SizedBox(width: width, child: _field(_addressLine2, 'Address Line 2')),
       SizedBox(width: width, child: _field(_city, 'City')),
@@ -1109,10 +1161,46 @@ class _AdminProfileFormState extends State<AdminProfileForm>
     ];
   }
 
-  Widget _field(TextEditingController c, String label) {
+  Widget _field(
+    TextEditingController c,
+    String label, {
+    bool readOnly = false,
+    String? helperText,
+  }) {
     return TextField(
       controller: c,
-      decoration: InputDecoration(labelText: label),
+      readOnly: readOnly,
+      decoration: InputDecoration(labelText: label, helperText: helperText),
+    );
+  }
+
+  Widget _dateField(TextEditingController c, String label) {
+    return TextField(
+      controller: c,
+      readOnly: true,
+      onTap: _pickDob,
+      decoration: InputDecoration(
+        labelText: label,
+        suffixIcon: const Icon(Icons.calendar_month),
+      ),
+    );
+  }
+
+  Widget _genderField() {
+    return DropdownButtonFormField<String>(
+      initialValue: _selectedGender.isEmpty ? null : _selectedGender,
+      decoration: const InputDecoration(labelText: 'Gender'),
+      items: const [
+        DropdownMenuItem(value: 'Male', child: Text('Male')),
+        DropdownMenuItem(value: 'Female', child: Text('Female')),
+        DropdownMenuItem(value: 'Other', child: Text('Other')),
+      ],
+      onChanged: (val) {
+        if (val == null) return;
+        setState(() {
+          _selectedGender = val;
+        });
+      },
     );
   }
 }
