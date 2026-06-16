@@ -5,6 +5,7 @@ import 'admin_dashboard_screen.dart';
 import 'admin_documents_screen.dart';
 import 'admin_notifications_screen.dart';
 import 'admin_users_screen.dart';
+import '../../fees/ui/admin_fees_screen.dart';
 import '../students/ui/admin_students_screen.dart';
 import 'admin_sidebar.dart';
 
@@ -49,6 +50,7 @@ class AdminLayout extends ConsumerWidget {
                       3 => const AdminClassesScreen(),
                       4 => const AdminDocumentsScreen(),
                       5 => const AdminNotificationsScreen(),
+                      6 => const AdminFeesScreen(),
                       _ => body,
                     };
                     Navigator.of(context).pushReplacement(
@@ -78,6 +80,7 @@ class AdminLayout extends ConsumerWidget {
                   3 => const AdminClassesScreen(),
                   4 => const AdminDocumentsScreen(),
                   5 => const AdminNotificationsScreen(),
+                  6 => const AdminFeesScreen(),
                   _ => body,
                 };
                 Navigator.of(context).pushReplacement(
@@ -114,6 +117,11 @@ class AdminLayout extends ConsumerWidget {
                   icon: Icon(Icons.notifications_outlined),
                   selectedIcon: Icon(Icons.notifications),
                   label: 'Notifications',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.payments_outlined),
+                  selectedIcon: Icon(Icons.payments),
+                  label: 'Fees',
                 ),
               ],
             )

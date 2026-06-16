@@ -41,6 +41,11 @@ class AdminSidebar extends StatelessWidget {
       selectedIcon: Icon(Icons.notifications),
       label: Text('Notifications'),
     ),
+    NavigationRailDestination(
+      icon: Icon(Icons.payments_outlined),
+      selectedIcon: Icon(Icons.payments),
+      label: Text('Fees'),
+    ),
   ];
 
   @override
