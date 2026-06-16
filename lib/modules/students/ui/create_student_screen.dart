@@ -54,7 +54,7 @@ class _CreateStudentScreenState extends ConsumerState<CreateStudentScreen> {
 
   Future<void> _loadClasses() async {
     final classService = ref.read(classServiceProvider);
-    final classes = await classService.getAllClasses();
+    final classes = await classService.getClasses();
     if (!mounted) return;
     setState(() {
       _classes = classes;

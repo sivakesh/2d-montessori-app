@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'admin_classes_screen.dart';
 import 'admin_dashboard_screen.dart';
 import 'admin_documents_screen.dart';
+import 'admin_notifications_screen.dart';
 import 'admin_users_screen.dart';
 import '../students/ui/admin_students_screen.dart';
 import 'admin_sidebar.dart';
@@ -47,6 +48,7 @@ class AdminLayout extends ConsumerWidget {
                       2 => const admin_students_screen(),
                       3 => const AdminClassesScreen(),
                       4 => const AdminDocumentsScreen(),
+                      5 => const AdminNotificationsScreen(),
                       _ => body,
                     };
                     Navigator.of(context).pushReplacement(
@@ -75,6 +77,7 @@ class AdminLayout extends ConsumerWidget {
                   2 => const admin_students_screen(),
                   3 => const AdminClassesScreen(),
                   4 => const AdminDocumentsScreen(),
+                  5 => const AdminNotificationsScreen(),
                   _ => body,
                 };
                 Navigator.of(context).pushReplacement(
@@ -106,6 +109,11 @@ class AdminLayout extends ConsumerWidget {
                   icon: Icon(Icons.description_outlined),
                   selectedIcon: Icon(Icons.description),
                   label: 'Documents',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.notifications_outlined),
+                  selectedIcon: Icon(Icons.notifications),
+                  label: 'Notifications',
                 ),
               ],
             )

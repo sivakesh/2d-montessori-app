@@ -99,7 +99,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
 
   Future<void> _loadClasses() async {
     final classService = ref.read(classServiceProvider);
-    final snap = await classService.getAllClasses();
+    final snap = await classService.getClasses();
     if (!mounted) return;
     setState(() => _classes = snap);
   }

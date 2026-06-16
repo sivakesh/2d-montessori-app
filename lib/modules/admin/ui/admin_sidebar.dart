@@ -36,6 +36,11 @@ class AdminSidebar extends StatelessWidget {
       selectedIcon: Icon(Icons.description),
       label: Text('Documents'),
     ),
+    NavigationRailDestination(
+      icon: Icon(Icons.notifications_outlined),
+      selectedIcon: Icon(Icons.notifications),
+      label: Text('Notifications'),
+    ),
   ];
 
   @override
