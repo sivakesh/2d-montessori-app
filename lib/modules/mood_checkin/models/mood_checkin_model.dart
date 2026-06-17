@@ -39,6 +39,30 @@ class MoodCheckinModel {
   final DateTime? createdAt;
   final String createdBy;
 
+  Map<String, dynamic> toMap() {
+    final map = <String, dynamic>{
+      'id': id,
+      'entityType': entityType,
+      'entityId': entityId,
+      'entityName': entityName,
+      'moodCode': moodCode,
+      'moodLabel': moodLabel,
+      'moodCategory': moodCategory,
+      'intensity': intensity,
+      'notes': notes ?? '',
+      'source': source,
+      'checkInAt': checkInAt != null ? Timestamp.fromDate(checkInAt!) : FieldValue.serverTimestamp(),
+      'createdAt': createdAt != null ? Timestamp.fromDate(createdAt!) : FieldValue.serverTimestamp(),
+      'createdBy': createdBy,
+    };
+
+    if (classId != null) map['classId'] = classId;
+    if (className != null) map['className'] = className;
+    if (attendanceId != null) map['attendanceId'] = attendanceId;
+    if (photoUrl != null) map['photoUrl'] = photoUrl;
+    return map;
+  }
+
   factory MoodCheckinModel.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? const <String, dynamic>{};
     return MoodCheckinModel(

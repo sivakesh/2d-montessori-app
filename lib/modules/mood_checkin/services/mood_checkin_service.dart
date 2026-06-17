@@ -32,15 +32,6 @@ class MoodCheckinService {
         .where('checkInAt', isLessThan: Timestamp.fromDate(end));
   }
 
-  Query<Map<String, dynamic>> _todayCreatedAtQuery() {
-    final today = DateTime.now().toLocal();
-    final start = DateTime(today.year, today.month, today.day);
-    final end = start.add(const Duration(days: 1));
-    return _collection
-        .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-        .where('createdAt', isLessThan: Timestamp.fromDate(end));
-  }
-
   Future<int> getTodayMoodCheckinCount() async {
     final docs = await _todayQuery().get();
     return docs.docs.length;
@@ -61,6 +52,53 @@ class MoodCheckinService {
         .limit(limit)
         .get();
     return snapshot.docs.map(MoodCheckinModel.fromFirestore).toList();
+  }
+
+  Future<List<MoodCheckinModel>> getTodayMoodCheckinsForEntity({
+    required String entityType,
+    required String entityId,
+    int limit = 20,
+  }) async {
+    final snapshot = await _collection
+        .where('entityType', isEqualTo: entityType)
+        .where('entityId', isEqualTo: entityId)
+        .limit(limit)
+        .get();
+
+    final docs = snapshot.docs.toList();
+
+    final today = DateTime.now().toLocal();
+    final startOfToday = DateTime(today.year, today.month, today.day);
+    final endOfToday = startOfToday.add(const Duration(days: 1));
+    docs.sort((a, b) {
+      DateTime resolve(Map<String, dynamic> data) {
+        final checkIn = data['checkInAt'];
+        if (checkIn is Timestamp) return checkIn.toDate();
+        if (checkIn is DateTime) return checkIn;
+        final created = data['createdAt'];
+        if (created is Timestamp) return created.toDate();
+        if (created is DateTime) return created;
+        return DateTime.fromMillisecondsSinceEpoch(0);
+      }
+
+      return resolve(b.data()).compareTo(resolve(a.data()));
+    });
+    final filtered = docs.where((doc) {
+      final data = doc.data();
+      final resolved = data['checkInAt'] is Timestamp
+          ? (data['checkInAt'] as Timestamp).toDate()
+          : data['createdAt'] is Timestamp
+              ? (data['createdAt'] as Timestamp).toDate()
+              : data['checkInAt'] is DateTime
+                  ? data['checkInAt'] as DateTime
+                  : data['createdAt'] is DateTime
+                      ? data['createdAt'] as DateTime
+                      : null;
+      if (resolved == null) return false;
+      return !resolved.isBefore(startOfToday) && resolved.isBefore(endOfToday);
+    }).toList();
+
+    return filtered.map(MoodCheckinModel.fromFirestore).toList();
   }
 
   Future<String?> uploadOptionalMoodPhoto({
@@ -106,25 +144,26 @@ class MoodCheckinService {
     DateTime? checkInAt,
   }) async {
     final doc = _collection.doc();
-    await doc.set({
-      'id': doc.id,
-      'entityType': entityType,
-      'entityId': entityId,
-      'entityName': entityName,
-      'classId': classId,
-      'className': className,
-      'moodCode': moodCode,
-      'moodLabel': moodLabel,
-      'moodCategory': moodCategory,
-      'intensity': intensity,
-      'notes': notes ?? '',
-      'source': source,
-      'attendanceId': attendanceId,
-      'photoUrl': photoUrl,
-      'checkInAt': checkInAt ?? FieldValue.serverTimestamp(),
-      'createdAt': FieldValue.serverTimestamp(),
-      'createdBy': createdBy,
-    });
+    final model = MoodCheckinModel(
+      id: doc.id,
+      entityType: entityType,
+      entityId: entityId,
+      entityName: entityName,
+      classId: classId,
+      className: className,
+      moodCode: moodCode,
+      moodLabel: moodLabel,
+      moodCategory: moodCategory,
+      intensity: intensity,
+      notes: notes,
+      source: source,
+      attendanceId: attendanceId,
+      photoUrl: photoUrl,
+      checkInAt: checkInAt ?? DateTime.now().toLocal(),
+      createdAt: DateTime.now().toLocal(),
+      createdBy: createdBy,
+    );
+    await doc.set(model.toMap());
     return doc.id;
   }
 
@@ -160,40 +199,11 @@ class MoodCheckinService {
   }
 
   Future<MoodCheckinModel?> getLatestMoodForEntity(String entityType, String entityId) async {
-    final todayDocs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-    final byCheckInAt = await _todayQuery().get();
-    final byCreatedAt = await _todayCreatedAtQuery().get();
-
-    final seenIds = <String>{};
-    for (final doc in byCheckInAt.docs) {
-      if (seenIds.add(doc.id)) todayDocs.add(doc);
-    }
-    for (final doc in byCreatedAt.docs) {
-      if (seenIds.add(doc.id)) todayDocs.add(doc);
-    }
-
-    final matchingDocs = todayDocs.where((doc) {
-      final data = doc.data();
-      return data['entityType']?.toString() == entityType &&
-          data['entityId']?.toString() == entityId;
-    }).toList();
-
-    if (matchingDocs.isEmpty) return null;
-
-    matchingDocs.sort((a, b) {
-      DateTime? resolve(Map<String, dynamic> data) {
-        final checkIn = data['checkInAt'];
-        if (checkIn is Timestamp) return checkIn.toDate();
-        final created = data['createdAt'];
-        if (created is Timestamp) return created.toDate();
-        return null;
-      }
-
-      final aTime = resolve(a.data()) ?? DateTime.fromMillisecondsSinceEpoch(0);
-      final bTime = resolve(b.data()) ?? DateTime.fromMillisecondsSinceEpoch(0);
-      return bTime.compareTo(aTime);
-    });
-
-    return MoodCheckinModel.fromFirestore(matchingDocs.first);
+    final items = await getTodayMoodCheckinsForEntity(
+      entityType: entityType,
+      entityId: entityId,
+    );
+    if (items.isEmpty) return null;
+    return items.first;
   }
 }
