@@ -37,6 +37,7 @@ class _AdminStudentFormState extends State<AdminStudentForm>
   final _sectionController = TextEditingController();
   final _rollNumberController = TextEditingController();
   final _dobController = TextEditingController();
+  final _ageController = TextEditingController();
   final _bloodGroupController = TextEditingController();
   final _nationalityController = TextEditingController();
   final _motherTongueController = TextEditingController();
@@ -58,6 +59,8 @@ class _AdminStudentFormState extends State<AdminStudentForm>
   String _gender = 'Male';
   String _selectedBloodGroup = 'A+';
   String _profileImageUrl = '';
+  String _selectedDocumentType = 'Aadhar Card';
+  String _selectedDocumentFileName = '';
   XFile? _pickedImage;
   Uint8List? _pickedImageBytes;
   List<Map<String, dynamic>> _documents = [];
@@ -86,6 +89,7 @@ class _AdminStudentFormState extends State<AdminStudentForm>
     _sectionController.text = data['section']?.toString() ?? '';
     _rollNumberController.text = data['rollNumber']?.toString() ?? '';
     _dobController.text = data['dateOfBirth']?.toString() ?? '';
+    _ageController.text = _initialAgeText(data['age'], data['dateOfBirth']);
     _bloodGroupController.text = data['bloodGroup']?.toString() ?? '';
     _nationalityController.text = data['nationality']?.toString() ?? '';
     _motherTongueController.text = data['motherTongue']?.toString() ?? '';
@@ -121,6 +125,7 @@ class _AdminStudentFormState extends State<AdminStudentForm>
     _sectionController.dispose();
     _rollNumberController.dispose();
     _dobController.dispose();
+    _ageController.dispose();
     _bloodGroupController.dispose();
     _nationalityController.dispose();
     _motherTongueController.dispose();
@@ -138,6 +143,8 @@ class _AdminStudentFormState extends State<AdminStudentForm>
     _sectionController.text = 'A';
     _rollNumberController.text = '12';
     _dobController.text = '2019-06-15';
+    _ageController.text =
+        _calculateAgeFromDob(_dobController.text)?.toString() ?? '';
     _gender = 'Male';
     _selectedBloodGroup = 'O+';
     _bloodGroupController.text = 'O+';
@@ -156,6 +163,28 @@ class _AdminStudentFormState extends State<AdminStudentForm>
     if (mounted) setState(fn);
   }
 
+  int? _calculateAgeFromDob(String dobText) {
+    final dob = DateTime.tryParse(dobText.trim());
+    if (dob == null) return null;
+    final today = DateTime.now();
+    final normalizedDob = DateTime(dob.year, dob.month, dob.day);
+    final normalizedToday = DateTime(today.year, today.month, today.day);
+    if (normalizedDob.isAfter(normalizedToday)) return null;
+    var age = normalizedToday.year - normalizedDob.year;
+    final hadBirthday =
+        normalizedToday.month > normalizedDob.month ||
+        (normalizedToday.month == normalizedDob.month &&
+            normalizedToday.day >= normalizedDob.day);
+    if (!hadBirthday) age -= 1;
+    return age < 0 ? null : age;
+  }
+
+  String _initialAgeText(Object? age, Object? dob) {
+    final parsedAge = int.tryParse(age?.toString() ?? '');
+    if (parsedAge != null) return parsedAge.toString();
+    return _calculateAgeFromDob(dob?.toString() ?? '')?.toString() ?? '';
+  }
+
   List<Map<String, dynamic>> _normalizeParentLinks(dynamic rawLinks) {
     return (rawLinks as List<dynamic>? ?? const [])
         .whereType<Map>()
@@ -165,11 +194,43 @@ class _AdminStudentFormState extends State<AdminStudentForm>
             'id': map['userId'] ?? map['id'],
             'name': map['name'] ?? '',
             'email': map['email'] ?? '',
-            'relation': map['relation'] ?? 'Father',
+            'phone': map['phone'] ?? '',
+            'relation': map['relation'] ?? 'Guardian',
+            'linkedAt': map['linkedAt'],
           };
         })
         .where((e) => (e['id']?.toString() ?? '').isNotEmpty)
         .toList();
+  }
+
+  Map<String, dynamic>? _findUserById(String userId) {
+    for (final user in _allUsers) {
+      if (user['id']?.toString() == userId) return user;
+    }
+    return null;
+  }
+
+  List<Map<String, dynamic>> _resolvedParentLinks() {
+    return _parentLinks.map((parent) {
+      final userId = parent['id']?.toString() ?? '';
+      final resolved = _findUserById(userId);
+      return {
+        'id': userId,
+        'name': (parent['name']?.toString().isNotEmpty ?? false)
+            ? parent['name']
+            : resolved?['name'] ?? '',
+        'email': (parent['email']?.toString().isNotEmpty ?? false)
+            ? parent['email']
+            : resolved?['email'] ?? '',
+        'phone': (parent['phone']?.toString().isNotEmpty ?? false)
+            ? parent['phone']
+            : resolved?['phone'] ?? '',
+        'relation': parent['relation']?.toString().isNotEmpty == true
+            ? parent['relation']
+            : 'Guardian',
+        'linkedAt': parent['linkedAt'],
+      };
+    }).toList();
   }
 
   List<Map<String, dynamic>> _normalizeDocuments(dynamic rawDocs) {
@@ -178,9 +239,13 @@ class _AdminStudentFormState extends State<AdminStudentForm>
         .map((e) {
           final map = Map<String, dynamic>.from(e);
           return {
-            'name': map['name'] ?? '',
-            'fileName': map['fileName'] ?? '',
+            'type': map['type'] ?? map['documentType'] ?? '',
+            'name': map['name'] ?? map['fileName'] ?? '',
+            'fileName': map['fileName'] ?? map['name'] ?? '',
             'url': map['url'] ?? '',
+            'storagePath': map['storagePath'] ?? '',
+            'uploadedBy': map['uploadedBy'] ?? 'admin',
+            'uploadedAt': map['uploadedAt'],
           };
         })
         .where((e) => (e['url']?.toString() ?? '').isNotEmpty)
@@ -201,6 +266,7 @@ class _AdminStudentFormState extends State<AdminStudentForm>
           'id': doc.id,
           'name': data['name'] ?? '',
           'email': data['email'] ?? '',
+          'phone': data['phone'] ?? '',
         };
       }).toList();
     });
@@ -251,6 +317,8 @@ class _AdminStudentFormState extends State<AdminStudentForm>
     if (picked == null) return;
     safeSetState(() {
       _dobController.text = picked.toIso8601String().split('T').first;
+      _ageController.text =
+          _calculateAgeFromDob(_dobController.text)?.toString() ?? '';
     });
   }
 
@@ -327,8 +395,19 @@ class _AdminStudentFormState extends State<AdminStudentForm>
         name: _nameController.text.trim(),
         admissionNo: admissionNo,
         classId: classId,
+        section: _sectionController.text.trim(),
+        rollNumber: _rollNumberController.text.trim(),
         dateOfBirth: _dobController.text.trim(),
+        age: _calculateAgeFromDob(_dobController.text),
         gender: _gender,
+        bloodGroup: _bloodGroupController.text.trim(),
+        nationality: _nationalityController.text.trim(),
+        motherTongue: _motherTongueController.text.trim(),
+        addressLine1: _address1Controller.text.trim(),
+        addressLine2: _address2Controller.text.trim(),
+        city: _cityController.text.trim(),
+        state: _stateController.text.trim(),
+        pincode: _pincodeController.text.trim(),
         isActive: _isActive,
         isApproved: widget.initialData?['isApproved'] == true,
         createdAt: null,
@@ -344,7 +423,13 @@ class _AdminStudentFormState extends State<AdminStudentForm>
               }),
             )
             .toList(),
-        documents: const [],
+        documents: _documents
+            .map(
+              (doc) => AdminStudentDocument.fromMap(
+                Map<String, dynamic>.from(doc),
+              ),
+            )
+            .toList(),
         profileImageUrl: imageUrl,
       );
 
@@ -378,8 +463,8 @@ class _AdminStudentFormState extends State<AdminStudentForm>
 
     try {
       final studentId = widget.studentId!;
-
-      debugPrint("Saving Parents: $_parentLinks");
+      debugPrint('Student ID being updated for parents: $studentId');
+      debugPrint('Parent links before save: $_parentLinks');
 
       final linksRef =
           FirebaseFirestore.instance.collection('user_student_links');
@@ -399,23 +484,31 @@ class _AdminStudentFormState extends State<AdminStudentForm>
         await linksRef.add({
           'userId': parentId,
           'studentId': studentId,
-          'relation': parent['relation'] ?? 'Father',
+          'relation': parent['relation'] ?? 'Guardian',
           'createdAt': FieldValue.serverTimestamp(),
         });
       }
+
+      final normalizedParents = _parentLinks
+          .where((e) => (e['id']?.toString() ?? '').isNotEmpty)
+          .map((e) => {
+                'userId': e['id'],
+                'name': e['name'] ?? '',
+                'email': e['email'] ?? '',
+                'phone': e['phone'] ?? '',
+                'relation': e['relation'] ?? 'Guardian',
+                'linkedAt': Timestamp.now(),
+              })
+          .toList();
 
       await FirebaseFirestore.instance
           .collection('students')
           .doc(studentId)
           .set({
-        'parentLinks': _parentLinks
-            .where((e) => (e['id']?.toString() ?? '').isNotEmpty)
-            .map((e) => {
-                  'userId': e['id'],
-                  'relation': e['relation'],
-                })
-            .toList(),
+        'parentLinks': normalizedParents,
       }, SetOptions(merge: true));
+
+      debugPrint('Parent links after save: $normalizedParents');
 
       if (!mounted) return;
 
@@ -709,6 +802,15 @@ class _AdminStudentFormState extends State<AdminStudentForm>
                       ),
                       halfField(
                         child: _fieldShell(
+                          label: 'Age',
+                          child: _textField(
+                            controller: _ageController,
+                            readOnly: true,
+                          ),
+                        ),
+                      ),
+                      halfField(
+                        child: _fieldShell(
                           label: 'Gender',
                           child: DropdownButtonFormField<String>(
                             initialValue: _gender,
@@ -829,10 +931,17 @@ class _AdminStudentFormState extends State<AdminStudentForm>
   }
 
   Widget _buildParentsTab() {
+    final linkedIds = _parentLinks
+        .map((e) => e['id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
     final filteredUsers = _allUsers.where((user) {
       final q = _searchQuery.toLowerCase();
+      final id = user['id']?.toString() ?? '';
+      if (linkedIds.contains(id)) return false;
       return user['name'].toString().toLowerCase().contains(q) ||
-          user['email'].toString().toLowerCase().contains(q);
+          user['email'].toString().toLowerCase().contains(q) ||
+          user['phone'].toString().toLowerCase().contains(q);
     }).toList();
 
     return Stack(
@@ -855,90 +964,136 @@ class _AdminStudentFormState extends State<AdminStudentForm>
               ),
             ),
             Expanded(
-              child: Row(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
                 children: [
-                  Expanded(
-                    child: filteredUsers.isEmpty
-                        ? const Center(child: Text('No parents found'))
-                        : ListView.builder(
-                            itemCount: filteredUsers.length,
-                            itemBuilder: (context, index) {
-                              final user = filteredUsers[index];
-                              return ListTile(
-                                title: Text(user['name']?.toString() ?? ''),
-                                subtitle: Text(user['email']?.toString() ?? ''),
-                                trailing: IconButton(
-                                  icon: const Icon(
-                                    Icons.add_circle,
-                                    color: Colors.green,
-                                  ),
-                                  onPressed: () => _addParent(user),
-                                ),
-                              );
-                            },
-                          ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Linked Parents',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                   ),
-                  Expanded(
-                    child: _parentLinks.isEmpty
-                        ? const Center(child: Text('No parents linked'))
-                        : ListView.builder(
-                            itemCount: _parentLinks.length,
-                            itemBuilder: (context, index) {
-                              final parent = _parentLinks[index];
-                              return Card(
-                                margin: const EdgeInsets.all(8),
-                                child: ListTile(
-                                  leading: const CircleAvatar(
-                                    child: Icon(Icons.person),
-                                  ),
-                                  title: Text(parent['name']?.toString() ?? 'Parent'),
-                                  subtitle: Text(parent['email']?.toString() ?? ''),
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      DropdownButton<String>(
-                                        value: parent['relation']?.toString() ??
-                                            'Father',
-                                        underline: const SizedBox(),
-                                        items: const [
-                                          DropdownMenuItem(
-                                            value: 'Father',
-                                            child: Text('Father'),
-                                          ),
-                                          DropdownMenuItem(
-                                            value: 'Mother',
-                                            child: Text('Mother'),
-                                          ),
-                                          DropdownMenuItem(
-                                            value: 'Guardian',
-                                            child: Text('Guardian'),
-                                          ),
-                                        ],
-                                        onChanged: (value) {
-                                          if (value == null) return;
-                                          safeSetState(() {
-                                            _parentLinks[index]['relation'] = value;
-                                          });
-                                        },
+                  const SizedBox(height: 12),
+                  if (_parentLinks.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 24),
+                      child: Center(child: Text('No parents linked yet.')),
+                    )
+                  else
+                    ..._resolvedParentLinks().asMap().entries.map((entry) {
+                      final index = entry.key;
+                      final parent = entry.value;
+                      final displayName = parent['name']?.toString().isNotEmpty == true
+                          ? parent['name'].toString()
+                          : 'Parent';
+                      final email = parent['email']?.toString() ?? '';
+                      final phone = parent['phone']?.toString() ?? '';
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const CircleAvatar(child: Icon(Icons.person)),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      displayName,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 15,
                                       ),
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.delete,
-                                          color: Colors.red,
-                                        ),
-                                        onPressed: () {
-                                          safeSetState(() {
-                                            _parentLinks.removeAt(index);
-                                          });
-                                        },
+                                    ),
+                                    if (email.isNotEmpty)
+                                      Text(
+                                        email,
+                                        style: const TextStyle(color: Colors.grey),
                                       ),
-                                    ],
-                                  ),
+                                    if (phone.isNotEmpty)
+                                      Text(
+                                        phone,
+                                        style: const TextStyle(color: Colors.grey),
+                                      ),
+                                    const SizedBox(height: 8),
+                                    DropdownButtonFormField<String>(
+                                      initialValue: parent['relation']?.toString().isNotEmpty == true
+                                          ? parent['relation'].toString()
+                                          : 'Guardian',
+                                      decoration: const InputDecoration(
+                                        labelText: 'Relationship',
+                                        border: OutlineInputBorder(),
+                                        isDense: true,
+                                      ),
+                                      items: const [
+                                        DropdownMenuItem(value: 'Father', child: Text('Father')),
+                                        DropdownMenuItem(value: 'Mother', child: Text('Mother')),
+                                        DropdownMenuItem(value: 'Guardian', child: Text('Guardian')),
+                                        DropdownMenuItem(value: 'Other', child: Text('Other')),
+                                      ],
+                                      onChanged: (value) {
+                                        if (value == null) return;
+                                        safeSetState(() {
+                                          _parentLinks[index]['relation'] = value;
+                                        });
+                                      },
+                                    ),
+                                  ],
                                 ),
-                              );
-                            },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete, color: Colors.red),
+                                onPressed: () {
+                                  safeSetState(() {
+                                    _parentLinks.removeAt(index);
+                                  });
+                                },
+                              ),
+                            ],
                           ),
+                        ),
+                      );
+                    }),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Available Parents',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                   ),
+                  const SizedBox(height: 12),
+                  if (filteredUsers.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 24),
+                      child: Center(child: Text('No matching parents found.')),
+                    )
+                  else
+                    ...filteredUsers.map((user) {
+                      final name = user['name']?.toString() ?? '';
+                      final email = user['email']?.toString() ?? '';
+                      final phone = user['phone']?.toString() ?? '';
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: ListTile(
+                          title: Text(name),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (email.isNotEmpty) Text(email),
+                              if (phone.isNotEmpty) Text(phone),
+                            ],
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(
+                              Icons.add_circle,
+                              color: Colors.green,
+                            ),
+                            onPressed: () => _addParent(user),
+                          ),
+                        ),
+                      );
+                    }),
                 ],
               ),
             ),
@@ -980,12 +1135,14 @@ class _AdminStudentFormState extends State<AdminStudentForm>
     final exists = _parentLinks.any((p) => p['id'] == user['id']);
     if (exists) return;
 
+    debugPrint('Selected parent added: ${user['name']} (${user['email']})');
     safeSetState(() {
       _parentLinks.add({
         'id': user['id'],
         'name': user['name'],
         'email': user['email'],
-        'relation': 'Father',
+        'phone': user['phone'] ?? '',
+        'relation': 'Guardian',
       });
     });
   }
@@ -1003,6 +1160,12 @@ class _AdminStudentFormState extends State<AdminStudentForm>
                       itemCount: _documents.length,
                       itemBuilder: (context, index) {
                         final doc = _documents[index];
+                        final docType = doc['type']?.toString().isNotEmpty == true
+                            ? doc['type'].toString()
+                            : (doc['documentType']?.toString() ?? 'Other');
+                        final fileName = doc['name']?.toString().isNotEmpty == true
+                            ? doc['name'].toString()
+                            : (doc['fileName']?.toString() ?? '');
                         return Card(
                           margin: const EdgeInsets.symmetric(
                             vertical: 6,
@@ -1013,8 +1176,8 @@ class _AdminStudentFormState extends State<AdminStudentForm>
                               Icons.insert_drive_file,
                               color: Colors.green,
                             ),
-                            title: Text(doc['name']?.toString() ?? ''),
-                            subtitle: Text(doc['fileName']?.toString() ?? ''),
+                            title: Text(docType),
+                            subtitle: Text(fileName),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
@@ -1022,11 +1185,19 @@ class _AdminStudentFormState extends State<AdminStudentForm>
                                   icon: const Icon(Icons.open_in_new),
                                   onPressed: () async {
                                     final url = doc['url'];
-                                    if (url != null) {
-                                      await launchUrl(
-                                        Uri.parse(url.toString()),
+                                    if (url == null ||
+                                        url.toString().isEmpty) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Document URL is missing'),
+                                        ),
                                       );
+                                      return;
                                     }
+                                    await launchUrl(
+                                      Uri.parse(url.toString()),
+                                      mode: LaunchMode.externalApplication,
+                                    );
                                   },
                                 ),
                                 IconButton(
@@ -1034,11 +1205,7 @@ class _AdminStudentFormState extends State<AdminStudentForm>
                                     Icons.delete,
                                     color: Colors.red,
                                   ),
-                                  onPressed: () {
-                                    setState(() {
-                                      _documents.removeAt(index);
-                                    });
-                                  },
+                                  onPressed: () => _confirmDeleteDocument(index),
                                 ),
                               ],
                             ),
@@ -1092,7 +1259,76 @@ class _AdminStudentFormState extends State<AdminStudentForm>
     );
   }
 
+  Future<void> _confirmDeleteDocument(int index) async {
+    final doc = _documents[index];
+    final storagePath = doc['storagePath']?.toString() ?? '';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Delete document?'),
+          content: Text(
+            doc['name']?.toString().isNotEmpty == true
+                ? 'Delete ${doc['name']}?'
+                : 'Delete this document?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      if (storagePath.isNotEmpty) {
+        try {
+          await FirebaseStorage.instance.ref(storagePath).delete();
+        } catch (e) {
+          final message = e.toString().toLowerCase();
+          if (!message.contains('object-not-found') &&
+              !message.contains('not found')) {
+            debugPrint('Storage delete failed for $storagePath: $e');
+          }
+        }
+      }
+
+      setState(() {
+        _documents.removeAt(index);
+      });
+      await _saveDocuments();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document deleted successfully')),
+      );
+    } catch (e) {
+      debugPrint('DELETE DOCUMENT ERROR: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to delete document')),
+        );
+      }
+    }
+  }
+
   Future<void> _pickAndUploadDocument(String type) async {
+    final studentId = widget.studentId;
+    if (studentId == null || studentId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Save student first before uploading documents')),
+      );
+      return;
+    }
+
     final result = await FilePicker.platform.pickFiles(withData: true);
     if (result == null || result.files.isEmpty) return;
 
@@ -1101,87 +1337,156 @@ class _AdminStudentFormState extends State<AdminStudentForm>
 
     try {
       setState(() => isUploadingDocument = true);
-      final studentKey = widget.studentId ??
-          'temp_${DateTime.now().millisecondsSinceEpoch}';
+      _selectedDocumentFileName = file.name;
+      debugPrint('Selected document file name: ${file.name}');
+      debugPrint('Student ID: $studentId');
       final fileName = '${DateTime.now().millisecondsSinceEpoch}_${file.name}';
+      final storagePath = 'student_documents/$studentId/$fileName';
+      debugPrint('Document storage path: $storagePath');
       final ref = FirebaseStorage.instance
           .ref()
-          .child('students/$studentKey/documents/$fileName');
+          .child(storagePath);
       final uploadTask = ref.putData(file.bytes!);
       final snapshot = await uploadTask;
       final downloadUrl = await snapshot.ref.getDownloadURL();
+      debugPrint('Document download URL: $downloadUrl');
 
       setState(() {
-        _documents.add({
-          'name': type,
-          'fileName': file.name,
-          'url': downloadUrl,
-        });
+        _documents.add(
+          {
+            'type': type,
+            'name': file.name,
+            'fileName': file.name,
+            'url': downloadUrl,
+            'storagePath': storagePath,
+            'uploadedBy': 'admin',
+            'uploadedAt': Timestamp.now(),
+          },
+        );
       });
-      debugPrint('Documents after upload: $_documents');
+      debugPrint('Documents before save: $_documents');
+      await _saveDocuments();
+      debugPrint('Documents after save: $_documents');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document uploaded successfully')),
+      );
     } catch (e) {
       debugPrint('UPLOAD ERROR: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to upload document')),
+        );
+      }
     } finally {
       if (mounted) setState(() => isUploadingDocument = false);
     }
   }
 
   void _openUploadDialog() {
+    _selectedDocumentType = 'Aadhar Card';
+    _selectedDocumentFileName = '';
     showDialog(
       context: context,
       builder: (dialogContext) {
-        String selectedType = 'Aadhar Card';
-
+        bool dialogUploading = false;
         return StatefulBuilder(
           builder: (context, setModalState) {
-            return AlertDialog(
-              title: const Text('Upload Document'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<String>(
-                    initialValue: selectedType,
-                    decoration: const InputDecoration(
-                      labelText: 'Document Type',
-                    ),
-                    items: const [
-                      'Aadhar Card',
-                      'Birth Certificate',
-                      'Transfer Certificate',
-                      'Medical Record',
-                    ].map((type) {
-                      return DropdownMenuItem(
-                        value: type,
-                        child: Text(type),
-                      );
-                    }).toList(),
-                    onChanged: (val) {
-                      if (val == null) return;
-                      setModalState(() => selectedType = val);
-                    },
+            return Dialog(
+              insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+              child: SizedBox(
+                width: MediaQuery.of(dialogContext).size.width,
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Upload Document',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 20),
+                      DropdownButtonFormField<String>(
+                        initialValue: _selectedDocumentType,
+                        decoration: const InputDecoration(
+                          labelText: 'Document Type',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: const [
+                          'Aadhar Card',
+                          'Birth Certificate',
+                          'Transfer Certificate',
+                          'Medical Certificate',
+                          'Photo',
+                          'Address Proof',
+                          'Parent ID Proof',
+                          'Other',
+                        ].map((type) {
+                          return DropdownMenuItem(
+                            value: type,
+                            child: Text(type),
+                          );
+                        }).toList(),
+                        onChanged: dialogUploading
+                            ? null
+                            : (val) {
+                                if (val == null) return;
+                                setModalState(() => _selectedDocumentType = val);
+                              },
+                      ),
+                      if (_selectedDocumentFileName.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text('Selected file: $_selectedDocumentFileName'),
+                        ),
+                      ],
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: dialogUploading
+                              ? null
+                              : () async {
+                                  setModalState(() => dialogUploading = true);
+                                  try {
+                                    await _pickAndUploadDocument(_selectedDocumentType);
+                                  } finally {
+                                    if (context.mounted) {
+                                      setModalState(() => dialogUploading = false);
+                                    }
+                                  }
+                                },
+                          icon: dialogUploading
+                              ? const SizedBox(
+                                  height: 18,
+                                  width: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.upload),
+                          label: Text(
+                            dialogUploading ? 'Uploading...' : 'Upload File',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: dialogUploading || isSavingDocuments || _documents.isEmpty
+                              ? null
+                              : () async {
+                                  await _saveDocuments();
+                                  if (mounted && Navigator.of(dialogContext).canPop()) {
+                                    Navigator.pop(dialogContext);
+                                  }
+                                },
+                          child: const Text('Save'),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 20),
-                  ElevatedButton.icon(
-                    onPressed: isUploadingDocument
-                        ? null
-                        : () async {
-                            await _pickAndUploadDocument(selectedType);
-                            if (mounted && Navigator.of(dialogContext).canPop()) {
-                              Navigator.pop(dialogContext);
-                            }
-                          },
-                    icon: isUploadingDocument
-                        ? const SizedBox(
-                            height: 16,
-                            width: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.upload),
-                    label: Text(
-                      isUploadingDocument ? 'Uploading...' : 'Upload File',
-                    ),
-                  ),
-                ],
+                ),
               ),
             );
           },
@@ -1195,6 +1500,11 @@ class _AdminStudentFormState extends State<AdminStudentForm>
     debugPrint("Using studentId: ${widget.studentId}");
     if (studentId == null || studentId.isEmpty) {
       debugPrint("❌ ERROR: studentId is NULL");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Save student first before uploading documents')),
+        );
+      }
       return;
     }
 
@@ -1208,9 +1518,17 @@ class _AdminStudentFormState extends State<AdminStudentForm>
           .where((doc) => (doc['url']?.toString() ?? '').isNotEmpty)
           .map(
             (doc) => {
-              'name': doc['name']?.toString() ?? '',
-              'fileName': doc['fileName']?.toString() ?? '',
+              'type': doc['type']?.toString() ??
+                  doc['documentType']?.toString() ??
+                  '',
+              'name': doc['name']?.toString() ?? doc['fileName']?.toString() ?? '',
+              'fileName': doc['fileName']?.toString() ?? doc['name']?.toString() ?? '',
               'url': doc['url']?.toString() ?? '',
+              'storagePath': doc['storagePath']?.toString() ?? '',
+              'uploadedBy': doc['uploadedBy']?.toString() ?? 'admin',
+              'uploadedAt': doc['uploadedAt'] is Timestamp
+                  ? doc['uploadedAt']
+                  : Timestamp.now(),
             },
           )
           .toList();
@@ -1220,10 +1538,10 @@ class _AdminStudentFormState extends State<AdminStudentForm>
       await FirebaseFirestore.instance
           .collection('students')
           .doc(studentId)
-          .set({
+          .update({
         'documents': cleanDocs,
         'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      });
 
       final snap = await FirebaseFirestore.instance
           .collection('students')

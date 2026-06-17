@@ -1,5 +1,5 @@
-import 'package:flutter/foundation.dart';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -97,13 +97,12 @@ class AttendanceService {
 
   Future<int> getStaffCount() async {
     final snapshot = await _users.where('isActive', isEqualTo: true).get();
-    final staff = snapshot.docs.where((doc) {
-      final role = doc.data()['role']?.toString() ?? 'parent';
-      // ignore: avoid_print
-      print(role);
-      return role.toLowerCase() != 'student';
-    }).toList();
-    return staff.length;
+    const staffRoles = {'staff', 'teacher', 'admin_staff'};
+    return snapshot.docs.where((doc) {
+      final role = doc.data()['role']?.toString().trim().toLowerCase();
+      if (role == null || role.isEmpty) return false;
+      return staffRoles.contains(role);
+    }).length;
   }
 
   Future<AttendanceOverview> getAttendanceOverview({
@@ -113,18 +112,17 @@ class AttendanceService {
     final staffCount = await getStaffCount();
     final dateKey = _dateKey();
     final snapshot = await _attendance.where('date', isEqualTo: dateKey).get();
-    final presentIds = snapshot.docs
-        .where(
-          (doc) =>
-              (doc.data()['status']?.toString() ?? '').toLowerCase() ==
-              'present',
-        )
-        .map((doc) => doc.data()['entityId']?.toString() ?? '')
-        .where((entityId) => entityId.isNotEmpty)
-        .toSet();
-    final presentCount = presentIds.length;
+    final presentCount = snapshot.docs.where((doc) {
+      final data = doc.data();
+      final status = (data['status']?.toString() ?? '').toLowerCase();
+      final hasPhoto = (data['photoUrl']?.toString() ?? '').isNotEmpty;
+      return status == 'present' || (status.isEmpty && hasPhoto);
+    }).length;
     final totalCount = studentCount + staffCount;
-    final absentCount = (totalCount - presentCount).clamp(0, totalCount);
+    final absentCount = snapshot.docs.where((doc) {
+      final status = (doc.data()['status']?.toString() ?? '').toLowerCase();
+      return status == 'absent';
+    }).length;
 
     return AttendanceOverview(
       studentCount: studentCount,
@@ -133,6 +131,14 @@ class AttendanceService {
       presentCount: presentCount,
       absentCount: absentCount,
     );
+  }
+
+  Future<int> getNotMarkedCount({
+    List<String> classIds = const [],
+  }) async {
+    final overview = await getAttendanceOverview(classIds: classIds);
+    return (overview.totalCount - overview.presentCount - overview.absentCount)
+        .clamp(0, overview.totalCount);
   }
 
   String _attendanceId(String date, String entityType, String entityId) =>
@@ -286,6 +292,55 @@ class AttendanceService {
       'entityType': entityType,
       'entityId': entityId,
       'environment': 'dev',
+      'createdAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> markAbsent({
+    required String entityId,
+    required String entityType,
+    required String entityName,
+    required String markedBy,
+    String? classId,
+  }) async {
+    final date = _dateKey();
+    final id = _attendanceId(date, entityType, entityId);
+    await _attendance.doc(id).set({
+      'entityType': entityType,
+      'entityId': entityId,
+      'entityName': entityName,
+      'classId': classId ?? '',
+      'date': date,
+      'photoUrl': '',
+      'markedBy': markedBy,
+      'status': 'absent',
+      'environment': _environmentTag(),
+      'updatedAt': FieldValue.serverTimestamp(),
+      'createdAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> markPresent({
+    required String entityId,
+    required String entityType,
+    required String entityName,
+    required String markedBy,
+    required String photoUrl,
+    String? classId,
+  }) async {
+    final date = _dateKey();
+    final id = _attendanceId(date, entityType, entityId);
+    await _attendance.doc(id).set({
+      'entityType': entityType,
+      'entityId': entityId,
+      'entityName': entityName,
+      'classId': classId ?? '',
+      'date': date,
+      'photoUrl': photoUrl,
+      'markedBy': markedBy,
+      'status': 'present',
+      'environment': _environmentTag(),
+      'updatedAt': FieldValue.serverTimestamp(),
       'createdAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }

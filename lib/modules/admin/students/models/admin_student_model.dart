@@ -34,23 +34,32 @@ class AdminStudentParentLink {
 
 class AdminStudentDocument {
   AdminStudentDocument({
+    required this.type,
     required this.name,
     required this.fileName,
     required this.url,
+    required this.storagePath,
+    required this.uploadedBy,
     this.uploadedAt,
   });
 
+  final String type;
   final String name;
   final String fileName;
   final String url;
+  final String storagePath;
+  final String uploadedBy;
   final DateTime? uploadedAt;
 
   factory AdminStudentDocument.fromMap(Map<String, dynamic> data) {
     final rawUploadedAt = data['uploadedAt'];
     return AdminStudentDocument(
-      name: data['name']?.toString() ?? '',
-      fileName: data['fileName']?.toString() ?? '',
+      type: data['type']?.toString() ?? data['documentType']?.toString() ?? '',
+      name: data['name']?.toString() ?? data['fileName']?.toString() ?? '',
+      fileName: data['fileName']?.toString() ?? data['name']?.toString() ?? '',
       url: data['url']?.toString() ?? '',
+      storagePath: data['storagePath']?.toString() ?? '',
+      uploadedBy: data['uploadedBy']?.toString() ?? 'admin',
       uploadedAt: rawUploadedAt is Timestamp
           ? rawUploadedAt.toDate()
           : rawUploadedAt is DateTime
@@ -61,9 +70,12 @@ class AdminStudentDocument {
 
   Map<String, dynamic> toMap() {
     return {
+      'type': type,
       'name': name,
       'fileName': fileName,
       'url': url,
+      'storagePath': storagePath,
+      'uploadedBy': uploadedBy,
       'uploadedAt': uploadedAt != null ? Timestamp.fromDate(uploadedAt!) : FieldValue.serverTimestamp(),
     };
   }
@@ -75,8 +87,19 @@ class AdminStudentModel {
     required this.name,
     required this.admissionNo,
     required this.classId,
+    required this.section,
+    required this.rollNumber,
     required this.dateOfBirth,
+    required this.age,
     required this.gender,
+    required this.bloodGroup,
+    required this.nationality,
+    required this.motherTongue,
+    required this.addressLine1,
+    required this.addressLine2,
+    required this.city,
+    required this.state,
+    required this.pincode,
     required this.isActive,
     required this.isApproved,
     required this.createdAt,
@@ -90,8 +113,19 @@ class AdminStudentModel {
   final String name;
   final String admissionNo;
   final String classId;
+  final String section;
+  final String rollNumber;
   final dynamic dateOfBirth;
+  final int? age;
   final String gender;
+  final String bloodGroup;
+  final String nationality;
+  final String motherTongue;
+  final String addressLine1;
+  final String addressLine2;
+  final String city;
+  final String state;
+  final String pincode;
   final bool isActive;
   final bool isApproved;
   final DateTime? createdAt;
@@ -103,13 +137,29 @@ class AdminStudentModel {
   factory AdminStudentModel.fromMap(String id, Map<String, dynamic> data) {
     final rawDate = data['dateOfBirth'];
     final createdAt = data['createdAt'];
+    final rawAge = data['age'];
     return AdminStudentModel(
       id: id,
       name: data['name']?.toString() ?? '',
       admissionNo: data['admissionNo']?.toString() ?? '',
       classId: data['classId']?.toString() ?? '',
+      section: data['section']?.toString() ?? '',
+      rollNumber: data['rollNumber']?.toString() ?? '',
       dateOfBirth: rawDate,
+      age: rawAge is int
+          ? rawAge
+          : rawAge is num
+              ? rawAge.toInt()
+              : int.tryParse(rawAge?.toString() ?? ''),
       gender: data['gender']?.toString() ?? '',
+      bloodGroup: data['bloodGroup']?.toString() ?? '',
+      nationality: data['nationality']?.toString() ?? '',
+      motherTongue: data['motherTongue']?.toString() ?? '',
+      addressLine1: data['addressLine1']?.toString() ?? '',
+      addressLine2: data['addressLine2']?.toString() ?? '',
+      city: data['city']?.toString() ?? '',
+      state: data['state']?.toString() ?? '',
+      pincode: data['pincode']?.toString() ?? '',
       isActive: data['isActive'] == true,
       isApproved: data['isApproved'] == true,
       createdAt: createdAt is Timestamp
@@ -135,8 +185,19 @@ class AdminStudentModel {
       'name': name,
       'admissionNo': admissionNo,
       'classId': classId,
+      'section': section,
+      'rollNumber': rollNumber,
       'dateOfBirth': dateOfBirth,
+      'age': age,
       'gender': gender,
+      'bloodGroup': bloodGroup,
+      'nationality': nationality,
+      'motherTongue': motherTongue,
+      'addressLine1': addressLine1,
+      'addressLine2': addressLine2,
+      'city': city,
+      'state': state,
+      'pincode': pincode,
       'isActive': isActive,
       'isApproved': isApproved,
       'createdBy': createdBy,

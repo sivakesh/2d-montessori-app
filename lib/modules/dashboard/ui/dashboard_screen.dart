@@ -64,20 +64,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 runSpacing: 12,
                 children: [
                   ActionChip(
-                    label: const Text('Manage Classes'),
-                    onPressed: () => setState(() => selectedIndex = 1),
-                  ),
-                  ActionChip(
-                    label: const Text('Manage Students'),
-                    onPressed: () => setState(() => selectedIndex = 2),
-                  ),
-                  ActionChip(
                     label: const Text('Mark Student Attendance'),
                     onPressed: () => setState(() => selectedIndex = 3),
                   ),
                   ActionChip(
                     label: const Text('Mark Staff Attendance'),
-                    onPressed: () => setState(() => selectedIndex = 4),
+                    onPressed: () => setState(() => selectedIndex = 3),
                   ),
                 ],
               ),
@@ -252,10 +244,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         body: SafeArea(
           child: switch (selectedIndex) {
             0 => dashboardContent,
-            1 => const ClassListScreen(),
+            1 => const ClassListScreen(readOnly: true),
             2 => const StudentListScreen(),
             3 => const AttendanceScreen(),
-            4 => const AttendanceScreen(),
             _ => dashboardContent,
           },
         ),
@@ -312,10 +303,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       Expanded(
                         child: switch (selectedIndex) {
                           0 => dashboardContent,
-                          1 => const ClassListScreen(),
+                          1 => const ClassListScreen(readOnly: true),
                           2 => const StudentListScreen(),
                           3 => const AttendanceScreen(),
-                          4 => const AttendanceScreen(),
                           _ => dashboardContent,
                         },
                       ),

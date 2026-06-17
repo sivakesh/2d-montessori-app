@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:montessori_app/modules/auth/providers/auth_provider.dart';
+import 'package:montessori_app/modules/admin/ui/admin_dashboard.dart';
 
-class AppBottomNav extends StatelessWidget {
+class AppBottomNav extends ConsumerWidget {
   final int selectedIndex;
   final Function(int) onItemTapped;
 
@@ -11,39 +14,54 @@ class AppBottomNav extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final role = ref.watch(currentUserProvider)?.role ?? 'parent';
+    final destinations = <NavigationDestination>[
+      const NavigationDestination(
+        icon: Icon(Icons.dashboard_outlined),
+        selectedIcon: Icon(Icons.dashboard),
+        label: 'Dashboard',
+      ),
+      if (role != 'parent') ...[
+        const NavigationDestination(
+          icon: Icon(Icons.class_outlined),
+          selectedIcon: Icon(Icons.class_),
+          label: 'Classes',
+        ),
+        const NavigationDestination(
+          icon: Icon(Icons.people_outline),
+          selectedIcon: Icon(Icons.people),
+          label: 'Students',
+        ),
+        const NavigationDestination(
+          icon: Icon(Icons.check_circle_outline),
+          selectedIcon: Icon(Icons.check_circle),
+          label: 'Attendance',
+        ),
+      ],
+      if (role == 'admin')
+        const NavigationDestination(
+          icon: Icon(Icons.admin_panel_settings_outlined),
+          selectedIcon: Icon(Icons.admin_panel_settings),
+          label: 'Admin',
+        ),
+    ];
+
+    final safeIndex = selectedIndex.clamp(0, destinations.length - 1);
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: NavigationBar(
-        selectedIndex: selectedIndex,
-        onDestinationSelected: onItemTapped,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.dashboard_outlined),
-            selectedIcon: Icon(Icons.dashboard),
-            label: 'Dashboard',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.class_outlined),
-            selectedIcon: Icon(Icons.class_),
-            label: 'Classes',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.people_outline),
-            selectedIcon: Icon(Icons.people),
-            label: 'Students',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.check_circle_outline),
-            selectedIcon: Icon(Icons.check_circle),
-            label: 'Attendance',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.badge_outlined),
-            selectedIcon: Icon(Icons.badge),
-            label: 'Staff',
-          ),
-        ],
+        selectedIndex: safeIndex,
+        onDestinationSelected: (index) {
+          if (role == 'admin' && index == destinations.length - 1) {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const AdminDashboard()),
+            );
+            return;
+          }
+          onItemTapped(index);
+        },
+        destinations: destinations,
       ),
     );
   }

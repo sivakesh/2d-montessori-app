@@ -27,18 +27,12 @@ class UserService {
   Future<List<AppUser>> getStaffUsers() async {
     final result = await _firestore
         .collection('users')
-        .where('role', whereIn: ['staff', 'Staff'])
         .where('isActive', isEqualTo: true)
         .get();
-
-    // ignore: avoid_print
-    for (final doc in result.docs) {
-      // ignore: avoid_print
-      print(doc.data()['role']);
-    }
-
+    const staffRoles = {'staff', 'teacher', 'admin_staff'};
     return result.docs
         .map((doc) => AppUser.fromMap(doc.id, doc.data()))
+        .where((user) => staffRoles.contains(user.role.toLowerCase()))
         .toList();
   }
 

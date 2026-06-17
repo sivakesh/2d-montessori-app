@@ -1,9 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../auth/providers/auth_provider.dart';
+
 import '../../auth/data/user_service.dart';
 import '../../auth/models/app_user.dart';
+import '../../auth/providers/auth_provider.dart';
 import '../../classes/providers/class_provider.dart';
 import '../../students/providers/student_provider.dart';
 import '../providers/attendance_provider.dart';
@@ -16,599 +17,501 @@ class AttendanceScreen extends ConsumerStatefulWidget {
 }
 
 class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
-  bool _isLoading = false;
+  bool _loading = true;
   String? _errorMessage;
-  bool isMarkMode = false;
-  String _captureEntityType = 'students';
-
+  final _searchController = TextEditingController();
   final Set<String> _selectedClassIds = {};
-  List<QueryDocumentSnapshot<Map<String, dynamic>>> _todayRecords = [];
   List<QueryDocumentSnapshot<Map<String, dynamic>>> _classes = [];
   List<QueryDocumentSnapshot<Map<String, dynamic>>> _students = [];
   List<AppUser> _staff = [];
   Map<String, Map<String, dynamic>> _attendanceMap = {};
-  int _overviewStudentCount = 0;
-  int _overviewStaffCount = 0;
-  int _overviewTotalCount = 0;
-  int _overviewPresentCount = 0;
-  int _overviewAbsentCount = 0;
-  final Map<String, bool> _loadingMap = {};
+  Map<String, String> _classNames = {};
+  int _studentCount = 0;
+  int _staffCount = 0;
+  int _presentCount = 0;
+  int _absentCount = 0;
+  int _notMarkedCount = 0;
+  final Map<String, bool> _marking = {};
 
   @override
   void initState() {
     super.initState();
-    _loadClasses();
-    _loadOverview();
+    _loadData();
   }
 
-  String _todayKey() {
-    final now = DateTime.now().toLocal();
-    return '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
-  Future<void> _loadOverview() async {
-    if (!mounted) return;
+  Future<void> _loadData() async {
     setState(() {
-      _isLoading = true;
+      _loading = true;
       _errorMessage = null;
     });
-
     try {
-      final service = ref.read(attendanceServiceProvider);
+      final classService = ref.read(classServiceProvider);
       final studentService = ref.read(studentServiceProvider);
-      final attendanceMap = await service.getTodayAttendanceMap();
-      final records = await service.filterByClasses(
+      final userService = UserService();
+      final attendanceService = ref.read(attendanceServiceProvider);
+
+      final classes = await classService.getClasses();
+      final allStudents = await studentService.getAllStudents();
+      final staff = await userService.getStaffUsers();
+      final attendanceMap = await attendanceService.getTodayAttendanceMap();
+      final overview = await attendanceService.getAttendanceOverview(
         classIds: _selectedClassIds.toList(),
       );
-      final students = _selectedClassIds.isEmpty
-          ? await studentService.getAllStudents()
-          : await Future.wait(
-              _selectedClassIds.map(studentService.getStudentsByClass),
-            ).then((lists) => lists.expand((x) => x).toList());
-      final overview = await service.getAttendanceOverview(
+      final notMarked = await attendanceService.getNotMarkedCount(
         classIds: _selectedClassIds.toList(),
       );
+
+      final classNames = <String, String>{
+        for (final doc in classes) doc.id: doc.data()['name']?.toString() ?? '-',
+      };
+      final visibleStudents = allStudents.where((doc) {
+        final data = doc.data();
+        if (data['isActive'] != true) return false;
+        if (_selectedClassIds.isNotEmpty &&
+            !_selectedClassIds.contains(data['classId']?.toString() ?? '')) {
+          return false;
+        }
+        return _matchesStudent(doc, _searchController.text.trim().toLowerCase());
+      }).toList();
+      final filteredStaff = staff
+          .where((user) => _matchesStaff(user, _searchController.text.trim().toLowerCase()))
+          .toList();
+
       if (!mounted) return;
       setState(() {
-        _todayRecords = records;
+        _classes = classes;
+        _students = visibleStudents;
+        _staff = filteredStaff;
         _attendanceMap = attendanceMap;
-        _overviewStudentCount = overview.studentCount;
-        _overviewStaffCount = overview.staffCount;
-        _overviewPresentCount = overview.presentCount;
-        _overviewTotalCount = overview.totalCount;
-        _overviewAbsentCount = overview.absentCount;
+        _classNames = classNames;
+        _studentCount = overview.studentCount;
+        _staffCount = overview.staffCount;
+        _presentCount = overview.presentCount;
+        _absentCount = overview.absentCount;
+        _notMarkedCount = notMarked;
       });
-      // ignore: avoid_print
-      print("Students count: ${students.length}");
-      // ignore: avoid_print
-      print("Staff count: ${overview.staffCount}");
-      // ignore: avoid_print
-      print('Attendance count: ${records.length}');
     } catch (e) {
-      // ignore: avoid_print
-      print(e);
-      if (mounted) {
-        setState(() => _errorMessage = e.toString());
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  Future<void> _loadClasses() async {
-    final classService = ref.read(classServiceProvider);
-    final snap = await classService.getClasses();
-    if (!mounted) return;
-    setState(() => _classes = snap);
-  }
-
-  Future<void> _loadCaptureData() async {
-    if (!mounted) return;
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
-    try {
-      final attendanceService = ref.read(attendanceServiceProvider);
-      _attendanceMap = await attendanceService.getTodayAttendanceMap();
-      if (_captureEntityType == 'students') {
-        if (_selectedClassIds.isEmpty) {
-          _students = [];
-        } else {
-          final studentService = ref.read(studentServiceProvider);
-          final studentsByClass = await Future.wait(
-            _selectedClassIds.map(studentService.getStudentsByClass),
-          ).then((lists) => lists.expand((x) => x).toList());
-          final seen = <String>{};
-          _students = studentsByClass.where((doc) => seen.add(doc.id)).toList();
-        }
-      } else {
-        final userService = UserService();
-        _staff = await userService.getStaffUsers();
-      }
-      await _loadOverview();
-    } catch (e) {
-      // ignore: avoid_print
-      print(e);
       if (mounted) setState(() => _errorMessage = e.toString());
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _toggleCaptureMode() async {
-    setState(() {
-      isMarkMode = !isMarkMode;
-      _errorMessage = null;
-      if (!isMarkMode) {
-        _students = [];
-        _staff = [];
-      }
-    });
-    if (isMarkMode) {
-      await _loadCaptureData();
-    } else {
-      await _loadOverview();
+  bool _matchesStudent(QueryDocumentSnapshot<Map<String, dynamic>> doc, String query) {
+    if (query.isEmpty) return true;
+    final data = doc.data();
+    final name = data['name']?.toString().toLowerCase() ?? '';
+    final admissionNo = data['admissionNo']?.toString().toLowerCase() ?? '';
+    final className = _resolveClassName(data).toLowerCase();
+    return name.contains(query) || admissionNo.contains(query) || className.contains(query);
+  }
+
+  bool _matchesStaff(AppUser user, String query) {
+    if (query.isEmpty) return true;
+    final name = (user.name ?? '').toLowerCase();
+    final phone = user.phone.toLowerCase();
+    final role = user.role.toLowerCase();
+    return name.contains(query) || phone.contains(query) || role.contains(query);
+  }
+
+  String _resolveClassName(Map<String, dynamic> data) {
+    final explicit = data['className']?.toString().trim();
+    if (explicit != null && explicit.isNotEmpty) return explicit;
+    final classId = data['classId']?.toString().trim();
+    if (classId != null && classId.isNotEmpty) {
+      return _classNames[classId] ?? '-';
+    }
+    return '-';
+  }
+
+  String _statusLabel(Map<String, dynamic>? record) {
+    if (record == null) return 'Not Marked';
+    final status = (record['status']?.toString() ?? '').toLowerCase();
+    final hasPhoto = (record['photoUrl']?.toString() ?? '').isNotEmpty;
+    if (status == 'absent') return 'Absent';
+    if (status == 'present' || (status.isEmpty && hasPhoto)) return 'Present';
+    return 'Not Marked';
+  }
+
+  Color _statusBg(String label) {
+    switch (label) {
+      case 'Present':
+        return Colors.green.shade50;
+      case 'Absent':
+        return Colors.red.shade50;
+      default:
+        return Colors.grey.shade200;
     }
   }
 
-  Future<void> _captureStudentAttendance(
-    BuildContext context,
-    String studentId,
-    Map<String, dynamic> data,
-  ) async {
-    final service = ref.read(attendanceServiceProvider);
-    setState(() => _loadingMap[studentId] = true);
-    try {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Uploading photo...')));
-      final url = await service.captureAndUploadPhoto(
-        entityType: 'student',
-        entityId: studentId,
-      );
-      if (url == null) return;
-
-      await service.markStudentAttendance(
-        studentId: studentId,
-        studentName: data['name']?.toString() ?? '',
-        classId: data['classId']?.toString() ?? '',
-        markedBy: ref.read(currentUserProvider)!.id,
-        photoUrl: url,
-        status: 'present',
-      );
-      await _loadCaptureData();
-      await _loadOverview();
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Attendance marked')));
-    } catch (e) {
-      // ignore: avoid_print
-      print(e);
-      if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Upload failed')));
-      }
-    } finally {
-      if (mounted) setState(() => _loadingMap[studentId] = false);
+  Color _statusFg(String label) {
+    switch (label) {
+      case 'Present':
+        return Colors.green.shade700;
+      case 'Absent':
+        return Colors.red.shade700;
+      default:
+        return Colors.grey.shade700;
     }
   }
 
-  Future<void> _captureStaffAttendance(
-    BuildContext context,
-    AppUser staff,
-  ) async {
-    final service = ref.read(attendanceServiceProvider);
-    setState(() => _loadingMap[staff.id] = true);
-    try {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Uploading photo...')));
-      final url = await service.captureAndUploadPhoto(
-        entityType: 'staff',
-        entityId: staff.id,
-      );
-      if (url == null) return;
-
-      await service.markStaffAttendance(
-        staffId: staff.id,
-        staffName: staff.name?.isNotEmpty == true ? staff.name! : staff.phone,
-        markedBy: ref.read(currentUserProvider)!.id,
-        photoUrl: url,
-        status: 'present',
-      );
-      await _loadCaptureData();
-      await _loadOverview();
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Attendance marked')));
-    } catch (e) {
-      // ignore: avoid_print
-      print(e);
-      if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Upload failed')));
-      }
-    } finally {
-      if (mounted) setState(() => _loadingMap[staff.id] = false);
-    }
-  }
-
-  Future<void> _toggleStatus({
-    required String entityId,
+  Future<void> _markPresent({
     required String entityType,
-    required String status,
+    required String entityId,
+    required String entityName,
+    required String markedBy,
+    String? classId,
   }) async {
     final service = ref.read(attendanceServiceProvider);
-    setState(() => _loadingMap[entityId] = true);
+    setState(() => _marking[entityId] = true);
     try {
-      await service.updateAttendanceStatus(
-        entityId: entityId,
-        date: _todayKey(),
-        status: status,
+      final photoUrl = await service.captureAndUploadPhoto(
         entityType: entityType,
+        entityId: entityId,
       );
-      await _loadCaptureData();
-      await _loadOverview();
+      if (photoUrl == null) return;
+      await service.markPresent(
+        entityType: entityType,
+        entityId: entityId,
+        entityName: entityName,
+        classId: classId,
+        markedBy: markedBy,
+        photoUrl: photoUrl,
+      );
+      await _loadData();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Attendance marked')),
+        );
+      }
     } catch (e) {
-      // ignore: avoid_print
-      print(e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to mark attendance: $e')),
+        );
+      }
     } finally {
-      if (mounted) setState(() => _loadingMap[entityId] = false);
+      if (mounted) setState(() => _marking[entityId] = false);
     }
+  }
+
+  Future<void> _markAbsent({
+    required String entityType,
+    required String entityId,
+    required String entityName,
+    required String markedBy,
+    String? classId,
+  }) async {
+    final service = ref.read(attendanceServiceProvider);
+    setState(() => _marking[entityId] = true);
+    try {
+      await service.markAbsent(
+        entityType: entityType,
+        entityId: entityId,
+        entityName: entityName,
+        classId: classId,
+        markedBy: markedBy,
+      );
+      await _loadData();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Attendance marked')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to mark attendance: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _marking[entityId] = false);
+    }
+  }
+
+  Future<void> _confirmAbsent({
+    required String entityType,
+    required String entityId,
+    required String entityName,
+    required String markedBy,
+    String? classId,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Mark absent?'),
+        content: Text('Mark $entityName as absent for today?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Mark Absent'),
+          ),
+        ],
+      ),
+    );
+    if (result == true) {
+      await _markAbsent(
+        entityType: entityType,
+        entityId: entityId,
+        entityName: entityName,
+        markedBy: markedBy,
+        classId: classId,
+      );
+    }
+  }
+
+  String _attendanceKey(String entityType, String entityId) => '${entityType}_$entityId';
+
+  void _openAddAttendanceFlow() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Use the row actions below to add attendance')),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final currentUser = ref.watch(currentUserProvider);
-
     if (currentUser == null) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Today\'s Attendance Overview',
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      isMarkMode
-                          ? 'Mark attendance for students or staff.'
-                          : 'View today\'s records and switch to marking when needed.',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
-                    ),
-                  ],
-                ),
-              ),
-              _ScreenActionButton(
-                onPressed: _toggleCaptureMode,
-                icon: isMarkMode ? Icons.check : Icons.add,
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          if (_errorMessage != null) ...[
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.red.shade50,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.red.shade200),
-              ),
-              child: Text(
-                _errorMessage!,
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: Colors.red.shade700),
-              ),
-            ),
-            const SizedBox(height: 16),
-          ],
-          if (!isMarkMode) ...[
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
+    final searchQuery = _searchController.text.trim().toLowerCase();
+    final studentRows = _students.where((doc) => _matchesStudent(doc, searchQuery)).toList();
+    final staffRows = _staff.where((user) => _matchesStaff(user, searchQuery)).toList();
+
+    return Scaffold(
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: _loadData,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                for (final doc in _classes)
-                  FilterChip(
-                    selected: _selectedClassIds.contains(doc.id),
-                    label: Text(doc.data()['name']?.toString() ?? ''),
-                    onSelected: (selected) async {
-                      setState(() {
-                        if (selected) {
-                          _selectedClassIds.add(doc.id);
-                        } else {
-                          _selectedClassIds.remove(doc.id);
-                        }
-                      });
-                      await _loadOverview();
-                    },
-                  ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            _SummaryCard(
-              total: _overviewTotalCount,
-              present: _overviewPresentCount,
-              absent: _overviewAbsentCount,
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Text(
-                  'Students: $_overviewStudentCount',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade600),
-                ),
-                const SizedBox(width: 16),
-                Text(
-                  'Staff: $_overviewStaffCount',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade600),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _todayRecords.isEmpty
-                  ? const Center(child: Text('No attendance recorded today'))
-                  : ListView.separated(
-                      itemCount: _todayRecords.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 12),
-                      itemBuilder: (context, index) {
-                        final doc = _todayRecords[index];
-                        final data = doc.data();
-                        final photoUrl = data['photoUrl']?.toString();
-                        final name = data['entityName']?.toString() ?? '';
-                        final entityType = data['entityType']?.toString() ?? '';
-                        final status = (data['status']?.toString() ?? 'present')
-                            .toLowerCase();
-                        final typeLabel = entityType == 'staff'
-                            ? 'Staff'
-                            : 'Student';
-                        return Card(
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundImage:
-                                  (photoUrl != null && photoUrl.isNotEmpty)
-                                  ? NetworkImage(photoUrl)
-                                  : null,
-                              child: (photoUrl == null || photoUrl.isEmpty)
-                                  ? Text(
-                                      name.isNotEmpty
-                                          ? name[0].toUpperCase()
-                                          : '?',
-                                    )
-                                  : null,
-                            ),
-                            title: Text(name),
-                            subtitle: Row(
-                              children: [
-                                _Pill(label: typeLabel, color: Colors.blueGrey),
-                                const SizedBox(width: 8),
-                                _Pill(
-                                  label: status == 'absent'
-                                      ? 'Absent'
-                                      : 'Present',
-                                  color: status == 'absent'
-                                      ? Colors.red
-                                      : Colors.green,
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ] else ...[
-            _EntityToggle(
-              currentValue: _captureEntityType,
-              onChanged: (value) async {
-                setState(() => _captureEntityType = value);
-                await _loadCaptureData();
-              },
-            ),
-            const SizedBox(height: 16),
-            if (_captureEntityType == 'students') ...[
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Select Class',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-              const SizedBox(height: 8),
-              if (_classes.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: Text(
-                    'No classes available. Please create a class first.',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Colors.grey.shade600,
-                    ),
-                  ),
-                )
-              else
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    for (final doc in _classes)
-                      FilterChip(
-                        selected: _selectedClassIds.contains(doc.id),
-                        label: Text(doc.data()['name']?.toString() ?? ''),
-                        onSelected: (selected) async {
-                          setState(() {
-                            if (selected) {
-                              _selectedClassIds.add(doc.id);
-                            } else {
-                              _selectedClassIds.remove(doc.id);
-                            }
-                          });
-                          await _loadCaptureData();
-                        },
+                    Expanded(
+                      child: Text(
+                        'Today\'s Attendance Overview',
+                        style: Theme.of(context).textTheme.headlineSmall,
                       ),
+                    ),
+                    Material(
+                      color: Colors.green,
+                      shape: const CircleBorder(),
+                      child: Tooltip(
+                        message: 'Add Attendance',
+                        child: IconButton(
+                          onPressed: _openAddAttendanceFlow,
+                          icon: const Icon(Icons.add),
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
-              const SizedBox(height: 16),
-            ],
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _captureEntityType == 'students'
-                  ? _selectedClassIds.isEmpty
-                        ? Center(
-                            child: Text(
-                              'Select one or more classes to begin attendance',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.titleMedium
-                                  ?.copyWith(color: Colors.grey.shade600),
-                            ),
-                          )
-                        : _students.isEmpty
-                        ? const Center(child: Text('No students found'))
-                        : ListView.separated(
-                            itemCount: _students.length,
-                            separatorBuilder: (_, _) =>
-                                const SizedBox(height: 12),
-                            itemBuilder: (context, index) {
-                              final doc = _students[index];
-                              return _CaptureRow(
-                                doc: doc,
-                                loadingMap: _loadingMap,
-                                attendanceMap: _attendanceMap,
-                                onCapture: (context, id, data) =>
-                                    _captureStudentAttendance(
-                                      context,
-                                      id,
-                                      data,
-                                    ),
-                                onToggleStatus: _toggleStatus,
-                              );
-                            },
-                          )
-                  : _staff.isEmpty
-                  ? const Center(child: Text('No staff found'))
-                  : ListView.separated(
-                      itemCount: _staff.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 12),
+                const SizedBox(height: 8),
+                Text(
+                  'Mark students and staff directly from the lists below.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Colors.grey.shade600,
+                      ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _searchController,
+                  decoration: const InputDecoration(
+                    labelText: 'Search students or staff',
+                    prefixIcon: Icon(Icons.search),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+                const SizedBox(height: 16),
+                if (_errorMessage != null) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.red.shade200),
+                    ),
+                    child: Text(_errorMessage!),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                if (_loading)
+                  const Center(child: CircularProgressIndicator())
+                else ...[
+                  _SummaryCard(
+                    studentCount: _studentCount,
+                    staffCount: _staffCount,
+                    totalCount: _studentCount + _staffCount,
+                    presentCount: _presentCount,
+                    absentCount: _absentCount,
+                    notMarkedCount: _notMarkedCount,
+                  ),
+                  const SizedBox(height: 16),
+                  Text('Class Filter', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final doc in _classes)
+                        FilterChip(
+                          selected: _selectedClassIds.contains(doc.id),
+                          label: Text(doc.data()['name']?.toString() ?? ''),
+                          onSelected: (selected) {
+                            setState(() {
+                              if (selected) {
+                                _selectedClassIds.add(doc.id);
+                              } else {
+                                _selectedClassIds.remove(doc.id);
+                              }
+                            });
+                            _loadData();
+                          },
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Text('Students', style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 12),
+                  if (studentRows.isEmpty)
+                    const Text('No students available.')
+                  else
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: studentRows.length,
+                      separatorBuilder: (context, index) => const SizedBox(height: 12),
                       itemBuilder: (context, index) {
-                        final staff = _staff[index];
-                        return _StaffCaptureRow(
-                          staff: staff,
-                          loadingMap: _loadingMap,
-                          attendanceMap: _attendanceMap,
-                          onCapture: (context, staff) =>
-                              _captureStaffAttendance(context, staff),
-                          onToggleStatus: _toggleStatus,
+                        final doc = studentRows[index];
+                        final data = doc.data();
+                        final record = _attendanceMap[_attendanceKey('student', doc.id)];
+                        final status = _statusLabel(record);
+                        return _AttendanceCard(
+                          name: data['name']?.toString() ?? '',
+                          secondary: 'Admission No: ${data['admissionNo']?.toString() ?? '-'}',
+                          tertiary: 'Class: ${_resolveClassName(data)}',
+                          status: status,
+                          statusBg: _statusBg(status),
+                          statusFg: _statusFg(status),
+                          recordExists: record != null,
+                          marking: _marking[doc.id] == true,
+                          onPresent: () => _markPresent(
+                            entityType: 'student',
+                            entityId: doc.id,
+                            entityName: data['name']?.toString() ?? '',
+                            classId: data['classId']?.toString(),
+                            markedBy: currentUser.id,
+                          ),
+                          onAbsent: () => _confirmAbsent(
+                            entityType: 'student',
+                            entityId: doc.id,
+                            entityName: data['name']?.toString() ?? '',
+                            classId: data['classId']?.toString(),
+                            markedBy: currentUser.id,
+                          ),
                         );
                       },
                     ),
+                  const SizedBox(height: 20),
+                  Text('Staff', style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 12),
+                  if (staffRows.isEmpty)
+                    const Text('No staff available.')
+                  else
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: staffRows.length,
+                      separatorBuilder: (context, index) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        final staff = staffRows[index];
+                        final record = _attendanceMap[_attendanceKey('staff', staff.id)];
+                        final status = _statusLabel(record);
+                        final displayName = staff.name?.isNotEmpty == true ? staff.name! : staff.phone;
+                        return _AttendanceCard(
+                          name: displayName,
+                          secondary: 'Phone/Email: ${staff.phone}',
+                          tertiary: 'Role: ${staff.role}',
+                          status: status,
+                          statusBg: _statusBg(status),
+                          statusFg: _statusFg(status),
+                          recordExists: record != null,
+                          marking: _marking[staff.id] == true,
+                          onPresent: () => _markPresent(
+                            entityType: 'staff',
+                            entityId: staff.id,
+                            entityName: displayName,
+                            markedBy: currentUser.id,
+                          ),
+                          onAbsent: () => _confirmAbsent(
+                            entityType: 'staff',
+                            entityId: staff.id,
+                            entityName: displayName,
+                            markedBy: currentUser.id,
+                          ),
+                        );
+                      },
+                    ),
+                ],
+              ],
             ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _SummaryItem extends StatelessWidget {
-  const _SummaryItem({
-    required this.label,
-    required this.value,
-    this.valueColor,
-  });
-
-  final String label;
-  final String value;
-  final Color? valueColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(label, style: Theme.of(context).textTheme.bodySmall),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w700,
-            color: valueColor,
           ),
         ),
-      ],
+      ),
     );
   }
 }
 
 class _SummaryCard extends StatelessWidget {
   const _SummaryCard({
-    required this.total,
-    required this.present,
-    required this.absent,
+    required this.studentCount,
+    required this.staffCount,
+    required this.totalCount,
+    required this.presentCount,
+    required this.absentCount,
+    required this.notMarkedCount,
   });
 
-  final int total;
-  final int present;
-  final int absent;
+  final int studentCount;
+  final int staffCount;
+  final int totalCount;
+  final int presentCount;
+  final int absentCount;
+  final int notMarkedCount;
 
   @override
   Widget build(BuildContext context) {
     return Card(
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Row(
+        child: Wrap(
+          spacing: 24,
+          runSpacing: 16,
           children: [
-            Expanded(
-              child: _SummaryItem(label: 'Total', value: '$total'),
-            ),
-            Expanded(
-              child: _SummaryItem(
-                label: 'Present',
-                value: '$present',
-                valueColor: Colors.green,
-              ),
-            ),
-            Expanded(
-              child: _SummaryItem(
-                label: 'Absent',
-                value: '$absent',
-                valueColor: Colors.red,
-              ),
-            ),
+            _SummaryItem(label: 'Students', value: '$studentCount'),
+            _SummaryItem(label: 'Staff', value: '$staffCount'),
+            _SummaryItem(label: 'Total', value: '$totalCount'),
+            _SummaryItem(label: 'Present', value: '$presentCount', color: Colors.green),
+            _SummaryItem(label: 'Absent', value: '$absentCount', color: Colors.red),
+            _SummaryItem(label: 'Not Marked', value: '$notMarkedCount', color: Colors.grey),
           ],
         ),
       ),
@@ -616,209 +519,132 @@ class _SummaryCard extends StatelessWidget {
   }
 }
 
-class _Pill extends StatelessWidget {
-  const _Pill({required this.label, required this.color});
+class _SummaryItem extends StatelessWidget {
+  const _SummaryItem({required this.label, required this.value, this.color});
 
   final String label;
-  final Color color;
+  final String value;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(color: Colors.white, fontSize: 12),
-      ),
-    );
-  }
-}
-
-class _ScreenActionButton extends StatelessWidget {
-  const _ScreenActionButton({required this.onPressed, required this.icon});
-
-  final VoidCallback onPressed;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.green,
-      shape: const CircleBorder(),
-      elevation: 2,
-      shadowColor: Colors.black26,
-      child: IconButton(
-        onPressed: onPressed,
-        icon: Icon(icon),
-        iconSize: 22,
-        color: Colors.white,
-        constraints: const BoxConstraints.tightFor(width: 48, height: 48),
-        style: IconButton.styleFrom(
-          backgroundColor: Colors.green,
-          shape: const CircleBorder(),
-        ),
-      ),
-    );
-  }
-}
-
-class _EntityToggle extends StatelessWidget {
-  const _EntityToggle({required this.currentValue, required this.onChanged});
-
-  final String currentValue;
-  final Future<void> Function(String value) onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ChoiceChip(
-          label: const Text('Students'),
-          selected: currentValue == 'students',
-          onSelected: (_) => onChanged('students'),
-        ),
-        const SizedBox(width: 8),
-        ChoiceChip(
-          label: const Text('Staff'),
-          selected: currentValue == 'staff',
-          onSelected: (_) => onChanged('staff'),
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: color,
+                fontWeight: FontWeight.bold,
+              ),
         ),
       ],
     );
   }
 }
 
-class _CaptureRow extends StatelessWidget {
-  const _CaptureRow({
-    required this.doc,
-    required this.loadingMap,
-    required this.attendanceMap,
-    required this.onCapture,
-    required this.onToggleStatus,
+class _AttendanceCard extends StatelessWidget {
+  const _AttendanceCard({
+    required this.name,
+    required this.secondary,
+    required this.tertiary,
+    required this.status,
+    required this.statusBg,
+    required this.statusFg,
+    required this.onPresent,
+    required this.onAbsent,
+    required this.marking,
+    required this.recordExists,
   });
 
-  final QueryDocumentSnapshot<Map<String, dynamic>> doc;
-  final Map<String, bool> loadingMap;
-  final Map<String, Map<String, dynamic>> attendanceMap;
-  final Future<void> Function(
-    BuildContext context,
-    String id,
-    Map<String, dynamic> data,
-  )
-  onCapture;
-  final Future<void> Function({
-    required String entityId,
-    required String entityType,
-    required String status,
-  })
-  onToggleStatus;
+  final String name;
+  final String secondary;
+  final String tertiary;
+  final String status;
+  final Color statusBg;
+  final Color statusFg;
+  final VoidCallback onPresent;
+  final VoidCallback onAbsent;
+  final bool marking;
+  final bool recordExists;
 
   @override
   Widget build(BuildContext context) {
-    final data = doc.data();
-    final id = doc.id;
-    final isLoading = loadingMap[id] ?? false;
-    final entityType = data['entityType']?.toString() == 'staff'
-        ? 'staff'
-        : 'student';
-    final record = attendanceMap['${entityType}_$id'];
-    final recordExists = record != null;
-    final status = (record?['status']?.toString() ?? 'not_marked')
-        .toLowerCase();
-    final isAbsent = status == 'absent';
-    final name =
-        data['entityName']?.toString() ??
-        data['name']?.toString() ??
-        data['phone']?.toString() ??
-        '';
-    final typeLabel = entityType == 'staff' ? 'Staff' : 'Student';
-    final photoUrl = data['photoUrl']?.toString();
-
+    final isMarked = status == 'Present' || status == 'Absent';
     return Card(
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            CircleAvatar(
-              backgroundImage: (photoUrl != null && photoUrl.isNotEmpty)
-                  ? NetworkImage(photoUrl)
-                  : null,
-              child: (photoUrl == null || photoUrl.isEmpty)
-                  ? Text(name.isNotEmpty ? name[0].toUpperCase() : '?')
-                  : null,
-            ),
-            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(name),
+                  Text(name, style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 4),
+                  Text(secondary, style: Theme.of(context).textTheme.bodyMedium),
+                  const SizedBox(height: 2),
+                  Text(tertiary, style: Theme.of(context).textTheme.bodyMedium),
+                  const SizedBox(height: 10),
                   Row(
                     children: [
-                      _Pill(label: typeLabel, color: Colors.blueGrey),
-                      const SizedBox(width: 8),
-                      _Pill(
-                        label: isAbsent
-                            ? 'Absent'
-                            : recordExists
-                            ? 'Present'
-                            : 'Not Marked',
-                        color: isAbsent
-                            ? Colors.red
-                            : recordExists
-                            ? Colors.green
-                            : Colors.grey,
+                      Text(
+                        'Status:',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
                       ),
+                      const SizedBox(width: 8),
+                      _StatusPill(label: status, background: statusBg, foreground: statusFg),
                     ],
                   ),
                 ],
               ),
             ),
             const SizedBox(width: 12),
-            if (!recordExists)
-              isLoading
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : _CaptureIconButton(
-                      onPressed: () => onCapture(context, id, data),
-                    )
-            else
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  _PresentBadge(label: 'Present'),
-                  const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: isLoading
-                        ? null
-                        : () => onToggleStatus(
-                            entityId: id,
-                            entityType:
-                                data['entityType']?.toString() ?? 'student',
-                            status: isAbsent ? 'present' : 'absent',
-                          ),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.green.shade700,
-                      padding: EdgeInsets.zero,
-                      minimumSize: const Size(0, 32),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.end,
+              children: [
+                if (marking)
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else ...[
+                  Tooltip(
+                    message: isMarked ? 'Attendance marked' : 'Mark present with photo',
+                    child: Material(
+                      color: Colors.green,
+                      shape: const CircleBorder(),
+                      child: IconButton(
+                        onPressed: recordExists && status != 'Absent' ? null : onPresent,
+                        icon: isMarked ? const Icon(Icons.check) : const Icon(Icons.camera_alt),
+                        color: Colors.white,
+                      ),
                     ),
-                    child: Text(isAbsent ? 'Mark Present' : 'Mark Absent'),
+                  ),
+                  Tooltip(
+                    message: 'Mark absent',
+                    child: Material(
+                      color: Colors.red.shade500,
+                      shape: const CircleBorder(),
+                      child: IconButton(
+                        onPressed: status == 'Absent' ? null : onAbsent,
+                        icon: const Icon(Icons.person_off),
+                        color: Colors.white,
+                      ),
+                    ),
                   ),
                 ],
-              ),
+              ],
+            ),
           ],
         ),
       ),
@@ -826,164 +652,29 @@ class _CaptureRow extends StatelessWidget {
   }
 }
 
-class _StaffCaptureRow extends StatelessWidget {
-  const _StaffCaptureRow({
-    required this.staff,
-    required this.loadingMap,
-    required this.attendanceMap,
-    required this.onCapture,
-    required this.onToggleStatus,
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({
+    required this.label,
+    required this.background,
+    required this.foreground,
   });
-
-  final AppUser staff;
-  final Map<String, bool> loadingMap;
-  final Map<String, Map<String, dynamic>> attendanceMap;
-  final Future<void> Function(BuildContext context, AppUser staff) onCapture;
-  final Future<void> Function({
-    required String entityId,
-    required String entityType,
-    required String status,
-  })
-  onToggleStatus;
-
-  @override
-  Widget build(BuildContext context) {
-    final isLoading = loadingMap[staff.id] ?? false;
-    final record = attendanceMap['staff_${staff.id}'];
-    final recordExists = record != null;
-    final status = (record?['status']?.toString() ?? 'not_marked')
-        .toLowerCase();
-    final isAbsent = status == 'absent';
-    final name = staff.name?.isNotEmpty == true ? staff.name! : staff.phone;
-    final photoUrl = '';
-
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            CircleAvatar(
-              backgroundImage: (photoUrl.isNotEmpty)
-                  ? NetworkImage(photoUrl)
-                  : null,
-              child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?'),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(name),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      _Pill(label: 'Staff', color: Colors.blueGrey),
-                      const SizedBox(width: 8),
-                      _Pill(
-                        label: isAbsent
-                            ? 'Absent'
-                            : recordExists
-                            ? 'Present'
-                            : 'Not Marked',
-                        color: isAbsent
-                            ? Colors.red
-                            : recordExists
-                            ? Colors.green
-                            : Colors.grey,
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            if (!recordExists)
-              isLoading
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : _CaptureIconButton(
-                      onPressed: () => onCapture(context, staff),
-                    )
-            else
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  _PresentBadge(label: 'Present'),
-                  const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: isLoading
-                        ? null
-                        : () => onToggleStatus(
-                            entityId: staff.id,
-                            entityType: 'staff',
-                            status: isAbsent ? 'present' : 'absent',
-                          ),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.green.shade700,
-                      padding: EdgeInsets.zero,
-                      minimumSize: const Size(0, 32),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: Text(isAbsent ? 'Mark Present' : 'Mark Absent'),
-                  ),
-                ],
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CaptureIconButton extends StatelessWidget {
-  const _CaptureIconButton({required this.onPressed});
-
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.green.shade50,
-      shape: const CircleBorder(),
-      child: IconButton(
-        onPressed: onPressed,
-        icon: const Icon(Icons.camera_alt_outlined),
-        color: Colors.green.shade700,
-        style: IconButton.styleFrom(
-          backgroundColor: Colors.green.shade50,
-          shape: const CircleBorder(),
-        ),
-      ),
-    );
-  }
-}
-
-class _PresentBadge extends StatelessWidget {
-  const _PresentBadge({required this.label});
 
   final String label;
+  final Color background;
+  final Color foreground;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.green.shade50,
+        color: background,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.green.shade200),
       ),
       child: Text(
         label,
         style: TextStyle(
-          color: Colors.green.shade800,
-          fontSize: 12,
+          color: foreground,
           fontWeight: FontWeight.w600,
         ),
       ),

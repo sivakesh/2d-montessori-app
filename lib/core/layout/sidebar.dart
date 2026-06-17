@@ -41,13 +41,6 @@ class AppSidebar extends ConsumerWidget {
           label: Text('Attendance'),
         ),
       ],
-      if (role == 'staff') ...[
-        const NavigationRailDestination(
-          icon: Icon(Icons.badge_outlined),
-          selectedIcon: Icon(Icons.badge),
-          label: Text('Staff'),
-        ),
-      ],
       if (role == 'admin') ...[
         const NavigationRailDestination(
           icon: Icon(Icons.admin_panel_settings_outlined),

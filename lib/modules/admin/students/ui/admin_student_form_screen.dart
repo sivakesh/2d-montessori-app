@@ -66,7 +66,19 @@ class AdminStudentFormBodyState extends State<AdminStudentFormBody> {
   final _service = AdminStudentService();
   final _nameController = TextEditingController();
   final _admissionController = TextEditingController();
+  final _sectionController = TextEditingController();
+  final _rollNumberController = TextEditingController();
   final _dobController = TextEditingController();
+  final _ageController = TextEditingController();
+  final _bloodGroupController = TextEditingController();
+  final _nationalityController = TextEditingController();
+  final _motherTongueController = TextEditingController();
+  final _addressLine1Controller = TextEditingController();
+  final _addressLine2Controller = TextEditingController();
+  final _cityController = TextEditingController();
+  final _stateController = TextEditingController();
+  final _pincodeController = TextEditingController();
+  final _profileImageUrlController = TextEditingController();
   List<QueryDocumentSnapshot<Map<String, dynamic>>> _classes = [];
   bool _loading = true;
   String? _classId;
@@ -79,9 +91,21 @@ class AdminStudentFormBodyState extends State<AdminStudentFormBody> {
     final data = widget.initialData ?? const {};
     _nameController.text = data['name']?.toString() ?? '';
     _admissionController.text = data['admissionNo']?.toString() ?? '';
+    _sectionController.text = data['section']?.toString() ?? '';
+    _rollNumberController.text = data['rollNumber']?.toString() ?? '';
     _dobController.text = data['dateOfBirth']?.toString() ?? '';
+    _ageController.text = _initialAgeText(data['age'], data['dateOfBirth']);
     _classId = data['classId']?.toString();
     _gender = data['gender']?.toString() ?? 'Male';
+    _bloodGroupController.text = data['bloodGroup']?.toString() ?? '';
+    _nationalityController.text = data['nationality']?.toString() ?? '';
+    _motherTongueController.text = data['motherTongue']?.toString() ?? '';
+    _addressLine1Controller.text = data['addressLine1']?.toString() ?? '';
+    _addressLine2Controller.text = data['addressLine2']?.toString() ?? '';
+    _cityController.text = data['city']?.toString() ?? '';
+    _stateController.text = data['state']?.toString() ?? '';
+    _pincodeController.text = data['pincode']?.toString() ?? '';
+    _profileImageUrlController.text = data['profileImageUrl']?.toString() ?? '';
     _isActive = data['isActive'] != false;
     _loadClasses();
   }
@@ -90,8 +114,48 @@ class AdminStudentFormBodyState extends State<AdminStudentFormBody> {
   void dispose() {
     _nameController.dispose();
     _admissionController.dispose();
+    _sectionController.dispose();
+    _rollNumberController.dispose();
     _dobController.dispose();
+    _ageController.dispose();
+    _bloodGroupController.dispose();
+    _nationalityController.dispose();
+    _motherTongueController.dispose();
+    _addressLine1Controller.dispose();
+    _addressLine2Controller.dispose();
+    _cityController.dispose();
+    _stateController.dispose();
+    _pincodeController.dispose();
+    _profileImageUrlController.dispose();
     super.dispose();
+  }
+
+  int? _calculateAgeFromDob(String dobText) {
+    final dob = DateTime.tryParse(dobText.trim());
+    if (dob == null) return null;
+    final today = DateTime.now();
+    final normalizedDob = DateTime(dob.year, dob.month, dob.day);
+    final normalizedToday = DateTime(today.year, today.month, today.day);
+    if (normalizedDob.isAfter(normalizedToday)) return null;
+    var age = normalizedToday.year - normalizedDob.year;
+    final hadBirthday =
+        normalizedToday.month > normalizedDob.month ||
+        (normalizedToday.month == normalizedDob.month &&
+            normalizedToday.day >= normalizedDob.day);
+    if (!hadBirthday) age -= 1;
+    return age < 0 ? null : age;
+  }
+
+  String _initialAgeText(Object? age, Object? dob) {
+    final parsedAge = int.tryParse(age?.toString() ?? '');
+    if (parsedAge != null) return parsedAge.toString();
+    final computedAge = _calculateAgeFromDob(dob?.toString() ?? '');
+    return computedAge?.toString() ?? '';
+  }
+
+  void _syncAgeFromDob() {
+    _ageController.text =
+        _calculateAgeFromDob(_dobController.text)?.toString() ?? '';
   }
 
   Future<void> _loadClasses() async {
@@ -114,6 +178,7 @@ class AdminStudentFormBodyState extends State<AdminStudentFormBody> {
     if (picked == null) return;
     setState(() {
       _dobController.text = picked.toIso8601String().split('T').first;
+      _syncAgeFromDob();
     });
   }
 
@@ -139,12 +204,24 @@ class AdminStudentFormBodyState extends State<AdminStudentFormBody> {
       name: _nameController.text.trim(),
       admissionNo: admissionNo,
       classId: _classId ?? '',
+      section: _sectionController.text.trim(),
+      rollNumber: _rollNumberController.text.trim(),
       dateOfBirth: _dobController.text.trim(),
+      age: _calculateAgeFromDob(_dobController.text),
       gender: _gender,
+      bloodGroup: _bloodGroupController.text.trim(),
+      nationality: _nationalityController.text.trim(),
+      motherTongue: _motherTongueController.text.trim(),
+      addressLine1: _addressLine1Controller.text.trim(),
+      addressLine2: _addressLine2Controller.text.trim(),
+      city: _cityController.text.trim(),
+      state: _stateController.text.trim(),
+      pincode: _pincodeController.text.trim(),
       isActive: _isActive,
       isApproved: widget.initialData?['isApproved'] == true,
       createdAt: null,
       createdBy: widget.initialData?['createdBy']?.toString(),
+      profileImageUrl: _profileImageUrlController.text.trim(),
       parentLinks:
           (widget.initialData?['parentLinks'] as List<dynamic>? ?? const [])
               .whereType<Map>()
@@ -193,6 +270,17 @@ class AdminStudentFormBodyState extends State<AdminStudentFormBody> {
                   value == null || value.trim().isEmpty ? 'Required' : null,
             ),
             const SizedBox(height: 10),
+            TextFormField(
+              controller: _sectionController,
+              decoration: const InputDecoration(labelText: 'Section'),
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _rollNumberController,
+              decoration: const InputDecoration(labelText: 'Roll Number'),
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 10),
             DropdownButtonFormField<String>(
               initialValue: _classId,
               items: [
@@ -212,10 +300,30 @@ class AdminStudentFormBodyState extends State<AdminStudentFormBody> {
               controller: _dobController,
               readOnly: true,
               onTap: _pickDob,
+              onChanged: (_) => setState(_syncAgeFromDob),
               decoration: const InputDecoration(
                 labelText: 'Date of Birth',
                 suffixIcon: Icon(Icons.calendar_month),
               ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) return null;
+                final dob = DateTime.tryParse(value.trim());
+                if (dob == null) return 'Invalid date';
+                final normalizedDob = DateTime(dob.year, dob.month, dob.day);
+                final today = DateTime.now();
+                final normalizedToday =
+                    DateTime(today.year, today.month, today.day);
+                if (normalizedDob.isAfter(normalizedToday)) {
+                  return 'DOB cannot be in the future';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _ageController,
+              readOnly: true,
+              decoration: const InputDecoration(labelText: 'Age'),
             ),
             const SizedBox(height: 10),
             DropdownButtonFormField<String>(
@@ -234,6 +342,52 @@ class AdminStudentFormBodyState extends State<AdminStudentFormBody> {
               value: _isActive,
               onChanged: (value) => setState(() => _isActive = value),
               title: const Text('Active'),
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _bloodGroupController,
+              decoration: const InputDecoration(labelText: 'Blood Group'),
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _nationalityController,
+              decoration: const InputDecoration(labelText: 'Nationality'),
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _motherTongueController,
+              decoration: const InputDecoration(labelText: 'Mother Tongue'),
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _addressLine1Controller,
+              decoration: const InputDecoration(labelText: 'Address Line 1'),
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _addressLine2Controller,
+              decoration: const InputDecoration(labelText: 'Address Line 2'),
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _cityController,
+              decoration: const InputDecoration(labelText: 'City'),
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _stateController,
+              decoration: const InputDecoration(labelText: 'State'),
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _pincodeController,
+              decoration: const InputDecoration(labelText: 'Pincode'),
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _profileImageUrlController,
+              decoration: const InputDecoration(labelText: 'Profile Image URL'),
             ),
             if (widget.showSaveButton) ...[
               const SizedBox(height: 12),
