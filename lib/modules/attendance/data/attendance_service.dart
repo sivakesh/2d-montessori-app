@@ -1,4 +1,5 @@
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -235,7 +236,7 @@ class AttendanceService {
     return doc.exists;
   }
 
-  Future<void> _markAttendance({
+  Future<String> _markAttendance({
     required String entityType,
     required String entityId,
     required String entityName,
@@ -267,6 +268,7 @@ class AttendanceService {
     }, SetOptions(merge: true));
     // ignore: avoid_print
     print('Attendance saved');
+    return id;
   }
 
   Future<void> updateAttendanceStatus({
@@ -320,7 +322,7 @@ class AttendanceService {
     }, SetOptions(merge: true));
   }
 
-  Future<void> markPresent({
+  Future<String> markPresent({
     required String entityId,
     required String entityType,
     required String entityName,
@@ -343,6 +345,7 @@ class AttendanceService {
       'updatedAt': FieldValue.serverTimestamp(),
       'createdAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+    return id;
   }
 
   Future<void> markAttendance({
@@ -386,7 +389,7 @@ class AttendanceService {
     return staffDoc.exists || studentDoc.exists;
   }
 
-  Future<void> markStudentAttendance({
+  Future<String> markStudentAttendance({
     required String studentId,
     required String studentName,
     required String classId,
@@ -394,7 +397,7 @@ class AttendanceService {
     String? photoUrl,
     String status = 'present',
   }) async {
-    await _markAttendance(
+    return _markAttendance(
       entityType: 'student',
       entityId: studentId,
       entityName: studentName,
@@ -405,14 +408,14 @@ class AttendanceService {
     );
   }
 
-  Future<void> markStaffAttendance({
+  Future<String> markStaffAttendance({
     required String staffId,
     required String staffName,
     required String markedBy,
     String? photoUrl,
     String status = 'present',
   }) async {
-    await _markAttendance(
+    return _markAttendance(
       entityType: 'staff',
       entityId: staffId,
       entityName: staffName,

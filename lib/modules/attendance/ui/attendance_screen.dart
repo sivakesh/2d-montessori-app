@@ -6,6 +6,9 @@ import '../../auth/data/user_service.dart';
 import '../../auth/models/app_user.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../classes/providers/class_provider.dart';
+import '../../mood_checkin/providers/mood_checkin_provider.dart';
+import '../../mood_checkin/ui/mood_checkin_dialog.dart';
+import '../../mood_checkin/services/mood_checkin_service.dart';
 import '../../students/providers/student_provider.dart';
 import '../providers/attendance_provider.dart';
 
@@ -32,6 +35,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   int _absentCount = 0;
   int _notMarkedCount = 0;
   final Map<String, bool> _marking = {};
+  final Map<String, String> _latestMoodLabels = {};
 
   @override
   void initState() {
@@ -55,6 +59,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
       final studentService = ref.read(studentServiceProvider);
       final userService = UserService();
       final attendanceService = ref.read(attendanceServiceProvider);
+      final moodService = ref.read(moodCheckinServiceProvider);
 
       final classes = await classService.getClasses();
       final allStudents = await studentService.getAllStudents();
@@ -66,6 +71,15 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
       final notMarked = await attendanceService.getNotMarkedCount(
         classIds: _selectedClassIds.toList(),
       );
+      final latestMoodLabels = <String, String>{};
+      for (final doc in allStudents) {
+        final label = await _latestMoodLabel(moodService, 'student', doc.id);
+        if (label != null) latestMoodLabels[_attendanceKey('student', doc.id)] = label;
+      }
+      for (final user in staff) {
+        final label = await _latestMoodLabel(moodService, 'staff', user.id);
+        if (label != null) latestMoodLabels[_attendanceKey('staff', user.id)] = label;
+      }
 
       final classNames = <String, String>{
         for (final doc in classes) doc.id: doc.data()['name']?.toString() ?? '-',
@@ -95,6 +109,9 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         _presentCount = overview.presentCount;
         _absentCount = overview.absentCount;
         _notMarkedCount = notMarked;
+        _latestMoodLabels
+          ..clear()
+          ..addAll(latestMoodLabels);
       });
     } catch (e) {
       if (mounted) setState(() => _errorMessage = e.toString());
@@ -139,6 +156,15 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     return 'Not Marked';
   }
 
+  Future<String?> _latestMoodLabel(
+    MoodCheckinService moodService,
+    String entityType,
+    String entityId,
+  ) async {
+    final latest = await moodService.getLatestMoodForEntity(entityType, entityId);
+    return latest?.moodLabel;
+  }
+
   Color _statusBg(String label) {
     switch (label) {
       case 'Present':
@@ -169,20 +195,50 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     String? classId,
   }) async {
     final service = ref.read(attendanceServiceProvider);
+    final moodService = ref.read(moodCheckinServiceProvider);
+    final mood = await MoodCheckinDialog.show(
+      context,
+      entityType: entityType,
+    );
+    if (mood == null) return;
     setState(() => _marking[entityId] = true);
     try {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Uploading photo...')),
+      );
       final photoUrl = await service.captureAndUploadPhoto(
         entityType: entityType,
         entityId: entityId,
       );
       if (photoUrl == null) return;
-      await service.markPresent(
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Saving attendance...')),
+      );
+      final attendanceId = await service.markPresent(
         entityType: entityType,
         entityId: entityId,
         entityName: entityName,
         classId: classId,
         markedBy: markedBy,
         photoUrl: photoUrl,
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Saving mood check-in...')),
+      );
+      await moodService.createMoodCheckin(
+        entityType: entityType,
+        entityId: entityId,
+        entityName: entityName,
+        classId: classId,
+        moodCode: mood.moodCode,
+        moodLabel: mood.moodLabel,
+        moodCategory: mood.moodCategory,
+        intensity: mood.intensity,
+        notes: mood.notes,
+        source: 'attendance',
+        attendanceId: attendanceId,
+        photoUrl: photoUrl,
+        createdBy: markedBy,
       );
       await _loadData();
       if (mounted) {
@@ -407,10 +463,12 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                           name: data['name']?.toString() ?? '',
                           secondary: 'Admission No: ${data['admissionNo']?.toString() ?? '-'}',
                           tertiary: 'Class: ${_resolveClassName(data)}',
+                          entityType: 'student',
                           status: status,
                           statusBg: _statusBg(status),
                           statusFg: _statusFg(status),
                           recordExists: record != null,
+                          latestMoodLabel: _latestMoodLabels[_attendanceKey('student', doc.id)],
                           marking: _marking[doc.id] == true,
                           onPresent: () => _markPresent(
                             entityType: 'student',
@@ -449,10 +507,12 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                           name: displayName,
                           secondary: 'Phone/Email: ${staff.phone}',
                           tertiary: 'Role: ${staff.role}',
+                          entityType: 'staff',
                           status: status,
                           statusBg: _statusBg(status),
                           statusFg: _statusFg(status),
                           recordExists: record != null,
+                          latestMoodLabel: _latestMoodLabels[_attendanceKey('staff', staff.id)],
                           marking: _marking[staff.id] == true,
                           onPresent: () => _markPresent(
                             entityType: 'staff',
@@ -550,6 +610,7 @@ class _AttendanceCard extends StatelessWidget {
     required this.name,
     required this.secondary,
     required this.tertiary,
+    required this.entityType,
     required this.status,
     required this.statusBg,
     required this.statusFg,
@@ -557,11 +618,13 @@ class _AttendanceCard extends StatelessWidget {
     required this.onAbsent,
     required this.marking,
     required this.recordExists,
+    required this.latestMoodLabel,
   });
 
   final String name;
   final String secondary;
   final String tertiary;
+  final String entityType;
   final String status;
   final Color statusBg;
   final Color statusFg;
@@ -569,6 +632,7 @@ class _AttendanceCard extends StatelessWidget {
   final VoidCallback onAbsent;
   final bool marking;
   final bool recordExists;
+  final String? latestMoodLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -602,6 +666,12 @@ class _AttendanceCard extends StatelessWidget {
                       _StatusPill(label: status, background: statusBg, foreground: statusFg),
                     ],
                   ),
+                  if (latestMoodLabel != null) ...[
+                    const SizedBox(height: 8),
+                    _MoodPill(
+                      label: '${entityType == 'staff' ? 'Wellbeing' : 'Mood'}: $latestMoodLabel',
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -675,6 +745,30 @@ class _StatusPill extends StatelessWidget {
         label,
         style: TextStyle(
           color: foreground,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+class _MoodPill extends StatelessWidget {
+  const _MoodPill({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: Colors.blue.shade700,
           fontWeight: FontWeight.w600,
         ),
       ),
