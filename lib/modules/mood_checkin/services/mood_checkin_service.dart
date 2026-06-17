@@ -32,6 +32,15 @@ class MoodCheckinService {
         .where('checkInAt', isLessThan: Timestamp.fromDate(end));
   }
 
+  Query<Map<String, dynamic>> _todayCreatedAtQuery() {
+    final today = DateTime.now().toLocal();
+    final start = DateTime(today.year, today.month, today.day);
+    final end = start.add(const Duration(days: 1));
+    return _collection
+        .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('createdAt', isLessThan: Timestamp.fromDate(end));
+  }
+
   Future<int> getTodayMoodCheckinCount() async {
     final docs = await _todayQuery().get();
     return docs.docs.length;
@@ -151,13 +160,40 @@ class MoodCheckinService {
   }
 
   Future<MoodCheckinModel?> getLatestMoodForEntity(String entityType, String entityId) async {
-    final snapshot = await _collection
-        .where('entityType', isEqualTo: entityType)
-        .where('entityId', isEqualTo: entityId)
-        .orderBy('checkInAt', descending: true)
-        .limit(1)
-        .get();
-    if (snapshot.docs.isEmpty) return null;
-    return MoodCheckinModel.fromFirestore(snapshot.docs.first);
+    final todayDocs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+    final byCheckInAt = await _todayQuery().get();
+    final byCreatedAt = await _todayCreatedAtQuery().get();
+
+    final seenIds = <String>{};
+    for (final doc in byCheckInAt.docs) {
+      if (seenIds.add(doc.id)) todayDocs.add(doc);
+    }
+    for (final doc in byCreatedAt.docs) {
+      if (seenIds.add(doc.id)) todayDocs.add(doc);
+    }
+
+    final matchingDocs = todayDocs.where((doc) {
+      final data = doc.data();
+      return data['entityType']?.toString() == entityType &&
+          data['entityId']?.toString() == entityId;
+    }).toList();
+
+    if (matchingDocs.isEmpty) return null;
+
+    matchingDocs.sort((a, b) {
+      DateTime? resolve(Map<String, dynamic> data) {
+        final checkIn = data['checkInAt'];
+        if (checkIn is Timestamp) return checkIn.toDate();
+        final created = data['createdAt'];
+        if (created is Timestamp) return created.toDate();
+        return null;
+      }
+
+      final aTime = resolve(a.data()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bTime = resolve(b.data()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bTime.compareTo(aTime);
+    });
+
+    return MoodCheckinModel.fromFirestore(matchingDocs.first);
   }
 }

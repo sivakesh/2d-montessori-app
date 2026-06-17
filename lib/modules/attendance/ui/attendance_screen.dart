@@ -637,6 +637,7 @@ class _AttendanceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isMarked = status == 'Present' || status == 'Absent';
+    final moodLabel = latestMoodLabel;
     return Card(
       elevation: 0,
       child: Padding(
@@ -666,11 +667,9 @@ class _AttendanceCard extends StatelessWidget {
                       _StatusPill(label: status, background: statusBg, foreground: statusFg),
                     ],
                   ),
-                  if (latestMoodLabel != null) ...[
+                  if (moodLabel != null && moodLabel.isNotEmpty) ...[
                     const SizedBox(height: 8),
-                    _MoodPill(
-                      label: '${entityType == 'staff' ? 'Wellbeing' : 'Mood'}: $latestMoodLabel',
-                    ),
+                    _MoodPill(label: moodLabel),
                   ],
                 ],
               ),
