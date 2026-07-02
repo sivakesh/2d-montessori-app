@@ -32,6 +32,60 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     super.dispose();
   }
 
+  Future<AppUser> loginDev(String phoneNumber) async {
+    final userService = UserService();
+    final appUser = await userService.getOrCreateDevUser(phoneNumber);
+
+    return AppUser(
+      id: appUser['id']?.toString() ?? userService.normalizePhone(phoneNumber),
+      phone:
+          appUser['phoneNumber']?.toString() ??
+          userService.normalizePhone(phoneNumber),
+      name: appUser['name']?.toString(),
+      role: appUser['role']?.toString() ?? 'parent',
+      isActive: appUser['isActive'] ?? true,
+    );
+  }
+
+  Future<AppUser> loginProdWithOtpCredential(AuthCredential credential) async {
+    final userCredential = await FirebaseAuth.instance.signInWithCredential(
+      credential,
+    );
+
+    final firebaseUser =
+        FirebaseAuth.instance.currentUser ?? userCredential.user;
+    if (firebaseUser == null) {
+      throw FirebaseAuthException(
+        code: 'no-auth-user',
+        message: 'Login failed. Please try again.',
+      );
+    }
+
+    final phoneNumber = firebaseUser.phoneNumber;
+    if (phoneNumber == null || phoneNumber.isEmpty) {
+      throw FirebaseAuthException(
+        code: 'missing-phone-number',
+        message: 'Phone number missing from authenticated user.',
+      );
+    }
+
+    final userService = UserService();
+    final appUser = await userService.getOrCreateProdUser(
+      phoneNumber: phoneNumber,
+      firebaseAuthUid: firebaseUser.uid,
+    );
+
+    return AppUser(
+      id: appUser['id']?.toString() ?? userService.normalizePhone(phoneNumber),
+      phone:
+          appUser['phoneNumber']?.toString() ??
+          userService.normalizePhone(phoneNumber),
+      name: appUser['name']?.toString(),
+      role: appUser['role']?.toString() ?? 'parent',
+      isActive: appUser['isActive'] ?? true,
+    );
+  }
+
   Future<void> _verifyOtp() async {
     final otp = _otpController.text.trim();
     if (otp.length != 6) {
@@ -50,59 +104,15 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
         smsCode: otp,
       );
 
-      final userCredential = await FirebaseAuth.instance.signInWithCredential(
-        credential,
-      );
-
-      final firebaseUser =
-          FirebaseAuth.instance.currentUser ?? userCredential.user;
-
-      if (firebaseUser == null) {
-        throw FirebaseAuthException(
-          code: 'no-auth-user',
-          message: 'Login failed. Please try again.',
-        );
-      }
-
-      final phone = firebaseUser.phoneNumber ?? widget.phoneNumber;
-      final userService = UserService();
-
       if (kReleaseMode) {
-        final appUser = await userService.getOrCreateProdUser(
-          firebaseAuthUid: firebaseUser.uid,
-          phoneNumber: phone,
-        );
-
-        final resolvedUser = AppUser(
-          id: appUser['id']?.toString() ?? userService.normalizePhone(phone),
-          phone:
-              appUser['phoneNumber']?.toString() ??
-              userService.normalizePhone(phone),
-          name: appUser['name']?.toString(),
-          role: appUser['role']?.toString() ?? 'user',
-          isActive: appUser['isActive'] ?? true,
-        );
-
-        ref.read(currentUserProvider.notifier).state = resolvedUser;
-
+        final appUser = await loginProdWithOtpCredential(credential);
+        ref.read(currentUserProvider.notifier).state = appUser;
         if (mounted) {
           Navigator.pushReplacementNamed(context, '/dashboard');
         }
       } else {
-        final appUser = await userService.getOrCreateDevUser(phone);
-
-        final resolvedUser = AppUser(
-          id: appUser['id']?.toString() ?? userService.normalizePhone(phone),
-          phone:
-              appUser['phoneNumber']?.toString() ??
-              userService.normalizePhone(phone),
-          name: appUser['name']?.toString(),
-          role: appUser['role']?.toString() ?? 'parent',
-          isActive: appUser['isActive'] ?? true,
-        );
-
-        ref.read(currentUserProvider.notifier).state = resolvedUser;
-
+        final appUser = await loginDev(widget.phoneNumber);
+        ref.read(currentUserProvider.notifier).state = appUser;
         if (mounted) {
           Navigator.pushReplacementNamed(context, '/dashboard');
         }
