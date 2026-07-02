@@ -40,25 +40,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     phone = phone.replaceAll(' ', '');
 
-    final userData = await userService.getUserByPhone(phone);
+    debugPrint('DEV auth flow');
+    final appUser = await userService.getOrCreateDevUser(phone);
+    debugPrint('DEV user ready: ${appUser['id']}');
 
-    if (userData != null) {
-      final user = AppUser(
-        id: phone,
-        phone: userData['phone'] ?? phone,
-        name: userData['name'],
-        role: userData['role'] ?? 'parent',
-        isActive: userData['isActive'] ?? true,
-      );
+    ref.read(currentUserProvider.notifier).state = AppUser(
+      id: appUser['id']?.toString() ?? phone,
+      phone: appUser['phoneNumber']?.toString() ?? phone,
+      name: appUser['name']?.toString(),
+      role: appUser['role']?.toString() ?? 'parent',
+      isActive: appUser['isActive'] ?? true,
+    );
 
-      ref.read(currentUserProvider.notifier).state = user;
-
-      if (context.mounted) {
-        Navigator.pushReplacementNamed(context, '/dashboard');
-      }
-    } else {
-      // ignore: avoid_print
-      print('DEV: User not found');
+    if (context.mounted) {
+      Navigator.pushReplacementNamed(context, '/dashboard');
     }
   }
 

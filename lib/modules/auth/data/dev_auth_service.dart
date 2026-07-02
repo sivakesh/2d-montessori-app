@@ -7,7 +7,8 @@ import 'package:montessori_app/modules/auth/models/app_user.dart';
 import 'package:montessori_app/modules/auth/providers/auth_provider.dart';
 
 class DevAuthService implements AuthService {
-  DevAuthService({UserService? userService}) : _userService = userService ?? UserService();
+  DevAuthService({UserService? userService})
+    : _userService = userService ?? UserService();
 
   final UserService _userService;
 
@@ -22,19 +23,32 @@ class DevAuthService implements AuthService {
     }
 
     final userData = await _userService.getUserByPhone(phone);
-    if (userData == null) {
-      return null;
+    if (userData != null) {
+      return AppUser(
+        id: userData['id']?.toString() ?? _userService.normalizePhone(phone),
+        phone:
+            userData['phoneNumber']?.toString() ??
+            _userService.normalizePhone(phone),
+        name: userData['name']?.toString(),
+        role: userData['role']?.toString() ?? 'parent',
+        isActive: userData['isActive'] ?? true,
+      );
     }
 
-    return AppUser.fromMap(
-      phone,
-      userData,
+    final created = await _userService.createDevUser(phone);
+    return AppUser(
+      id: created['id']?.toString() ?? _userService.normalizePhone(phone),
+      phone:
+          created['phoneNumber']?.toString() ??
+          _userService.normalizePhone(phone),
+      name: created['name']?.toString(),
+      role: created['role']?.toString() ?? 'parent',
+      isActive: created['isActive'] ?? true,
     );
   }
 
   @override
-  Future<void> signOut() async {
-  }
+  Future<void> signOut() async {}
 
   @override
   Future<void> logout(WidgetRef ref, BuildContext context) async {

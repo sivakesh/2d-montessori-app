@@ -53,23 +53,22 @@ class ProdAuthService implements AuthService {
       return null;
     }
 
-    final userDataByUid = await _userService.getUserByUid(firebaseUid);
-    if (userDataByUid != null) {
-      return AppUser.fromMap(firebaseUid, userDataByUid);
-    }
-
-    final userDataByPhone = await _userService.getUserByPhone(phone);
-    if (userDataByPhone != null) {
-      await _userService.createUser(firebaseUid, phone);
-      return AppUser.fromMap(firebaseUid, userDataByPhone);
-    }
-
-    await _userService.createUser(firebaseUid, phone);
+    debugPrint('PROD auth started');
+    debugPrint('Firebase Auth UID: $firebaseUid');
+    debugPrint('Raw phone: $phone');
+    debugPrint('Normalized phone: ${_userService.normalizePhone(phone)}');
+    final resolvedData = await _userService.getOrCreateProdUser(
+      firebaseAuthUid: firebaseUid,
+      phoneNumber: phone,
+    );
     return AppUser(
-      id: firebaseUid,
-      phone: phone,
-      role: 'parent',
-      isActive: true,
+      id: resolvedData['id']?.toString() ?? _userService.normalizePhone(phone),
+      phone:
+          resolvedData['phoneNumber']?.toString() ??
+          _userService.normalizePhone(phone),
+      name: resolvedData['name']?.toString(),
+      role: resolvedData['role']?.toString() ?? 'user',
+      isActive: resolvedData['isActive'] ?? true,
     );
   }
 

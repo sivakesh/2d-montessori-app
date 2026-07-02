@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:montessori_app/core/config/app_env.dart';
 import 'package:montessori_app/core/theme/app_colors.dart';
 import 'package:montessori_app/modules/auth/data/user_service.dart';
 import 'package:montessori_app/modules/auth/models/app_user.dart';
@@ -58,38 +58,59 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
 
       if (firebaseUser != null) {
         final uid = firebaseUser.uid;
-        final phone = firebaseUser.phoneNumber?.replaceAll('+91', '') ?? '';
+        final phone = firebaseUser.phoneNumber ?? widget.phoneNumber;
+        if (currentEnvironment == AppEnvironment.prod) {
+          final userService = UserService();
+          try {
+            final userData = await userService.getOrCreateProdUser(
+              firebaseAuthUid: uid,
+              phoneNumber: phone,
+            );
 
-        final userService = UserService();
+            final normalizedPhone = userService.normalizePhone(phone);
 
-        var userData = await userService.getUserByUid(uid);
+            final appUser = AppUser(
+              id:
+                  userData['id']?.toString() ??
+                  userService.normalizePhone(phone),
+              phone: userData['phoneNumber']?.toString() ?? normalizedPhone,
+              name: userData['name']?.toString(),
+              role: userData['role']?.toString() ?? 'user',
+              isActive: userData['isActive'] ?? true,
+            );
 
-        if (userData == null) {
-          userData = await userService.getUserByPhone(phone);
+            ref.read(currentUserProvider.notifier).state = appUser;
 
-          if (userData != null) {
-            await FirebaseFirestore.instance
-                .collection('users')
-                .doc(uid)
-                .set(userData);
-          } else {
-            await userService.createUser(uid, phone);
-            userData = {'phone': phone, 'role': 'parent'};
+            if (mounted) {
+              Navigator.pushReplacementNamed(context, '/dashboard');
+            }
+          } catch (error) {
+            await FirebaseAuth.instance.signOut();
+            ref.read(currentUserProvider.notifier).state = null;
+            if (mounted) {
+              setState(() => _message = 'User setup failed');
+            }
           }
-        }
+        } else {
+          final userService = UserService();
 
-        final appUser = AppUser(
-          id: uid,
-          phone: userData['phone'] ?? phone,
-          name: userData['name'],
-          role: userData['role'] ?? 'parent',
-          isActive: userData['isActive'] ?? true,
-        );
+          final userData = await userService.getOrCreateDevUser(phone);
 
-        ref.read(currentUserProvider.notifier).state = appUser;
+          final appUser = AppUser(
+            id: userData['id']?.toString() ?? userService.normalizePhone(phone),
+            phone:
+                userData['phoneNumber']?.toString() ??
+                userService.normalizePhone(phone),
+            name: userData['name']?.toString(),
+            role: userData['role']?.toString() ?? 'parent',
+            isActive: userData['isActive'] ?? true,
+          );
 
-        if (mounted) {
-          Navigator.pushReplacementNamed(context, '/dashboard');
+          ref.read(currentUserProvider.notifier).state = appUser;
+
+          if (mounted) {
+            Navigator.pushReplacementNamed(context, '/dashboard');
+          }
         }
       }
     } on FirebaseAuthException catch (error) {
@@ -133,6 +154,10 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
         return 'The OTP is invalid. Please check and try again.';
       case 'network-request-failed':
         return 'Network error. Please check your connection.';
+      case 'user-not-provisioned':
+        return 'This phone number has not been invited yet. Please contact admin.';
+      case 'user-disabled':
+        return 'This account has been deactivated. Please contact admin.';
       default:
         return 'Authentication failed. Please try again.';
     }

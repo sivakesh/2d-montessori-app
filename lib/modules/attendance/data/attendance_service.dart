@@ -244,16 +244,18 @@ class AttendanceService {
     required String markedBy,
     required String photoUrl,
     required String status,
+    String? role,
+    String? phone,
+    String? email,
   }) async {
     final date = _dateKey();
     final environment = _environmentTag();
-    final id = environment == 'dev'
-        ? '${date}_${entityType}_${entityId}_${DateTime.now().microsecondsSinceEpoch}'
-        : _attendanceId(date, entityType, entityId);
+    final id = _attendanceId(date, entityType, entityId);
     final docRef = _attendance.doc(id);
 
-    // ignore: avoid_print
-    print('Saving attendance...');
+    debugPrint(
+      'Saving attendance: staffId=$entityId, staffName=$entityName, docId=$id, status=$status',
+    );
     await docRef.set({
       'entityType': entityType,
       'entityId': entityId,
@@ -264,10 +266,13 @@ class AttendanceService {
       'markedBy': markedBy,
       'status': status,
       'environment': environment,
+      if (role != null) 'role': role,
+      if (phone != null && phone.isNotEmpty) 'phone': phone,
+      if (email != null && email.isNotEmpty) 'email': email,
       'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
-    // ignore: avoid_print
-    print('Attendance saved');
+    debugPrint('Attendance saved successfully: docId=$id');
     return id;
   }
 
@@ -277,23 +282,13 @@ class AttendanceService {
     required String status,
     required String entityType,
   }) async {
-    if (kReleaseMode) {
-      await _attendance.doc(_attendanceId(date, entityType, entityId)).set({
-        'status': status,
-        'date': date,
-        'entityType': entityType,
-        'entityId': entityId,
-        'environment': 'prod',
-        'createdAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-      return;
-    }
     await _attendance.doc(_attendanceId(date, entityType, entityId)).set({
       'status': status,
       'date': date,
       'entityType': entityType,
       'entityId': entityId,
-      'environment': 'dev',
+      'environment': _environmentTag(),
+      'updatedAt': FieldValue.serverTimestamp(),
       'createdAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
@@ -304,22 +299,33 @@ class AttendanceService {
     required String entityName,
     required String markedBy,
     String? classId,
+    String? role,
+    String? phone,
+    String? email,
+    String? photoUrl,
   }) async {
     final date = _dateKey();
     final id = _attendanceId(date, entityType, entityId);
+    debugPrint(
+      'Saving attendance: staffId=$entityId, staffName=$entityName, docId=$id, status=absent',
+    );
     await _attendance.doc(id).set({
       'entityType': entityType,
       'entityId': entityId,
       'entityName': entityName,
       'classId': classId ?? '',
       'date': date,
-      'photoUrl': '',
+      'photoUrl': photoUrl ?? '',
       'markedBy': markedBy,
       'status': 'absent',
       'environment': _environmentTag(),
+      if (role != null) 'role': role,
+      if (phone != null && phone.isNotEmpty) 'phone': phone,
+      if (email != null && email.isNotEmpty) 'email': email,
       'updatedAt': FieldValue.serverTimestamp(),
       'createdAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+    debugPrint('Attendance saved successfully: docId=$id');
   }
 
   Future<String> markPresent({
@@ -329,9 +335,15 @@ class AttendanceService {
     required String markedBy,
     required String photoUrl,
     String? classId,
+    String? role,
+    String? phone,
+    String? email,
   }) async {
     final date = _dateKey();
     final id = _attendanceId(date, entityType, entityId);
+    debugPrint(
+      'Saving attendance: staffId=$entityId, staffName=$entityName, docId=$id, status=present',
+    );
     await _attendance.doc(id).set({
       'entityType': entityType,
       'entityId': entityId,
@@ -342,9 +354,13 @@ class AttendanceService {
       'markedBy': markedBy,
       'status': 'present',
       'environment': _environmentTag(),
+      if (role != null) 'role': role,
+      if (phone != null && phone.isNotEmpty) 'phone': phone,
+      if (email != null && email.isNotEmpty) 'email': email,
       'updatedAt': FieldValue.serverTimestamp(),
       'createdAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+    debugPrint('Attendance saved successfully: docId=$id');
     return id;
   }
 
@@ -414,6 +430,9 @@ class AttendanceService {
     required String markedBy,
     String? photoUrl,
     String status = 'present',
+    String? role,
+    String? phone,
+    String? email,
   }) async {
     return _markAttendance(
       entityType: 'staff',
@@ -423,6 +442,9 @@ class AttendanceService {
       markedBy: markedBy,
       photoUrl: photoUrl ?? '',
       status: status,
+      role: role,
+      phone: phone,
+      email: email,
     );
   }
 }

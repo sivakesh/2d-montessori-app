@@ -63,7 +63,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
 
       final classes = await classService.getClasses();
       final allStudents = await studentService.getAllStudents();
-      final staff = await userService.getStaffUsers();
+      final staff = await userService.getAttendanceStaffUsers();
       final attendanceMap = await attendanceService.getTodayAttendanceMap();
       final overview = await attendanceService.getAttendanceOverview(
         classIds: _selectedClassIds.toList(),
@@ -84,6 +84,10 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
       final classNames = <String, String>{
         for (final doc in classes) doc.id: doc.data()['name']?.toString() ?? '-',
       };
+      final staffById = <String, AppUser>{};
+      for (final user in staff) {
+        staffById[user.id] = user;
+      }
       final visibleStudents = allStudents.where((doc) {
         final data = doc.data();
         if (data['isActive'] != true) return false;
@@ -93,7 +97,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         }
         return _matchesStudent(doc, _searchController.text.trim().toLowerCase());
       }).toList();
-      final filteredStaff = staff
+      final filteredStaff = staffById.values
           .where((user) => _matchesStaff(user, _searchController.text.trim().toLowerCase()))
           .toList();
 
@@ -193,6 +197,9 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     required String entityName,
     required String markedBy,
     String? classId,
+    String? role,
+    String? phone,
+    String? email,
   }) async {
     final service = ref.read(attendanceServiceProvider);
     final moodService = ref.read(moodCheckinServiceProvider);
@@ -221,7 +228,27 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         classId: classId,
         markedBy: markedBy,
         photoUrl: photoUrl,
+        role: role,
+        phone: phone,
+        email: email,
       );
+      if (mounted) {
+        setState(() {
+          _attendanceMap[_attendanceKey(entityType, entityId)] = {
+            'entityType': entityType,
+            'entityId': entityId,
+            'entityName': entityName,
+            'classId': classId ?? '',
+            'date': DateTime.now().toLocal().toIso8601String().split('T').first,
+            'photoUrl': photoUrl,
+            'markedBy': markedBy,
+            'status': 'present',
+            'role': role,
+            'phone': phone,
+            'email': email,
+          };
+        });
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Saving mood check-in...')),
       );
@@ -263,6 +290,9 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     required String entityName,
     required String markedBy,
     String? classId,
+    String? role,
+    String? phone,
+    String? email,
   }) async {
     final service = ref.read(attendanceServiceProvider);
     setState(() => _marking[entityId] = true);
@@ -273,7 +303,26 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         entityName: entityName,
         classId: classId,
         markedBy: markedBy,
+        role: role,
+        phone: phone,
+        email: email,
       );
+      if (mounted) {
+        setState(() {
+          _attendanceMap[_attendanceKey(entityType, entityId)] = {
+            'entityType': entityType,
+            'entityId': entityId,
+            'entityName': entityName,
+            'classId': classId ?? '',
+            'date': DateTime.now().toLocal().toIso8601String().split('T').first,
+            'markedBy': markedBy,
+            'status': 'absent',
+            'role': role,
+            'phone': phone,
+            'email': email,
+          };
+        });
+      }
       await _loadData();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -297,6 +346,9 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     required String entityName,
     required String markedBy,
     String? classId,
+    String? role,
+    String? phone,
+    String? email,
   }) async {
     final result = await showDialog<bool>(
       context: context,
@@ -322,6 +374,9 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         entityName: entityName,
         markedBy: markedBy,
         classId: classId,
+        role: role,
+        phone: phone,
+        email: email,
       );
     }
   }
@@ -519,12 +574,16 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                             entityId: staff.id,
                             entityName: displayName,
                             markedBy: currentUser.id,
+                            role: staff.role,
+                            phone: staff.phone,
                           ),
                           onAbsent: () => _confirmAbsent(
                             entityType: 'staff',
                             entityId: staff.id,
                             entityName: displayName,
                             markedBy: currentUser.id,
+                            role: staff.role,
+                            phone: staff.phone,
                           ),
                         );
                       },
