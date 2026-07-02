@@ -1,6 +1,11 @@
-enum AppEnvironment {
-  dev,
-  prod,
-}
+import 'package:flutter/foundation.dart';
 
-const currentEnvironment = AppEnvironment.dev;
+enum AppEnvironment { dev, prod }
+
+const _appEnvironment = String.fromEnvironment('APP_ENV', defaultValue: '');
+
+final currentEnvironment = switch (_appEnvironment) {
+  'dev' => AppEnvironment.dev,
+  'prod' => AppEnvironment.prod,
+  _ => kReleaseMode ? AppEnvironment.prod : AppEnvironment.dev,
+};

@@ -26,7 +26,7 @@ jobs:
         run: flutter pub get
 
       - name: Build Flutter Web (PROD)
-        run: flutter build web --release
+        run: flutter build web --release --dart-define=APP_ENV=prod
 
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
