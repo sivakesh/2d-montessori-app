@@ -20,9 +20,12 @@ class UsersManagementScreen extends StatelessWidget {
             itemCount: docs.length,
             itemBuilder: (context, index) {
               final data = docs[index].data();
+              final name = data['name']?.toString();
+              final phone = data['phoneNumber']?.toString() ?? data['phone']?.toString();
+              final email = data['email']?.toString();
               return ListTile(
-                title: Text(data['name']?.toString() ?? data['phone']?.toString() ?? 'User'),
-                subtitle: Text(data['role']?.toString() ?? 'parent'),
+                title: Text(name ?? 'User'),
+                subtitle: Text(phone ?? email ?? '-'),
               );
             },
           );

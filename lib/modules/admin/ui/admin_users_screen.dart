@@ -122,7 +122,11 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                     final data = doc.data();
                     final name = data['name']?.toString().toLowerCase() ?? '';
                     final email = data['email']?.toString().toLowerCase() ?? '';
-                    final phone = data['phone']?.toString().toLowerCase() ?? '';
+                    final phone =
+                        (data['phoneNumber']?.toString() ??
+                                data['phone']?.toString() ??
+                                '')
+                            .toLowerCase();
                     return query.isEmpty ||
                         name.contains(query) ||
                         email.contains(query) ||
@@ -139,8 +143,11 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                       final doc = docs[index];
                       final data = doc.data();
                       final name = data['name']?.toString() ?? 'User';
-                      final email = data['email']?.toString() ?? '';
-                      final phone = data['phone']?.toString() ?? '';
+                      final email = data['email']?.toString() ?? '-';
+                      final phone =
+                          data['phoneNumber']?.toString() ??
+                          data['phone']?.toString() ??
+                          '-';
                       final role = data['role']?.toString() ?? 'parent';
                       final imageUrl =
                           data['profileImageUrl']?.toString() ?? '';

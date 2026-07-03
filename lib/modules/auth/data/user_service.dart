@@ -17,6 +17,33 @@ class UserService {
     return digitsOnly;
   }
 
+  Map<String, dynamic> buildUserPayload({
+    required String phoneNumber,
+    String? name,
+    String? email,
+    String? role,
+    String? firebaseAuthUid,
+    bool isOnboarded = true,
+    bool isActive = true,
+    bool includeLinkedAt = false,
+  }) {
+    final normalizedPhone = normalizePhone(phoneNumber);
+    return {
+      'name': name ?? 'User',
+      'email': email ?? '',
+      'phone': normalizedPhone,
+      'phoneNumber': normalizedPhone,
+      'firebaseAuthUid': firebaseAuthUid,
+      'role': role ?? 'parent',
+      'profileImageUrl': '',
+      'isActive': isActive,
+      'isOnboarded': isOnboarded,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+      'linkedAt': includeLinkedAt ? FieldValue.serverTimestamp() : null,
+    };
+  }
+
   Future<QueryDocumentSnapshot<Map<String, dynamic>>?> findUserDocumentByPhone(
     String phone,
   ) async {
@@ -166,18 +193,28 @@ class UserService {
       );
     }
 
-    final payload = <String, dynamic>{
-      if (data != null) ...data,
-      'phoneNumber': normalizedPhone,
-      'firebaseAuthUid': firebaseAuthUid,
-      'role': data?['role'] ?? 'parent',
-      'isActive': data?['isActive'] ?? true,
-      'isOnboarded': true,
-      'linkedAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-      if (data == null || data['createdAt'] == null)
-        'createdAt': FieldValue.serverTimestamp(),
-    };
+    final payload = data == null
+        ? buildUserPayload(
+            phoneNumber: normalizedPhone,
+            firebaseAuthUid: firebaseAuthUid,
+            isOnboarded: true,
+            isActive: true,
+            includeLinkedAt: true,
+          )
+        : {
+            'name': data['name'] ?? 'User',
+            'email': data['email'] ?? '',
+            'phone': data['phone'] ?? normalizedPhone,
+            'phoneNumber': data['phoneNumber'] ?? normalizedPhone,
+            'firebaseAuthUid': firebaseAuthUid,
+            'role': data['role'] ?? 'parent',
+            'profileImageUrl': data['profileImageUrl'] ?? '',
+            'isActive': data['isActive'] ?? true,
+            'isOnboarded': true,
+            'createdAt': data['createdAt'] ?? FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+            'linkedAt': FieldValue.serverTimestamp(),
+          };
 
     await ref.set(payload, SetOptions(merge: true));
 
@@ -347,15 +384,14 @@ class UserService {
   Future<Map<String, dynamic>> createDevUser(String phoneNumber) async {
     final normalizedPhone = normalizePhone(phoneNumber);
     final ref = _firestore.collection('users').doc(normalizedPhone);
-    await ref.set({
-      'phoneNumber': normalizedPhone,
-      'firebaseAuthUid': null,
-      'role': 'parent',
-      'isActive': true,
-      'isOnboarded': true,
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    await ref.set(
+      buildUserPayload(
+        phoneNumber: normalizedPhone,
+        firebaseAuthUid: null,
+        isOnboarded: true,
+        isActive: true,
+      ),
+    );
 
     final created = await ref.get();
     final data = created.data();
@@ -364,5 +400,44 @@ class UserService {
     }
 
     return {...data, 'id': created.id, 'phoneNumber': normalizedPhone};
+  }
+
+  Future<Map<String, dynamic>> createAdminUser({
+    required String phoneNumber,
+    required String name,
+    required String email,
+    required String role,
+    bool isActive = true,
+  }) async {
+    final normalizedPhone = normalizePhone(phoneNumber);
+    if (normalizedPhone.isEmpty) {
+      throw Exception('Phone number is required.');
+    }
+
+    final ref = _firestore.collection('users').doc(normalizedPhone);
+    final existing = await ref.get();
+    if (existing.exists) {
+      throw Exception('A user with this phone number already exists.');
+    }
+
+    await ref.set(
+      buildUserPayload(
+        phoneNumber: normalizedPhone,
+        name: name,
+        email: email,
+        role: role,
+        firebaseAuthUid: null,
+        isOnboarded: false,
+        isActive: isActive,
+      ),
+    );
+
+    final created = await ref.get();
+    final data = created.data();
+    if (data == null) {
+      throw Exception('Failed to create user.');
+    }
+
+    return {...data, 'id': created.id};
   }
 }

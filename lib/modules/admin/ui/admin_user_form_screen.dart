@@ -5,6 +5,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:montessori_app/modules/auth/data/user_service.dart';
 
 class AdminUserFormScreen extends StatefulWidget {
   const AdminUserFormScreen({
@@ -74,23 +75,63 @@ class _AdminUserFormScreenState extends State<AdminUserFormScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
     try {
-      final users = FirebaseFirestore.instance.collection('users');
-      final userId = widget.userId ?? users.doc().id;
-      final imageUrl = await _uploadProfileImage(userId);
-      await users.doc(userId).set({
-        'name': _nameController.text.trim(),
-        'email': _emailController.text.trim(),
-        'phone': _phoneController.text.trim(),
-        'role': _role,
-        'profileImageUrl': imageUrl,
-        'isActive': _isActive,
-        'createdAt': widget.userId == null ? FieldValue.serverTimestamp() : (widget.initialData?['createdAt'] ?? FieldValue.serverTimestamp()),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      final rawPhone = _phoneController.text.trim();
+      final normalizedPhone = UserService().normalizePhone(rawPhone);
+
+      if (normalizedPhone.isEmpty) {
+        throw Exception('Phone number is required.');
+      }
+
+      if (widget.userId == null) {
+        await UserService().createAdminUser(
+          phoneNumber: normalizedPhone,
+          name: _nameController.text.trim(),
+          email: _emailController.text.trim(),
+          role: _role,
+          isActive: _isActive,
+        );
+      } else {
+        final users = FirebaseFirestore.instance.collection('users');
+        final ref = users.doc(normalizedPhone);
+        final imageUrl = await _uploadProfileImage(normalizedPhone);
+        final payload = {
+          'name': _nameController.text.trim(),
+          'email': _emailController.text.trim(),
+          'phone': normalizedPhone,
+          'phoneNumber': normalizedPhone,
+          'firebaseAuthUid': widget.initialData?['firebaseAuthUid'],
+          'role': _role,
+          'profileImageUrl': imageUrl,
+          'isActive': _isActive,
+          'isOnboarded': widget.initialData?['isOnboarded'] ?? false,
+          'createdAt':
+              widget.initialData?['createdAt'] ?? FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+          'linkedAt': widget.initialData?['linkedAt'],
+        };
+        await ref.set(payload, SetOptions(merge: true));
+      }
       if (mounted) Navigator.pop(context);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_readableSaveError(error))),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
+  }
+
+  String _readableSaveError(Object error) {
+    final message = error.toString();
+    if (message.contains('A user with this phone number already exists.')) {
+      return 'A user with this phone number already exists.';
+    }
+    if (message.contains('Phone number is required.')) {
+      return 'Phone number is required.';
+    }
+    return 'Could not save user. Please try again.';
   }
 
   @override
