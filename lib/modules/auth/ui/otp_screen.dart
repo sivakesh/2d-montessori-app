@@ -110,6 +110,9 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
         ref.read(currentUserProvider.notifier).state = appUser;
         if (mounted) {
           cleanupRecaptcha();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            cleanupRecaptcha();
+          });
           Navigator.pushReplacementNamed(context, '/dashboard');
         }
       } else {
@@ -117,6 +120,9 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
         ref.read(currentUserProvider.notifier).state = appUser;
         if (mounted) {
           cleanupRecaptcha();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            cleanupRecaptcha();
+          });
           Navigator.pushReplacementNamed(context, '/dashboard');
         }
       }
