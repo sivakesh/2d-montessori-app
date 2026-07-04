@@ -70,6 +70,30 @@ class AttendanceService {
     return map;
   }
 
+  Future<Map<String, Map<String, dynamic>>> getAttendanceHistoryMap({
+    required DateTime startDate,
+    required DateTime endDate,
+  }) async {
+    final startKey = DateFormat('yyyy-MM-dd').format(startDate.toLocal());
+    final endKey = DateFormat('yyyy-MM-dd').format(endDate.toLocal());
+    final snapshot = await _attendance
+        .where('date', isGreaterThanOrEqualTo: startKey)
+        .where('date', isLessThanOrEqualTo: endKey)
+        .get();
+    final Map<String, Map<String, dynamic>> map = {};
+
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+      final entityType = data['entityType']?.toString() ?? '';
+      final entityId = data['entityId']?.toString() ?? '';
+      final date = data['date']?.toString() ?? '';
+      if (entityType.isEmpty || entityId.isEmpty || date.isEmpty) continue;
+      map['${entityType}_${entityId}_$date'] = data;
+    }
+
+    return map;
+  }
+
   Future<int> getStudentCount({List<String> classIds = const []}) async {
     Query<Map<String, dynamic>> query = _students.where(
       'isActive',
@@ -134,9 +158,7 @@ class AttendanceService {
     );
   }
 
-  Future<int> getNotMarkedCount({
-    List<String> classIds = const [],
-  }) async {
+  Future<int> getNotMarkedCount({List<String> classIds = const []}) async {
     final overview = await getAttendanceOverview(classIds: classIds);
     return (overview.totalCount - overview.presentCount - overview.absentCount)
         .clamp(0, overview.totalCount);
@@ -256,7 +278,7 @@ class AttendanceService {
     debugPrint(
       'Saving attendance: staffId=$entityId, staffName=$entityName, docId=$id, status=$status',
     );
-    await docRef.set({
+    final data = <String, dynamic>{
       'entityType': entityType,
       'entityId': entityId,
       'entityName': entityName,
@@ -266,12 +288,13 @@ class AttendanceService {
       'markedBy': markedBy,
       'status': status,
       'environment': environment,
-      if (role != null) 'role': role,
-      if (phone != null && phone.isNotEmpty) 'phone': phone,
-      if (email != null && email.isNotEmpty) 'email': email,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    };
+    if (role != null) data['role'] = role;
+    if (phone != null && phone.isNotEmpty) data['phone'] = phone;
+    if (email != null && email.isNotEmpty) data['email'] = email;
+    await docRef.set(data, SetOptions(merge: true));
     debugPrint('Attendance saved successfully: docId=$id');
     return id;
   }
@@ -309,7 +332,7 @@ class AttendanceService {
     debugPrint(
       'Saving attendance: staffId=$entityId, staffName=$entityName, docId=$id, status=absent',
     );
-    await _attendance.doc(id).set({
+    final data = <String, dynamic>{
       'entityType': entityType,
       'entityId': entityId,
       'entityName': entityName,
@@ -319,12 +342,13 @@ class AttendanceService {
       'markedBy': markedBy,
       'status': 'absent',
       'environment': _environmentTag(),
-      if (role != null) 'role': role,
-      if (phone != null && phone.isNotEmpty) 'phone': phone,
-      if (email != null && email.isNotEmpty) 'email': email,
       'updatedAt': FieldValue.serverTimestamp(),
       'createdAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    };
+    if (role != null) data['role'] = role;
+    if (phone != null && phone.isNotEmpty) data['phone'] = phone;
+    if (email != null && email.isNotEmpty) data['email'] = email;
+    await _attendance.doc(id).set(data, SetOptions(merge: true));
     debugPrint('Attendance saved successfully: docId=$id');
   }
 
@@ -344,7 +368,7 @@ class AttendanceService {
     debugPrint(
       'Saving attendance: staffId=$entityId, staffName=$entityName, docId=$id, status=present',
     );
-    await _attendance.doc(id).set({
+    final data = <String, dynamic>{
       'entityType': entityType,
       'entityId': entityId,
       'entityName': entityName,
@@ -354,12 +378,13 @@ class AttendanceService {
       'markedBy': markedBy,
       'status': 'present',
       'environment': _environmentTag(),
-      if (role != null) 'role': role,
-      if (phone != null && phone.isNotEmpty) 'phone': phone,
-      if (email != null && email.isNotEmpty) 'email': email,
       'updatedAt': FieldValue.serverTimestamp(),
       'createdAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    };
+    if (role != null) data['role'] = role;
+    if (phone != null && phone.isNotEmpty) data['phone'] = phone;
+    if (email != null && email.isNotEmpty) data['email'] = email;
+    await _attendance.doc(id).set(data, SetOptions(merge: true));
     debugPrint('Attendance saved successfully: docId=$id');
     return id;
   }

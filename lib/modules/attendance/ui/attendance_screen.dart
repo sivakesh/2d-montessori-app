@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
 import '../../auth/data/user_service.dart';
 import '../../auth/models/app_user.dart';
@@ -11,6 +12,13 @@ import '../../mood_checkin/ui/mood_checkin_dialog.dart';
 import '../../mood_checkin/services/mood_checkin_service.dart';
 import '../../students/providers/student_provider.dart';
 import '../providers/attendance_provider.dart';
+
+DateTime getAcademicYearStart(DateTime today) {
+  if (today.month >= 6) {
+    return DateTime(today.year, 6, 1);
+  }
+  return DateTime(today.year - 1, 6, 1);
+}
 
 class AttendanceScreen extends ConsumerStatefulWidget {
   const AttendanceScreen({super.key});
@@ -25,9 +33,12 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   final _searchController = TextEditingController();
   final Set<String> _selectedClassIds = {};
   List<QueryDocumentSnapshot<Map<String, dynamic>>> _classes = [];
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _allStudents = [];
   List<QueryDocumentSnapshot<Map<String, dynamic>>> _students = [];
   List<AppUser> _staff = [];
   Map<String, Map<String, dynamic>> _attendanceMap = {};
+  Map<String, Map<String, dynamic>> _historyAttendanceMap = {};
+  late DateTime _selectedHistoryWeekStart;
   Map<String, String> _classNames = {};
   int _studentCount = 0;
   int _staffCount = 0;
@@ -40,6 +51,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   @override
   void initState() {
     super.initState();
+    _selectedHistoryWeekStart = _startOfWeek(DateTime.now().toLocal());
     _loadData();
   }
 
@@ -65,6 +77,11 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
       final allStudents = await studentService.getAllStudents();
       final staff = await userService.getAttendanceStaffUsers();
       final attendanceMap = await attendanceService.getTodayAttendanceMap();
+      final historyAttendanceMap = await attendanceService
+          .getAttendanceHistoryMap(
+            startDate: _selectedHistoryWeekStart,
+            endDate: _selectedHistoryWeekStart.add(const Duration(days: 6)),
+          );
       final overview = await attendanceService.getAttendanceOverview(
         classIds: _selectedClassIds.toList(),
       );
@@ -74,15 +91,20 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
       final latestMoodLabels = <String, String>{};
       for (final doc in allStudents) {
         final label = await _latestMoodLabel(moodService, 'student', doc.id);
-        if (label != null) latestMoodLabels[_attendanceKey('student', doc.id)] = label;
+        if (label != null) {
+          latestMoodLabels[_attendanceKey('student', doc.id)] = label;
+        }
       }
       for (final user in staff) {
         final label = await _latestMoodLabel(moodService, 'staff', user.id);
-        if (label != null) latestMoodLabels[_attendanceKey('staff', user.id)] = label;
+        if (label != null) {
+          latestMoodLabels[_attendanceKey('staff', user.id)] = label;
+        }
       }
 
       final classNames = <String, String>{
-        for (final doc in classes) doc.id: doc.data()['name']?.toString() ?? '-',
+        for (final doc in classes)
+          doc.id: doc.data()['name']?.toString() ?? '-',
       };
       final staffById = <String, AppUser>{};
       for (final user in staff) {
@@ -95,18 +117,28 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
             !_selectedClassIds.contains(data['classId']?.toString() ?? '')) {
           return false;
         }
-        return _matchesStudent(doc, _searchController.text.trim().toLowerCase());
+        return _matchesStudent(
+          doc,
+          _searchController.text.trim().toLowerCase(),
+        );
       }).toList();
       final filteredStaff = staffById.values
-          .where((user) => _matchesStaff(user, _searchController.text.trim().toLowerCase()))
+          .where(
+            (user) => _matchesStaff(
+              user,
+              _searchController.text.trim().toLowerCase(),
+            ),
+          )
           .toList();
 
       if (!mounted) return;
       setState(() {
         _classes = classes;
+        _allStudents = allStudents;
         _students = visibleStudents;
         _staff = filteredStaff;
         _attendanceMap = attendanceMap;
+        _historyAttendanceMap = historyAttendanceMap;
         _classNames = classNames;
         _studentCount = overview.studentCount;
         _staffCount = overview.staffCount;
@@ -124,13 +156,18 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     }
   }
 
-  bool _matchesStudent(QueryDocumentSnapshot<Map<String, dynamic>> doc, String query) {
+  bool _matchesStudent(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+    String query,
+  ) {
     if (query.isEmpty) return true;
     final data = doc.data();
     final name = data['name']?.toString().toLowerCase() ?? '';
     final admissionNo = data['admissionNo']?.toString().toLowerCase() ?? '';
     final className = _resolveClassName(data).toLowerCase();
-    return name.contains(query) || admissionNo.contains(query) || className.contains(query);
+    return name.contains(query) ||
+        admissionNo.contains(query) ||
+        className.contains(query);
   }
 
   bool _matchesStaff(AppUser user, String query) {
@@ -138,7 +175,9 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     final name = (user.name ?? '').toLowerCase();
     final phone = user.phone.toLowerCase();
     final role = user.role.toLowerCase();
-    return name.contains(query) || phone.contains(query) || role.contains(query);
+    return name.contains(query) ||
+        phone.contains(query) ||
+        role.contains(query);
   }
 
   String _resolveClassName(Map<String, dynamic> data) {
@@ -154,10 +193,92 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   String _statusLabel(Map<String, dynamic>? record) {
     if (record == null) return 'Not Marked';
     final status = (record['status']?.toString() ?? '').toLowerCase();
-    final hasPhoto = (record['photoUrl']?.toString() ?? '').isNotEmpty;
+    final hasPhoto = _attendancePhotoUrl(record).isNotEmpty;
     if (status == 'absent') return 'Absent';
     if (status == 'present' || (status.isEmpty && hasPhoto)) return 'Present';
     return 'Not Marked';
+  }
+
+  String _attendancePhotoUrl(Map<String, dynamic>? record) {
+    if (record == null) return '';
+    final candidates = [
+      record['photoUrl'],
+      record['imageUrl'],
+      record['attendancePhotoUrl'],
+      record['profileImageUrl'],
+      record['url'],
+    ];
+    for (final value in candidates) {
+      final url = value?.toString().trim() ?? '';
+      if (url.isNotEmpty) return url;
+    }
+    return '';
+  }
+
+  static DateTime _startOfWeek(DateTime date) {
+    return DateTime(
+      date.year,
+      date.month,
+      date.day,
+    ).subtract(Duration(days: date.weekday - 1));
+  }
+
+  DateTime get _academicYearStart =>
+      getAcademicYearStart(DateTime.now().toLocal());
+
+  DateTime get _academicYearWeekStart => _startOfWeek(_academicYearStart);
+
+  bool get _canGoBack {
+    return _selectedHistoryWeekStart.isAfter(_academicYearWeekStart);
+  }
+
+  bool get _canGoNext {
+    final currentWeekStart = _startOfWeek(DateTime.now().toLocal());
+    return _selectedHistoryWeekStart.isBefore(currentWeekStart);
+  }
+
+  void _goPreviousWeek() {
+    if (!_canGoBack) return;
+    setState(() {
+      final previousWeek = _selectedHistoryWeekStart.subtract(
+        const Duration(days: 7),
+      );
+      _selectedHistoryWeekStart = previousWeek.isBefore(_academicYearWeekStart)
+          ? _academicYearWeekStart
+          : previousWeek;
+    });
+    _loadData();
+  }
+
+  void _goNextWeek() {
+    if (!_canGoNext) return;
+    setState(() {
+      _selectedHistoryWeekStart = _selectedHistoryWeekStart.add(
+        const Duration(days: 7),
+      );
+    });
+    _loadData();
+  }
+
+  Widget _historyCell(
+    String studentId,
+    DateTime date,
+    Map<String, Map<String, dynamic>> historyAttendanceMap,
+  ) {
+    final dateKey = DateFormat('yyyy-MM-dd').format(date);
+    final record = historyAttendanceMap['student_${studentId}_$dateKey'];
+    if (record == null) {
+      return Text('-', style: TextStyle(color: Colors.grey.shade600));
+    }
+    final status = (record['status']?.toString() ?? '').toLowerCase();
+    final hasPhoto = _attendancePhotoUrl(record).isNotEmpty;
+    if (status == 'present' || (status.isEmpty && hasPhoto)) {
+      return const Icon(Icons.check_circle, color: Colors.green, size: 20);
+    }
+    if (status == 'absent') {
+      return const Icon(Icons.cancel, color: Colors.red, size: 20);
+    }
+    return Text('-', style: TextStyle(color: Colors.grey.shade600));
   }
 
   Future<String?> _latestMoodLabel(
@@ -165,7 +286,10 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     String entityType,
     String entityId,
   ) async {
-    final latest = await moodService.getLatestMoodForEntity(entityType, entityId);
+    final latest = await moodService.getLatestMoodForEntity(
+      entityType,
+      entityId,
+    );
     return latest?.moodLabel;
   }
 
@@ -203,24 +327,22 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   }) async {
     final service = ref.read(attendanceServiceProvider);
     final moodService = ref.read(moodCheckinServiceProvider);
-    final mood = await MoodCheckinDialog.show(
-      context,
-      entityType: entityType,
-    );
-    if (mood == null) return;
+    final mood = await MoodCheckinDialog.show(context, entityType: entityType);
+    if (mood == null || !mounted) return;
     setState(() => _marking[entityId] = true);
     try {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Uploading photo...')),
-      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Uploading photo...')));
       final photoUrl = await service.captureAndUploadPhoto(
         entityType: entityType,
         entityId: entityId,
       );
-      if (photoUrl == null) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Saving attendance...')),
-      );
+      if (photoUrl == null || !mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Saving attendance...')));
       final attendanceId = await service.markPresent(
         entityType: entityType,
         entityId: entityId,
@@ -249,9 +371,10 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
           };
         });
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Saving mood check-in...')),
-      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Saving mood check-in...')));
       await moodService.createMoodCheckin(
         entityType: entityType,
         entityId: entityId,
@@ -269,9 +392,9 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
       );
       await _loadData();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Attendance marked')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Attendance marked')));
       }
     } catch (e) {
       if (mounted) {
@@ -307,27 +430,26 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         phone: phone,
         email: email,
       );
-      if (mounted) {
-        setState(() {
-          _attendanceMap[_attendanceKey(entityType, entityId)] = {
-            'entityType': entityType,
-            'entityId': entityId,
-            'entityName': entityName,
-            'classId': classId ?? '',
-            'date': DateTime.now().toLocal().toIso8601String().split('T').first,
-            'markedBy': markedBy,
-            'status': 'absent',
-            'role': role,
-            'phone': phone,
-            'email': email,
-          };
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _attendanceMap[_attendanceKey(entityType, entityId)] = {
+          'entityType': entityType,
+          'entityId': entityId,
+          'entityName': entityName,
+          'classId': classId ?? '',
+          'date': DateTime.now().toLocal().toIso8601String().split('T').first,
+          'markedBy': markedBy,
+          'status': 'absent',
+          'role': role,
+          'phone': phone,
+          'email': email,
+        };
+      });
       await _loadData();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Attendance marked')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Attendance marked')));
       }
     } catch (e) {
       if (mounted) {
@@ -381,11 +503,290 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     }
   }
 
-  String _attendanceKey(String entityType, String entityId) => '${entityType}_$entityId';
+  String _attendanceKey(String entityType, String entityId) =>
+      '${entityType}_$entityId';
 
   void _openAddAttendanceFlow() {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Use the row actions below to add attendance')),
+      const SnackBar(
+        content: Text('Use the row actions below to add attendance'),
+      ),
+    );
+  }
+
+  Widget _buildTodayTab(
+    BuildContext context,
+    AppUser currentUser,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> studentRows,
+    List<AppUser> staffRows,
+  ) {
+    return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.only(top: 40),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else ...[
+            if (_errorMessage != null) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red.shade200),
+                ),
+                child: Text(_errorMessage!),
+              ),
+              const SizedBox(height: 16),
+            ],
+            _SummaryCard(
+              studentCount: _studentCount,
+              staffCount: _staffCount,
+              totalCount: _studentCount + _staffCount,
+              presentCount: _presentCount,
+              absentCount: _absentCount,
+              notMarkedCount: _notMarkedCount,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Class Filter',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final doc in _classes)
+                  FilterChip(
+                    selected: _selectedClassIds.contains(doc.id),
+                    label: Text(doc.data()['name']?.toString() ?? ''),
+                    onSelected: (selected) {
+                      setState(() {
+                        if (selected) {
+                          _selectedClassIds.add(doc.id);
+                        } else {
+                          _selectedClassIds.remove(doc.id);
+                        }
+                      });
+                      _loadData();
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Text('Students', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            if (studentRows.isEmpty)
+              const Text('No students available.')
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: studentRows.length,
+                separatorBuilder: (context, index) =>
+                    const SizedBox(height: 12),
+                itemBuilder: (context, index) {
+                  final doc = studentRows[index];
+                  final data = doc.data();
+                  final record =
+                      _attendanceMap[_attendanceKey('student', doc.id)];
+                  final status = _statusLabel(record);
+                  final photoUrl = _attendancePhotoUrl(record);
+                  return _AttendanceCard(
+                    name: data['name']?.toString() ?? '',
+                    secondary:
+                        'Admission No: ${data['admissionNo']?.toString() ?? '-'}',
+                    tertiary: 'Class: ${_resolveClassName(data)}',
+                    entityType: 'student',
+                    status: status,
+                    statusBg: _statusBg(status),
+                    statusFg: _statusFg(status),
+                    recordExists: record != null,
+                    latestMoodLabel:
+                        _latestMoodLabels[_attendanceKey('student', doc.id)],
+                    photoUrl: photoUrl,
+                    marking: _marking[doc.id] == true,
+                    onPresent: () => _markPresent(
+                      entityType: 'student',
+                      entityId: doc.id,
+                      entityName: data['name']?.toString() ?? '',
+                      classId: data['classId']?.toString(),
+                      markedBy: currentUser.id,
+                    ),
+                    onAbsent: () => _confirmAbsent(
+                      entityType: 'student',
+                      entityId: doc.id,
+                      entityName: data['name']?.toString() ?? '',
+                      classId: data['classId']?.toString(),
+                      markedBy: currentUser.id,
+                    ),
+                  );
+                },
+              ),
+            const SizedBox(height: 20),
+            Text('Staff', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            if (staffRows.isEmpty)
+              const Text('No staff available.')
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: staffRows.length,
+                separatorBuilder: (context, index) =>
+                    const SizedBox(height: 12),
+                itemBuilder: (context, index) {
+                  final staff = staffRows[index];
+                  final record =
+                      _attendanceMap[_attendanceKey('staff', staff.id)];
+                  final status = _statusLabel(record);
+                  final photoUrl = _attendancePhotoUrl(record);
+                  final displayName = staff.name?.isNotEmpty == true
+                      ? staff.name!
+                      : staff.phone;
+                  return _AttendanceCard(
+                    name: displayName,
+                    secondary: 'Phone/Email: ${staff.phone}',
+                    tertiary: 'Role: ${staff.role}',
+                    entityType: 'staff',
+                    status: status,
+                    statusBg: _statusBg(status),
+                    statusFg: _statusFg(status),
+                    recordExists: record != null,
+                    latestMoodLabel:
+                        _latestMoodLabels[_attendanceKey('staff', staff.id)],
+                    photoUrl: photoUrl,
+                    marking: _marking[staff.id] == true,
+                    onPresent: () => _markPresent(
+                      entityType: 'staff',
+                      entityId: staff.id,
+                      entityName: displayName,
+                      markedBy: currentUser.id,
+                      role: staff.role,
+                      phone: staff.phone,
+                    ),
+                    onAbsent: () => _confirmAbsent(
+                      entityType: 'staff',
+                      entityId: staff.id,
+                      entityName: displayName,
+                      markedBy: currentUser.id,
+                      role: staff.role,
+                      phone: staff.phone,
+                    ),
+                  );
+                },
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistoryTab(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final activeStudents = _allStudents
+        .where((doc) => doc.data()['isActive'] == true)
+        .map(
+          (doc) => _HistoryStudentRow(
+            id: doc.id,
+            name: doc.data()['name']?.toString() ?? '',
+          ),
+        )
+        .toList();
+    if (activeStudents.isEmpty) {
+      return const Center(child: Text('No attendance history available.'));
+    }
+    final weekEnd = _selectedHistoryWeekStart.add(const Duration(days: 6));
+    final weekDays = List.generate(
+      7,
+      (index) => _selectedHistoryWeekStart.add(Duration(days: index)),
+    );
+    final dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        Text(
+          'Attendance History',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 12),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            TextButton.icon(
+              onPressed: _canGoBack ? _goPreviousWeek : null,
+              icon: const Icon(Icons.chevron_left),
+              label: const Text('Back'),
+            ),
+            Text(
+              '${DateFormat('dd MMM').format(_selectedHistoryWeekStart)} - ${DateFormat('dd MMM').format(weekEnd)}',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            TextButton.icon(
+              onPressed: _canGoNext ? _goNextWeek : null,
+              icon: const Icon(Icons.chevron_right),
+              label: const Text('Next'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columns: [
+                  const DataColumn(label: Text('Student')),
+                  for (var i = 0; i < weekDays.length; i++)
+                    DataColumn(
+                      label: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(dayLabels[i]),
+                          Text(
+                            DateFormat('dd').format(weekDays[i]),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+                rows: activeStudents.map((student) {
+                  return DataRow(
+                    cells: [
+                      DataCell(Text(student.name)),
+                      ...weekDays.map(
+                        (date) => DataCell(
+                          Center(
+                            child: _historyCell(
+                              student.id,
+                              date,
+                              _historyAttendanceMap,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -397,199 +798,77 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     }
 
     final searchQuery = _searchController.text.trim().toLowerCase();
-    final studentRows = _students.where((doc) => _matchesStudent(doc, searchQuery)).toList();
-    final staffRows = _staff.where((user) => _matchesStaff(user, searchQuery)).toList();
+    final studentRows = _students
+        .where((doc) => _matchesStudent(doc, searchQuery))
+        .toList();
+    final staffRows = _staff
+        .where((user) => _matchesStaff(user, searchQuery))
+        .toList();
 
     return Scaffold(
       body: SafeArea(
         child: RefreshIndicator(
           onRefresh: _loadData,
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Today\'s Attendance Overview',
-                        style: Theme.of(context).textTheme.headlineSmall,
-                      ),
-                    ),
-                    Material(
-                      color: Colors.green,
-                      shape: const CircleBorder(),
-                      child: Tooltip(
-                        message: 'Add Attendance',
-                        child: IconButton(
-                          onPressed: _openAddAttendanceFlow,
-                          icon: const Icon(Icons.add),
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Mark students and staff directly from the lists below.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.grey.shade600,
-                      ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: _searchController,
-                  decoration: const InputDecoration(
-                    labelText: 'Search students or staff',
-                    prefixIcon: Icon(Icons.search),
-                  ),
-                  onChanged: (_) => setState(() {}),
-                ),
-                const SizedBox(height: 16),
-                if (_errorMessage != null) ...[
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.red.shade50,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.red.shade200),
-                    ),
-                    child: Text(_errorMessage!),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                if (_loading)
-                  const Center(child: CircularProgressIndicator())
-                else ...[
-                  _SummaryCard(
-                    studentCount: _studentCount,
-                    staffCount: _staffCount,
-                    totalCount: _studentCount + _staffCount,
-                    presentCount: _presentCount,
-                    absentCount: _absentCount,
-                    notMarkedCount: _notMarkedCount,
-                  ),
-                  const SizedBox(height: 16),
-                  Text('Class Filter', style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+          child: DefaultTabController(
+            length: 2,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      for (final doc in _classes)
-                        FilterChip(
-                          selected: _selectedClassIds.contains(doc.id),
-                          label: Text(doc.data()['name']?.toString() ?? ''),
-                          onSelected: (selected) {
-                            setState(() {
-                              if (selected) {
-                                _selectedClassIds.add(doc.id);
-                              } else {
-                                _selectedClassIds.remove(doc.id);
-                              }
-                            });
-                            _loadData();
-                          },
+                      Expanded(
+                        child: Text(
+                          'Attendance',
+                          style: Theme.of(context).textTheme.headlineSmall,
                         ),
+                      ),
+                      Material(
+                        color: Colors.green,
+                        shape: const CircleBorder(),
+                        child: Tooltip(
+                          message: 'Add Attendance',
+                          child: IconButton(
+                            onPressed: _openAddAttendanceFlow,
+                            icon: const Icon(Icons.add),
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 20),
-                  Text('Students', style: Theme.of(context).textTheme.titleLarge),
-                  const SizedBox(height: 12),
-                  if (studentRows.isEmpty)
-                    const Text('No students available.')
-                  else
-                    ListView.separated(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: studentRows.length,
-                      separatorBuilder: (context, index) => const SizedBox(height: 12),
-                      itemBuilder: (context, index) {
-                        final doc = studentRows[index];
-                        final data = doc.data();
-                        final record = _attendanceMap[_attendanceKey('student', doc.id)];
-                        final status = _statusLabel(record);
-                        return _AttendanceCard(
-                          name: data['name']?.toString() ?? '',
-                          secondary: 'Admission No: ${data['admissionNo']?.toString() ?? '-'}',
-                          tertiary: 'Class: ${_resolveClassName(data)}',
-                          entityType: 'student',
-                          status: status,
-                          statusBg: _statusBg(status),
-                          statusFg: _statusFg(status),
-                          recordExists: record != null,
-                          latestMoodLabel: _latestMoodLabels[_attendanceKey('student', doc.id)],
-                          marking: _marking[doc.id] == true,
-                          onPresent: () => _markPresent(
-                            entityType: 'student',
-                            entityId: doc.id,
-                            entityName: data['name']?.toString() ?? '',
-                            classId: data['classId']?.toString(),
-                            markedBy: currentUser.id,
-                          ),
-                          onAbsent: () => _confirmAbsent(
-                            entityType: 'student',
-                            entityId: doc.id,
-                            entityName: data['name']?.toString() ?? '',
-                            classId: data['classId']?.toString(),
-                            markedBy: currentUser.id,
-                          ),
-                        );
-                      },
+                  const SizedBox(height: 8),
+                  Text(
+                    'Track today’s attendance or review the last 5 weeks.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Colors.grey.shade600,
                     ),
-                  const SizedBox(height: 20),
-                  Text('Staff', style: Theme.of(context).textTheme.titleLarge),
-                  const SizedBox(height: 12),
-                  if (staffRows.isEmpty)
-                    const Text('No staff available.')
-                  else
-                    ListView.separated(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: staffRows.length,
-                      separatorBuilder: (context, index) => const SizedBox(height: 12),
-                      itemBuilder: (context, index) {
-                        final staff = staffRows[index];
-                        final record = _attendanceMap[_attendanceKey('staff', staff.id)];
-                        final status = _statusLabel(record);
-                        final displayName = staff.name?.isNotEmpty == true ? staff.name! : staff.phone;
-                        return _AttendanceCard(
-                          name: displayName,
-                          secondary: 'Phone/Email: ${staff.phone}',
-                          tertiary: 'Role: ${staff.role}',
-                          entityType: 'staff',
-                          status: status,
-                          statusBg: _statusBg(status),
-                          statusFg: _statusFg(status),
-                          recordExists: record != null,
-                          latestMoodLabel: _latestMoodLabels[_attendanceKey('staff', staff.id)],
-                          marking: _marking[staff.id] == true,
-                          onPresent: () => _markPresent(
-                            entityType: 'staff',
-                            entityId: staff.id,
-                            entityName: displayName,
-                            markedBy: currentUser.id,
-                            role: staff.role,
-                            phone: staff.phone,
-                          ),
-                          onAbsent: () => _confirmAbsent(
-                            entityType: 'staff',
-                            entityId: staff.id,
-                            entityName: displayName,
-                            markedBy: currentUser.id,
-                            role: staff.role,
-                            phone: staff.phone,
-                          ),
-                        );
-                      },
+                  ),
+                  const SizedBox(height: 16),
+                  TabBar(
+                    tabs: const [
+                      Tab(text: 'Today'),
+                      Tab(text: 'History'),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: TabBarView(
+                      children: [
+                        _buildTodayTab(
+                          context,
+                          currentUser,
+                          studentRows,
+                          staffRows,
+                        ),
+                        _buildHistoryTab(context),
+                      ],
                     ),
+                  ),
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -628,9 +907,21 @@ class _SummaryCard extends StatelessWidget {
             _SummaryItem(label: 'Students', value: '$studentCount'),
             _SummaryItem(label: 'Staff', value: '$staffCount'),
             _SummaryItem(label: 'Total', value: '$totalCount'),
-            _SummaryItem(label: 'Present', value: '$presentCount', color: Colors.green),
-            _SummaryItem(label: 'Absent', value: '$absentCount', color: Colors.red),
-            _SummaryItem(label: 'Not Marked', value: '$notMarkedCount', color: Colors.grey),
+            _SummaryItem(
+              label: 'Present',
+              value: '$presentCount',
+              color: Colors.green,
+            ),
+            _SummaryItem(
+              label: 'Absent',
+              value: '$absentCount',
+              color: Colors.red,
+            ),
+            _SummaryItem(
+              label: 'Not Marked',
+              value: '$notMarkedCount',
+              color: Colors.grey,
+            ),
           ],
         ),
       ),
@@ -655,9 +946,9 @@ class _SummaryItem extends StatelessWidget {
         Text(
           value,
           style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: color,
-                fontWeight: FontWeight.bold,
-              ),
+            color: color,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ],
     );
@@ -678,6 +969,7 @@ class _AttendanceCard extends StatelessWidget {
     required this.marking,
     required this.recordExists,
     required this.latestMoodLabel,
+    required this.photoUrl,
   });
 
   final String name;
@@ -692,13 +984,41 @@ class _AttendanceCard extends StatelessWidget {
   final bool marking;
   final bool recordExists;
   final String? latestMoodLabel;
+  final String photoUrl;
+
+  void _openPhotoPreview(BuildContext context) {
+    if (photoUrl.isEmpty) return;
+    showDialog(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        insetPadding: const EdgeInsets.all(24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: InteractiveViewer(
+            child: Image.network(
+              photoUrl,
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) => Container(
+                color: Colors.grey.shade100,
+                padding: const EdgeInsets.all(24),
+                child: const Text('Unable to load image'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final isMarked = status == 'Present' || status == 'Absent';
     final moodLabel = latestMoodLabel;
+    final hasPhoto = photoUrl.isNotEmpty;
     return Card(
       elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Row(
@@ -710,7 +1030,10 @@ class _AttendanceCard extends StatelessWidget {
                 children: [
                   Text(name, style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 4),
-                  Text(secondary, style: Theme.of(context).textTheme.bodyMedium),
+                  Text(
+                    secondary,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
                   const SizedBox(height: 2),
                   Text(tertiary, style: Theme.of(context).textTheme.bodyMedium),
                   const SizedBox(height: 10),
@@ -719,11 +1042,15 @@ class _AttendanceCard extends StatelessWidget {
                       Text(
                         'Status:',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                       const SizedBox(width: 8),
-                      _StatusPill(label: status, background: statusBg, foreground: statusFg),
+                      _StatusPill(
+                        label: status,
+                        background: statusBg,
+                        foreground: statusFg,
+                      ),
                     ],
                   ),
                   if (moodLabel != null && moodLabel.isNotEmpty) ...[
@@ -734,43 +1061,85 @@ class _AttendanceCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              alignment: WrapAlignment.end,
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                if (marking)
-                  const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                else ...[
-                  Tooltip(
-                    message: isMarked ? 'Attendance marked' : 'Mark present with photo',
-                    child: Material(
-                      color: Colors.green,
-                      shape: const CircleBorder(),
-                      child: IconButton(
-                        onPressed: recordExists && status != 'Absent' ? null : onPresent,
-                        icon: isMarked ? const Icon(Icons.check) : const Icon(Icons.camera_alt),
-                        color: Colors.white,
+                if (hasPhoto) ...[
+                  GestureDetector(
+                    onTap: () => _openPhotoPreview(context),
+                    child: Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: Colors.grey.shade200),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.04),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: Image.network(
+                        photoUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) => Container(
+                          color: Colors.grey.shade100,
+                          alignment: Alignment.center,
+                          child: const Icon(Icons.broken_image_outlined),
+                        ),
                       ),
                     ),
                   ),
-                  Tooltip(
-                    message: 'Mark absent',
-                    child: Material(
-                      color: Colors.red.shade500,
-                      shape: const CircleBorder(),
-                      child: IconButton(
-                        onPressed: status == 'Absent' ? null : onAbsent,
-                        icon: const Icon(Icons.person_off),
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
+                  const SizedBox(height: 12),
                 ],
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.end,
+                  children: [
+                    if (marking)
+                      const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    else ...[
+                      Tooltip(
+                        message: isMarked
+                            ? 'Attendance marked'
+                            : 'Mark present with photo',
+                        child: Material(
+                          color: Colors.green,
+                          shape: const CircleBorder(),
+                          child: IconButton(
+                            onPressed: recordExists && status != 'Absent'
+                                ? null
+                                : onPresent,
+                            icon: isMarked
+                                ? const Icon(Icons.check)
+                                : const Icon(Icons.camera_alt),
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                      Tooltip(
+                        message: 'Mark absent',
+                        child: Material(
+                          color: Colors.red.shade500,
+                          shape: const CircleBorder(),
+                          child: IconButton(
+                            onPressed: status == 'Absent' ? null : onAbsent,
+                            icon: const Icon(Icons.person_off),
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ],
             ),
           ],
@@ -801,10 +1170,7 @@ class _StatusPill extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: TextStyle(
-          color: foreground,
-          fontWeight: FontWeight.w600,
-        ),
+        style: TextStyle(color: foreground, fontWeight: FontWeight.w600),
       ),
     );
   }
@@ -832,4 +1198,11 @@ class _MoodPill extends StatelessWidget {
       ),
     );
   }
+}
+
+class _HistoryStudentRow {
+  _HistoryStudentRow({required this.id, required this.name});
+
+  final String id;
+  final String name;
 }
