@@ -9,6 +9,8 @@ import 'modules/auth/ui/otp_screen.dart';
 import 'modules/auth/ui/role_based_home.dart';
 import 'modules/admin/ui/admin_dashboard_screen.dart';
 import 'modules/admin/ui/admin_profile_form.dart';
+import 'modules/auth/utils/recaptcha_container_stub.dart'
+    if (dart.library.html) 'modules/auth/utils/recaptcha_container_web.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,6 +25,7 @@ class MontessoriApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    registerRecaptchaContainer();
     return MaterialApp(
       title: '2D Montessori',
       debugShowCheckedModeBanner: false,

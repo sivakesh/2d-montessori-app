@@ -59,8 +59,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Future<void> handleProdLogin(BuildContext context) async {
     final rawPhone = _phoneController.text.trim();
-    final fullPhone = '+91$rawPhone';
     final authService = ref.read(firebasePhoneAuthServiceProvider);
+    final fullPhone = authService.buildE164Phone(
+      _countryCodeController.text,
+      rawPhone,
+    );
     await authService.sendOtp(fullPhone);
     if (!context.mounted) return;
     Navigator.pushNamed(context, '/otp', arguments: {'phone': rawPhone});
@@ -130,6 +133,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (kIsWeb)
+                    const SizedBox(
+                      height: 0,
+                      width: 0,
+                      child: HtmlElementView(viewType: 'recaptcha-container'),
+                    ),
                   const AppLogo(
                     size: 120,
                     padding: EdgeInsets.only(bottom: 24),

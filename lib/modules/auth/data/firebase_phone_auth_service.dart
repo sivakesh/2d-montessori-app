@@ -14,6 +14,17 @@ class FirebasePhoneAuthService {
   RecaptchaVerifier? _recaptchaVerifier;
   String? _verificationId;
 
+  String buildE164Phone(String countryCode, String phone) {
+    final code = countryCode.replaceAll(RegExp(r'[^0-9]'), '');
+    final digits = phone.replaceAll(RegExp(r'[^0-9]'), '');
+
+    if (digits.startsWith(code) && digits.length > 10) {
+      return '+$digits';
+    }
+
+    return '+$code$digits';
+  }
+
   Future<void> sendOtp(String phoneNumber) async {
     if (currentEnvironment == AppEnvironment.dev) {
       // DEV MODE: skip Firebase completely
@@ -23,14 +34,24 @@ class FirebasePhoneAuthService {
     }
 
     if (kIsWeb) {
-      _recaptchaVerifier ??= RecaptchaVerifier(
+      debugPrint('Sending OTP to: $phoneNumber');
+      debugPrint('kIsWeb: $kIsWeb');
+      _recaptchaVerifier?.clear();
+      _recaptchaVerifier = null;
+      _webConfirmationResult = null;
+      _recaptchaVerifier = RecaptchaVerifier(
         container: 'recaptcha-container',
         auth: FirebaseAuthPlatform.instance,
       );
-      _webConfirmationResult = await _firebaseAuth.signInWithPhoneNumber(
-        phoneNumber,
-        _recaptchaVerifier!,
-      );
+      try {
+        _webConfirmationResult = await _firebaseAuth.signInWithPhoneNumber(
+          phoneNumber,
+          _recaptchaVerifier!,
+        );
+      } on FirebaseAuthException catch (e) {
+        debugPrint('Send OTP failed: ${e.code} - ${e.message}');
+        rethrow;
+      }
       return;
     }
 
