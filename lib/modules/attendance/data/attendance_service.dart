@@ -94,6 +94,78 @@ class AttendanceService {
     return map;
   }
 
+  String dateKeyFor(DateTime date) =>
+      DateFormat('yyyy-MM-dd').format(date.toLocal());
+
+  DateTime getAcademicYearStart(DateTime today) {
+    if (today.month >= 6) {
+      return DateTime(today.year, 6, 1);
+    }
+    return DateTime(today.year - 1, 6, 1);
+  }
+
+  Future<Map<String, Map<String, dynamic>>> getAttendanceByDate({
+    required DateTime date,
+  }) async {
+    final dateKey = dateKeyFor(date);
+    final snapshot = await _attendance.where('date', isEqualTo: dateKey).get();
+    final map = <String, Map<String, dynamic>>{};
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+      final entityType = data['entityType']?.toString() ?? '';
+      final entityId = data['entityId']?.toString() ?? '';
+      if (entityType.isEmpty || entityId.isEmpty) continue;
+      map['${entityType}_$entityId'] = data;
+    }
+    return map;
+  }
+
+  Future<void> saveAdminAttendance({
+    required String entityType,
+    required String entityId,
+    required String entityName,
+    required String classId,
+    required String status,
+    required DateTime selectedDate,
+    required String markedBy,
+  }) async {
+    final dateKey = dateKeyFor(selectedDate);
+    final docId = _attendanceId(dateKey, entityType, entityId);
+    final docRef = _attendance.doc(docId);
+    final existing = await docRef.get();
+    final isToday = dateKey == _dateKey();
+    final data = <String, dynamic>{
+      'entityType': entityType,
+      'entityId': entityId,
+      'entityName': entityName,
+      'classId': classId,
+      'date': dateKey,
+      'attendanceDate': dateKey,
+      'dateKey': dateKey.replaceAll('-', ''),
+      'markedBy': markedBy,
+      'markedByRole': 'admin',
+      'source': 'admin',
+      'isBackdated': !isToday,
+      'status': status,
+      'environment': _environmentTag(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    if (!existing.exists) {
+      data['createdAt'] = FieldValue.serverTimestamp();
+    }
+    await docRef.set(data, SetOptions(merge: true));
+  }
+
+  Future<void> clearAdminAttendance({
+    required String entityType,
+    required String entityId,
+    required DateTime selectedDate,
+  }) async {
+    final dateKey = dateKeyFor(selectedDate);
+    final docId = _attendanceId(dateKey, entityType, entityId);
+    await _attendance.doc(docId).delete();
+  }
+
   Future<int> getStudentCount({List<String> classIds = const []}) async {
     Query<Map<String, dynamic>> query = _students.where(
       'isActive',

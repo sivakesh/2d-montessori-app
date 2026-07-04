@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../attendance/ui/attendance_screen.dart';
 import 'admin_classes_screen.dart';
 import 'admin_dashboard_screen.dart';
 import 'admin_documents_screen.dart';
@@ -8,6 +7,7 @@ import 'admin_notifications_screen.dart';
 import 'admin_users_screen.dart';
 import '../../fees/ui/admin_fees_screen.dart';
 import '../../finance/ui/admin_finance_screen.dart';
+import 'admin_attendance_management_screen.dart';
 import '../students/ui/admin_students_screen.dart';
 import 'mobile_nav_item.dart';
 import 'admin_sidebar.dart';
@@ -30,21 +30,83 @@ class AdminLayout extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final isMobile = MediaQuery.of(context).size.width < 800;
     final mobileNavItems = <MobileNavItem>[
-      MobileNavItem(label: 'Dashboard', icon: Icons.dashboard_outlined, route: 'dashboard', screenIndex: 0, builder: (_) => const AdminDashboardScreen()),
-      MobileNavItem(label: 'Notifications', icon: Icons.notifications_outlined, route: 'notifications', screenIndex: 5, builder: (_) => const AdminNotificationsScreen()),
-      MobileNavItem(label: 'Students', icon: Icons.school_outlined, route: 'students', screenIndex: 2, builder: (_) => const admin_students_screen()),
-      MobileNavItem(label: 'Fees', icon: Icons.payments_outlined, route: 'fees', screenIndex: 6, builder: (_) => const AdminFeesScreen()),
+      MobileNavItem(
+        label: 'Dashboard',
+        icon: Icons.dashboard_outlined,
+        route: 'dashboard',
+        screenIndex: 0,
+        builder: (_) => const AdminDashboardScreen(),
+      ),
+      MobileNavItem(
+        label: 'Notifications',
+        icon: Icons.notifications_outlined,
+        route: 'notifications',
+        screenIndex: 5,
+        builder: (_) => const AdminNotificationsScreen(),
+      ),
+      MobileNavItem(
+        label: 'Students',
+        icon: Icons.school_outlined,
+        route: 'students',
+        screenIndex: 2,
+        builder: (_) => const admin_students_screen(),
+      ),
+      MobileNavItem(
+        label: 'Fees',
+        icon: Icons.payments_outlined,
+        route: 'fees',
+        screenIndex: 6,
+        builder: (_) => const AdminFeesScreen(),
+      ),
       MobileNavItem(label: 'More', icon: Icons.more_horiz, route: 'more'),
     ];
 
     final secondaryItems = <MobileNavItem>[
-      MobileNavItem(label: 'Users', icon: Icons.people_outline, route: 'users', screenIndex: 1, builder: (_) => const AdminUsersScreen()),
-      MobileNavItem(label: 'Classes', icon: Icons.class_outlined, route: 'classes', screenIndex: 3, builder: (_) => const AdminClassesScreen()),
-      MobileNavItem(label: 'Documents', icon: Icons.description_outlined, route: 'documents', screenIndex: 4, builder: (_) => const AdminDocumentsScreen()),
-      MobileNavItem(label: 'Finance', icon: Icons.account_balance_wallet_outlined, route: 'finance', screenIndex: 7, builder: (_) => const AdminFinanceScreen()),
-      MobileNavItem(label: 'Attendance', icon: Icons.fact_check_outlined, route: 'attendance', builder: (_) => const AttendanceScreen()),
-      MobileNavItem(label: 'Reports', icon: Icons.bar_chart_outlined, route: 'reports'),
-      MobileNavItem(label: 'Settings', icon: Icons.settings_outlined, route: 'settings'),
+      MobileNavItem(
+        label: 'Users',
+        icon: Icons.people_outline,
+        route: 'users',
+        screenIndex: 1,
+        builder: (_) => const AdminUsersScreen(),
+      ),
+      MobileNavItem(
+        label: 'Classes',
+        icon: Icons.class_outlined,
+        route: 'classes',
+        screenIndex: 3,
+        builder: (_) => const AdminClassesScreen(),
+      ),
+      MobileNavItem(
+        label: 'Documents',
+        icon: Icons.description_outlined,
+        route: 'documents',
+        screenIndex: 4,
+        builder: (_) => const AdminDocumentsScreen(),
+      ),
+      MobileNavItem(
+        label: 'Finance',
+        icon: Icons.account_balance_wallet_outlined,
+        route: 'finance',
+        screenIndex: 7,
+        builder: (_) => const AdminFinanceScreen(),
+      ),
+      MobileNavItem(
+        label: 'Attendance',
+        icon: Icons.fact_check_outlined,
+        route: 'attendance',
+        screenIndex: 8,
+        builder: (_) => const AdminAttendanceManagementScreen(),
+      ),
+      MobileNavItem(
+        label: 'Reports',
+        icon: Icons.bar_chart_outlined,
+        route: 'reports',
+      ),
+      MobileNavItem(
+        label: 'Settings',
+        icon: Icons.settings_outlined,
+        route: 'settings',
+      ),
     ];
 
     int mobileSelectedIndex() {
@@ -56,7 +118,9 @@ class AdminLayout extends ConsumerWidget {
     }
 
     Future<void> openDestination(WidgetBuilder builder) async {
-      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: builder));
+      Navigator.of(
+        context,
+      ).pushReplacement(MaterialPageRoute(builder: builder));
     }
 
     Future<void> openMoreSheet() async {
@@ -88,7 +152,9 @@ class AdminLayout extends ConsumerWidget {
                         ? () {
                             Navigator.pop(sheetContext);
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('${item.label} is coming soon')),
+                              SnackBar(
+                                content: Text('${item.label} is coming soon'),
+                              ),
                             );
                           }
                         : () {
@@ -129,6 +195,7 @@ class AdminLayout extends ConsumerWidget {
                       5 => const AdminNotificationsScreen(),
                       6 => const AdminFeesScreen(),
                       7 => const AdminFinanceScreen(),
+                      8 => const AdminAttendanceManagementScreen(),
                       _ => body,
                     };
                     Navigator.of(context).pushReplacement(
@@ -150,11 +217,11 @@ class AdminLayout extends ConsumerWidget {
           ? NavigationBar(
               selectedIndex: mobileSelectedIndex(),
               onDestinationSelected: (index) {
-                if (index == mobileSelectedIndex()) return;
                 if (index == 4) {
                   openMoreSheet();
                   return;
                 }
+                if (index == mobileSelectedIndex()) return;
                 final item = mobileNavItems[index];
                 if (item.builder != null) {
                   openDestination(item.builder!);

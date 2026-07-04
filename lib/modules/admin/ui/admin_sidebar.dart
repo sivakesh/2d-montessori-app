@@ -51,6 +51,11 @@ class AdminSidebar extends StatelessWidget {
       selectedIcon: Icon(Icons.account_balance_wallet),
       label: Text('Finance'),
     ),
+    NavigationRailDestination(
+      icon: Icon(Icons.fact_check_outlined),
+      selectedIcon: Icon(Icons.fact_check),
+      label: Text('Attendance'),
+    ),
   ];
 
   @override
