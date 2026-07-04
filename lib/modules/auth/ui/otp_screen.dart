@@ -6,6 +6,7 @@ import 'package:montessori_app/core/theme/app_colors.dart';
 import 'package:montessori_app/modules/auth/data/user_service.dart';
 import 'package:montessori_app/modules/auth/models/app_user.dart';
 import 'package:montessori_app/modules/auth/providers/auth_provider.dart';
+import 'package:montessori_app/modules/auth/utils/recaptcha_cleanup.dart';
 
 class OtpScreen extends ConsumerStatefulWidget {
   const OtpScreen({
@@ -108,12 +109,14 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
         final appUser = await loginProdWithOtpCredential(credential);
         ref.read(currentUserProvider.notifier).state = appUser;
         if (mounted) {
+          cleanupRecaptcha();
           Navigator.pushReplacementNamed(context, '/dashboard');
         }
       } else {
         final appUser = await loginDev(widget.phoneNumber);
         ref.read(currentUserProvider.notifier).state = appUser;
         if (mounted) {
+          cleanupRecaptcha();
           Navigator.pushReplacementNamed(context, '/dashboard');
         }
       }
