@@ -6,7 +6,7 @@ import 'package:montessori_app/core/config/app_env.dart';
 
 class FirebasePhoneAuthService {
   FirebasePhoneAuthService({FirebaseAuth? firebaseAuth})
-      : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance;
+    : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance;
 
   final FirebaseAuth _firebaseAuth;
 
@@ -39,7 +39,10 @@ class FirebasePhoneAuthService {
       verificationCompleted: (credential) async {
         await _firebaseAuth.signInWithCredential(credential);
       },
-      verificationFailed: (_) {},
+      verificationFailed: (FirebaseAuthException e) {
+        debugPrint('OTP verification failed: ${e.code} - ${e.message}');
+        throw e;
+      },
       codeSent: (verificationId, _) {
         _verificationId = verificationId;
       },

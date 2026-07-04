@@ -9,14 +9,9 @@ import 'package:montessori_app/modules/auth/providers/auth_provider.dart';
 import 'package:montessori_app/modules/auth/utils/recaptcha_cleanup.dart';
 
 class OtpScreen extends ConsumerStatefulWidget {
-  const OtpScreen({
-    super.key,
-    required this.phoneNumber,
-    required this.verificationId,
-  });
+  const OtpScreen({super.key, required this.phoneNumber});
 
   final String phoneNumber;
-  final String verificationId;
 
   @override
   ConsumerState<OtpScreen> createState() => _OtpScreenState();
@@ -48,22 +43,19 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     );
   }
 
-  Future<AppUser> loginProdWithOtpCredential(AuthCredential credential) async {
-    final userCredential = await FirebaseAuth.instance.signInWithCredential(
-      credential,
-    );
-
-    final firebaseUser =
-        FirebaseAuth.instance.currentUser ?? userCredential.user;
-    if (firebaseUser == null) {
+  Future<AppUser> loginProdWithOtpCredential(String otp) async {
+    final authService = ref.read(firebasePhoneAuthServiceProvider);
+    final userCredential = await authService.verifyOtp(otp);
+    if (userCredential == null || userCredential.user == null) {
       throw FirebaseAuthException(
-        code: 'no-auth-user',
+        code: 'login-failed',
         message: 'Login failed. Please try again.',
       );
     }
 
-    final phoneNumber = firebaseUser.phoneNumber;
-    if (phoneNumber == null || phoneNumber.isEmpty) {
+    final firebaseUser = userCredential.user!;
+    final phoneNumber = firebaseUser.phoneNumber ?? widget.phoneNumber;
+    if (phoneNumber.isEmpty) {
       throw FirebaseAuthException(
         code: 'missing-phone-number',
         message: 'Phone number missing from authenticated user.',
@@ -100,13 +92,8 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     });
 
     try {
-      final credential = PhoneAuthProvider.credential(
-        verificationId: widget.verificationId,
-        smsCode: otp,
-      );
-
       if (kReleaseMode) {
-        final appUser = await loginProdWithOtpCredential(credential);
+        final appUser = await loginProdWithOtpCredential(otp);
         ref.read(currentUserProvider.notifier).state = appUser;
         if (mounted) {
           cleanupRecaptcha();

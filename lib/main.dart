@@ -38,10 +38,8 @@ class MontessoriApp extends StatelessWidget {
         if (settings.name == '/otp') {
           final arguments = settings.arguments as Map<String, dynamic>;
           return MaterialPageRoute(
-            builder: (_) => OtpScreen(
-              phoneNumber: arguments['phone'] as String,
-              verificationId: arguments['verificationId'] as String,
-            ),
+            builder: (_) =>
+                OtpScreen(phoneNumber: arguments['phone'] as String),
           );
         }
         return null;

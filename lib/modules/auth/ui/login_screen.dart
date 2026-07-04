@@ -60,23 +60,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> handleProdLogin(BuildContext context) async {
     final rawPhone = _phoneController.text.trim();
     final fullPhone = '+91$rawPhone';
-
-    await FirebaseAuth.instance.verifyPhoneNumber(
-      phoneNumber: fullPhone,
-      verificationCompleted: (_) {},
-      verificationFailed: (e) {
-        // ignore: avoid_print
-        print('OTP Error: $e');
-      },
-      codeSent: (verificationId, resendToken) {
-        Navigator.pushNamed(
-          context,
-          '/otp',
-          arguments: {'verificationId': verificationId, 'phone': rawPhone},
-        );
-      },
-      codeAutoRetrievalTimeout: (_) {},
-    );
+    final authService = ref.read(firebasePhoneAuthServiceProvider);
+    await authService.sendOtp(fullPhone);
+    if (!context.mounted) return;
+    Navigator.pushNamed(context, '/otp', arguments: {'phone': rawPhone});
   }
 
   Future<void> _handleLogin() async {
