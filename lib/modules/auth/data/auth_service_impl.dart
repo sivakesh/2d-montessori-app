@@ -6,6 +6,7 @@ import 'package:montessori_app/core/services/auth_interface.dart';
 import 'package:montessori_app/modules/auth/data/dev_auth_service.dart';
 import 'package:montessori_app/modules/auth/models/app_user.dart';
 import 'package:montessori_app/modules/auth/providers/auth_provider.dart';
+import 'package:montessori_app/services/user_session_log_service.dart';
 
 class _LogoutOnlyAuthService implements AuthService {
   @override
@@ -20,6 +21,7 @@ class _LogoutOnlyAuthService implements AuthService {
 
   @override
   Future<void> logout(WidgetRef ref, BuildContext context) async {
+    await UserSessionLogService().logLogout(source: 'logout_button');
     await FirebaseAuth.instance.signOut();
     ref.read(currentUserProvider.notifier).state = null;
     ref.invalidate(currentUserProvider);

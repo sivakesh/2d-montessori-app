@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-class AdminSidebar extends StatelessWidget {
+class AdminSidebar extends StatefulWidget {
   const AdminSidebar({
     super.key,
     required this.selectedIndex,
@@ -10,91 +10,180 @@ class AdminSidebar extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
 
-  static const _destinations = <NavigationRailDestination>[
-    NavigationRailDestination(
-      icon: Icon(Icons.dashboard_outlined),
-      selectedIcon: Icon(Icons.dashboard),
-      label: Text('Dashboard'),
+  @override
+  State<AdminSidebar> createState() => _AdminSidebarState();
+}
+
+class _AdminSidebarState extends State<AdminSidebar> {
+  final ScrollController _sidebarScrollController = ScrollController();
+  static const Color _primaryGreen = Color(0xFF2E7D32);
+
+  static const _destinations = <_SidebarDestination>[
+    _SidebarDestination(
+      icon: Icons.dashboard_outlined,
+      selectedIcon: Icons.dashboard,
+      label: 'Dashboard',
     ),
-    NavigationRailDestination(
-      icon: Icon(Icons.people_outline),
-      selectedIcon: Icon(Icons.people),
-      label: Text('Users'),
+    _SidebarDestination(
+      icon: Icons.people_outline,
+      selectedIcon: Icons.people,
+      label: 'Users',
     ),
-    NavigationRailDestination(
-      icon: Icon(Icons.school_outlined),
-      selectedIcon: Icon(Icons.school),
-      label: Text('Students'),
+    _SidebarDestination(
+      icon: Icons.school_outlined,
+      selectedIcon: Icons.school,
+      label: 'Students',
     ),
-    NavigationRailDestination(
-      icon: Icon(Icons.class_outlined),
-      selectedIcon: Icon(Icons.class_),
-      label: Text('Classes'),
+    _SidebarDestination(
+      icon: Icons.class_outlined,
+      selectedIcon: Icons.class_,
+      label: 'Classes',
     ),
-    NavigationRailDestination(
-      icon: Icon(Icons.description_outlined),
-      selectedIcon: Icon(Icons.description),
-      label: Text('Documents'),
+    _SidebarDestination(
+      icon: Icons.description_outlined,
+      selectedIcon: Icons.description,
+      label: 'Documents',
     ),
-    NavigationRailDestination(
-      icon: Icon(Icons.notifications_outlined),
-      selectedIcon: Icon(Icons.notifications),
-      label: Text('Notifications'),
+    _SidebarDestination(
+      icon: Icons.notifications_outlined,
+      selectedIcon: Icons.notifications,
+      label: 'Notifications',
     ),
-    NavigationRailDestination(
-      icon: Icon(Icons.payments_outlined),
-      selectedIcon: Icon(Icons.payments),
-      label: Text('Fees'),
+    _SidebarDestination(
+      icon: Icons.payments_outlined,
+      selectedIcon: Icons.payments,
+      label: 'Fees',
     ),
-    NavigationRailDestination(
-      icon: Icon(Icons.account_balance_wallet_outlined),
-      selectedIcon: Icon(Icons.account_balance_wallet),
-      label: Text('Finance'),
+    _SidebarDestination(
+      icon: Icons.account_balance_wallet_outlined,
+      selectedIcon: Icons.account_balance_wallet,
+      label: 'Finance',
     ),
-    NavigationRailDestination(
-      icon: Icon(Icons.fact_check_outlined),
-      selectedIcon: Icon(Icons.fact_check),
-      label: Text('Attendance'),
+    _SidebarDestination(
+      icon: Icons.fact_check_outlined,
+      selectedIcon: Icons.fact_check,
+      label: 'Attendance',
+    ),
+    _SidebarDestination(
+      icon: Icons.login_outlined,
+      selectedIcon: Icons.login,
+      label: 'Login Logs',
     ),
   ];
 
   @override
+  void dispose() {
+    _sidebarScrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 220,
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      color: Theme.of(context).colorScheme.surface,
-      child: Column(
-        children: [
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(
-              children: [
-                Image.asset('assets/logo.png', height: 64),
-                const SizedBox(height: 8),
-                Text(
-                  '2D Montessori',
-                  style: Theme.of(context).textTheme.labelMedium,
+    return SafeArea(
+      child: Container(
+        width: 220,
+        color: Theme.of(context).colorScheme.surface,
+        child: Column(
+          children: [
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Column(
+                children: [
+                  Image.asset('assets/logo.png', height: 56),
+                  const SizedBox(height: 6),
+                  Text(
+                    '2D Montessori',
+                    style: Theme.of(context).textTheme.labelMedium,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            Expanded(
+              child: Scrollbar(
+                controller: _sidebarScrollController,
+                thumbVisibility: true,
+                interactive: true,
+                child: SingleChildScrollView(
+                  controller: _sidebarScrollController,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    children: List.generate(_destinations.length, (index) {
+                      final destination = _destinations[index];
+                      final isSelected = widget.selectedIndex == index;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
+                        child: Material(
+                          color: isSelected
+                              ? _primaryGreen
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(16),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(16),
+                            onTap: () => widget.onDestinationSelected(index),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    isSelected
+                                        ? destination.selectedIcon
+                                        : destination.icon,
+                                    color: isSelected
+                                        ? Colors.white
+                                        : Colors.black87,
+                                  ),
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: Text(
+                                      destination.label,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                            fontWeight: isSelected
+                                                ? FontWeight.w600
+                                                : FontWeight.w500,
+                                            color: isSelected
+                                                ? Colors.white
+                                                : Colors.black87,
+                                          ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
                 ),
-              ],
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-          const Divider(),
-          const SizedBox(height: 8),
-          Expanded(
-            child: NavigationRail(
-              selectedIndex: selectedIndex,
-              onDestinationSelected: onDestinationSelected,
-              labelType: NavigationRailLabelType.all,
-              groupAlignment: -1,
-              backgroundColor: Theme.of(context).colorScheme.surface,
-              destinations: _destinations,
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
+}
+
+class _SidebarDestination {
+  const _SidebarDestination({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
 }

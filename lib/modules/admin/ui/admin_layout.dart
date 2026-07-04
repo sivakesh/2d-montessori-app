@@ -11,6 +11,7 @@ import 'admin_attendance_management_screen.dart';
 import '../students/ui/admin_students_screen.dart';
 import 'mobile_nav_item.dart';
 import 'admin_sidebar.dart';
+import '../../../admin/screens/admin_session_logs_screen.dart';
 
 class AdminLayout extends ConsumerWidget {
   const AdminLayout({
@@ -96,6 +97,13 @@ class AdminLayout extends ConsumerWidget {
         route: 'attendance',
         screenIndex: 8,
         builder: (_) => const AdminAttendanceManagementScreen(),
+      ),
+      MobileNavItem(
+        label: 'Login Logs',
+        icon: Icons.login_outlined,
+        route: 'login_logs',
+        screenIndex: 9,
+        builder: (_) => const AdminSessionLogsScreen(),
       ),
       MobileNavItem(
         label: 'Reports',
@@ -196,6 +204,7 @@ class AdminLayout extends ConsumerWidget {
                       6 => const AdminFeesScreen(),
                       7 => const AdminFinanceScreen(),
                       8 => const AdminAttendanceManagementScreen(),
+                      9 => const AdminSessionLogsScreen(),
                       _ => body,
                     };
                     Navigator.of(context).pushReplacement(

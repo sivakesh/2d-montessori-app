@@ -9,6 +9,7 @@ import 'modules/auth/ui/otp_screen.dart';
 import 'modules/auth/ui/role_based_home.dart';
 import 'modules/admin/ui/admin_dashboard_screen.dart';
 import 'modules/admin/ui/admin_profile_form.dart';
+import 'admin/screens/admin_session_logs_screen.dart';
 import 'modules/auth/utils/recaptcha_web_view.dart';
 
 Future<void> main() async {
@@ -34,6 +35,7 @@ class MontessoriApp extends StatelessWidget {
         '/login': (context) => const LoginScreen(),
         '/dashboard': (context) => const RoleBasedHome(),
         '/admin_dashboard': (context) => const AdminDashboardScreen(),
+        '/admin_session_logs': (context) => const AdminSessionLogsScreen(),
         '/admin_profile_form': (context) => const AdminProfileForm(),
       },
       onGenerateRoute: (settings) {

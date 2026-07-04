@@ -146,10 +146,7 @@ class ProdPhoneAuthService {
       );
     }
 
-    final userData = await _userService.getOrCreateProdUser(
-      firebaseAuthUid: firebaseUser.uid,
-      phoneNumber: phoneNumber,
-    );
+    final userData = await _userService.loginOrCreateUser(firebaseUser);
 
     await _cleanup();
 

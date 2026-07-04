@@ -231,6 +231,23 @@ class UserService {
     return {...savedData, 'id': saved.id, 'phoneNumber': normalizedPhone};
   }
 
+  Future<Map<String, dynamic>> loginOrCreateUser(
+    firebase_auth.User firebaseUser,
+  ) async {
+    final phoneNumber = firebaseUser.phoneNumber ?? '';
+    if (phoneNumber.isEmpty) {
+      throw firebase_auth.FirebaseAuthException(
+        code: 'missing-phone-number',
+        message: 'Phone number missing from authenticated user.',
+      );
+    }
+
+    return getOrCreateProdUser(
+      firebaseAuthUid: firebaseUser.uid,
+      phoneNumber: phoneNumber,
+    );
+  }
+
   Future<Map<String, dynamic>> getOrCreateDevUser(String phoneNumber) async {
     if (kReleaseMode) {
       throw Exception('DEV flow cannot run in release mode.');

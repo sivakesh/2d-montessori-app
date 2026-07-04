@@ -6,6 +6,7 @@ import 'package:montessori_app/core/theme/app_colors.dart';
 import 'package:montessori_app/modules/auth/data/user_service.dart';
 import 'package:montessori_app/modules/auth/models/app_user.dart';
 import 'package:montessori_app/modules/auth/providers/auth_provider.dart';
+import 'package:montessori_app/services/user_session_log_service.dart';
 
 class OtpScreen extends ConsumerStatefulWidget {
   const OtpScreen({super.key, required this.phoneNumber});
@@ -63,6 +64,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
       if (kReleaseMode) {
         final appUser = await loginProdWithOtpCredential(otp);
         ref.read(currentUserProvider.notifier).state = appUser;
+        await UserSessionLogService().logLogin(source: 'auth_flow');
         if (mounted) {
           Navigator.pushReplacementNamed(context, '/dashboard');
         }

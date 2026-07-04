@@ -1,3 +1,4 @@
+// ignore_for_file: use_build_context_synchronously, curly_braces_in_flow_control_structures, unnecessary_underscores, deprecated_member_use
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import '../../../core/layout/sidebar.dart';
 import '../../auth/models/app_user.dart';
 import '../../auth/data/user_service.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../../services/user_session_log_service.dart';
 import '../../attendance/providers/attendance_provider.dart';
 import '../../attendance/ui/attendance_screen.dart';
 import '../../classes/providers/class_provider.dart';
@@ -39,6 +41,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    UserSessionLogService().logSessionOpened(source: 'dashboard');
     _loadDashboardData();
   }
 
