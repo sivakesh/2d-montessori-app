@@ -133,9 +133,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                  if (kIsWeb)
-                    const SizedBox.shrink(),
+                children: [
                   const AppLogo(
                     size: 120,
                     padding: EdgeInsets.only(bottom: 24),
@@ -184,6 +182,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ],
                   ),
                   const SizedBox(height: 20),
+                  if (kIsWeb)
+                    const SizedBox(
+                      height: 1,
+                      width: 1,
+                      child: ColoredBox(
+                        color: Colors.transparent,
+                        child: Center(
+                          child: SizedBox(height: 1, width: 1, child: Text('')),
+                        ),
+                      ),
+                    ),
                   FilledButton(
                     onPressed: _sendingOtp ? null : _sendOtp,
                     child: const Text('Send OTP'),

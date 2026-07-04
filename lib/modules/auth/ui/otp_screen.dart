@@ -131,7 +131,8 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
   Future<void> _resendOtp() async {
     final authService = ref.read(firebasePhoneAuthServiceProvider);
     try {
-      await authService.sendOtp(widget.phoneNumber);
+      final fullPhone = authService.buildE164Phone('+91', widget.phoneNumber);
+      await authService.sendOtp(fullPhone);
       if (mounted) {
         setState(() => _message = 'OTP resent.');
       }
