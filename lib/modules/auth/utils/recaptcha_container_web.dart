@@ -2,24 +2,20 @@
 import 'dart:html' as html;
 
 void ensureRecaptchaContainer() {
-  var existing = html.document.getElementById('recaptcha-container');
-
+  final existing = html.document.getElementById('recaptcha-container');
   if (existing == null) {
-    existing = html.DivElement()..id = 'recaptcha-container';
-    html.document.body?.append(existing);
+    return;
   }
 
   if (existing is html.HtmlElement) {
     existing.style
-      ..position = 'fixed'
-      ..right = '0'
-      ..bottom = '0'
-      ..width = '1px'
-      ..height = '1px'
-      ..overflow = 'hidden'
-      ..opacity = '0'
-      ..pointerEvents = 'none'
-      ..zIndex = '-1';
+      ..position = 'static'
+      ..width = '304px'
+      ..height = '78px'
+      ..display = 'block'
+      ..overflow = 'visible'
+      ..opacity = '1'
+      ..pointerEvents = 'auto';
   }
 }
 
@@ -27,5 +23,9 @@ void cleanupRecaptchaContainer() {
   final existing = html.document.getElementById('recaptcha-container');
   if (existing is html.HtmlElement) {
     existing.children.clear();
+    existing.style
+      ..width = '304px'
+      ..height = '78px'
+      ..display = 'block';
   }
 }
