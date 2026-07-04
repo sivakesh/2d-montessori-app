@@ -6,7 +6,6 @@ import 'package:montessori_app/core/theme/app_colors.dart';
 import 'package:montessori_app/modules/auth/data/user_service.dart';
 import 'package:montessori_app/modules/auth/models/app_user.dart';
 import 'package:montessori_app/modules/auth/providers/auth_provider.dart';
-import 'package:montessori_app/modules/auth/utils/recaptcha_cleanup.dart';
 
 class OtpScreen extends ConsumerStatefulWidget {
   const OtpScreen({super.key, required this.phoneNumber});
@@ -65,20 +64,12 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
         final appUser = await loginProdWithOtpCredential(otp);
         ref.read(currentUserProvider.notifier).state = appUser;
         if (mounted) {
-          cleanupRecaptcha();
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            cleanupRecaptcha();
-          });
           Navigator.pushReplacementNamed(context, '/dashboard');
         }
       } else {
         final appUser = await loginDev(widget.phoneNumber);
         ref.read(currentUserProvider.notifier).state = appUser;
         if (mounted) {
-          cleanupRecaptcha();
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            cleanupRecaptcha();
-          });
           Navigator.pushReplacementNamed(context, '/dashboard');
         }
       }
@@ -98,10 +89,9 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
   }
 
   Future<void> _resendOtp() async {
-    final authService = ref.read(firebasePhoneAuthServiceProvider);
+    final authService = ref.read(prodPhoneAuthServiceProvider);
     try {
-      final fullPhone = authService.buildE164Phone('+91', widget.phoneNumber);
-      await authService.sendOtp(fullPhone);
+      await authService.sendOtp(countryCode: '+91', phone: widget.phoneNumber);
       if (mounted) {
         setState(() => _message = 'OTP resent.');
       }

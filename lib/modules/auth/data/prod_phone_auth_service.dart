@@ -4,7 +4,6 @@ import 'package:firebase_auth_platform_interface/firebase_auth_platform_interfac
 import 'package:flutter/foundation.dart';
 import 'package:montessori_app/modules/auth/data/user_service.dart';
 import 'package:montessori_app/modules/auth/models/app_user.dart';
-import 'package:montessori_app/modules/auth/utils/recaptcha_container.dart';
 
 class ProdPhoneAuthService {
   ProdPhoneAuthService({
@@ -50,8 +49,6 @@ class ProdPhoneAuthService {
     debugPrint('kIsWeb: $kIsWeb');
 
     if (kIsWeb) {
-      ensureRecaptchaContainer();
-
       _recaptchaVerifier?.clear();
       _recaptchaVerifier = null;
       _webConfirmationResult = null;
@@ -170,7 +167,6 @@ class ProdPhoneAuthService {
   Future<void> _cleanup() async {
     if (kIsWeb) {
       _recaptchaVerifier?.clear();
-      cleanupRecaptchaContainer();
     }
 
     _recaptchaVerifier = null;

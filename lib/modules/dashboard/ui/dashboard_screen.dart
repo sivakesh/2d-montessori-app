@@ -9,7 +9,6 @@ import '../../../core/layout/sidebar.dart';
 import '../../auth/models/app_user.dart';
 import '../../auth/data/user_service.dart';
 import '../../auth/providers/auth_provider.dart';
-import '../../auth/utils/recaptcha_cleanup.dart';
 import '../../attendance/providers/attendance_provider.dart';
 import '../../attendance/ui/attendance_screen.dart';
 import '../../classes/providers/class_provider.dart';
@@ -40,9 +39,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      cleanupRecaptcha();
-    });
     _loadDashboardData();
   }
 

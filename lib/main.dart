@@ -14,6 +14,7 @@ import 'modules/auth/utils/recaptcha_web_view.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  registerRecaptchaView();
   // ignore: avoid_print
   print('Firebase initialized');
   runApp(const ProviderScope(child: MontessoriApp()));
@@ -24,7 +25,6 @@ class MontessoriApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    registerRecaptchaView();
     return MaterialApp(
       title: '2D Montessori',
       debugShowCheckedModeBanner: false,
