@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_platform_interface/firebase_auth_platform_interface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:montessori_app/core/config/app_env.dart';
+import 'package:montessori_app/modules/auth/utils/recaptcha_container.dart';
 
 class FirebasePhoneAuthService {
   FirebasePhoneAuthService({FirebaseAuth? firebaseAuth})
@@ -34,6 +35,7 @@ class FirebasePhoneAuthService {
     }
 
     if (kIsWeb) {
+      ensureRecaptchaContainer();
       debugPrint('Sending OTP to: $phoneNumber');
       debugPrint('kIsWeb: $kIsWeb');
       _recaptchaVerifier?.clear();
@@ -92,6 +94,7 @@ class FirebasePhoneAuthService {
       _recaptchaVerifier?.clear();
       _recaptchaVerifier = null;
       _webConfirmationResult = null;
+      cleanupRecaptchaContainer();
       return result;
     }
 
@@ -111,6 +114,7 @@ class FirebasePhoneAuthService {
     _recaptchaVerifier?.clear();
     _recaptchaVerifier = null;
     _webConfirmationResult = null;
+    cleanupRecaptchaContainer();
     return result;
   }
 

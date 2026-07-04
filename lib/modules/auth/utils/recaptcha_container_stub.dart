@@ -1,1 +1,3 @@
-void registerRecaptchaContainer() {}
+void ensureRecaptchaContainer() {}
+
+void cleanupRecaptchaContainer() {}

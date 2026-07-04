@@ -20,7 +20,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     text: '+91',
   );
   final TextEditingController _phoneController = TextEditingController();
-  bool _isLoading = false;
+  bool _sendingOtp = false;
   String? _message;
 
   @override
@@ -69,7 +69,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     Navigator.pushNamed(context, '/otp', arguments: {'phone': rawPhone});
   }
 
-  Future<void> _handleLogin() async {
+  Future<void> _sendOtp() async {
+    if (_sendingOtp) return;
     final phone = _phoneController.text.trim();
     final digitsOnly = phone.replaceAll(RegExp(r'[^0-9]'), '');
 
@@ -79,8 +80,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
 
     setState(() {
-      _isLoading = true;
       _message = null;
+      _sendingOtp = true;
     });
 
     try {
@@ -98,7 +99,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       }
     } finally {
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() => _sendingOtp = false);
       }
     }
   }
@@ -132,13 +133,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
+                  children: [
                   if (kIsWeb)
-                    const SizedBox(
-                      height: 0,
-                      width: 0,
-                      child: HtmlElementView(viewType: 'recaptcha-container'),
-                    ),
+                    const SizedBox.shrink(),
                   const AppLogo(
                     size: 120,
                     padding: EdgeInsets.only(bottom: 24),
@@ -188,7 +185,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   ),
                   const SizedBox(height: 20),
                   FilledButton(
-                    onPressed: _isLoading ? null : _handleLogin,
+                    onPressed: _sendingOtp ? null : _sendOtp,
                     child: const Text('Send OTP'),
                   ),
                   if (_message != null) ...[
