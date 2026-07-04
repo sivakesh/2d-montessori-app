@@ -44,39 +44,8 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
   }
 
   Future<AppUser> loginProdWithOtpCredential(String otp) async {
-    final authService = ref.read(firebasePhoneAuthServiceProvider);
-    final userCredential = await authService.verifyOtp(otp);
-    if (userCredential == null || userCredential.user == null) {
-      throw FirebaseAuthException(
-        code: 'login-failed',
-        message: 'Login failed. Please try again.',
-      );
-    }
-
-    final firebaseUser = userCredential.user!;
-    final phoneNumber = firebaseUser.phoneNumber ?? widget.phoneNumber;
-    if (phoneNumber.isEmpty) {
-      throw FirebaseAuthException(
-        code: 'missing-phone-number',
-        message: 'Phone number missing from authenticated user.',
-      );
-    }
-
-    final userService = UserService();
-    final appUser = await userService.getOrCreateProdUser(
-      phoneNumber: phoneNumber,
-      firebaseAuthUid: firebaseUser.uid,
-    );
-
-    return AppUser(
-      id: appUser['id']?.toString() ?? userService.normalizePhone(phoneNumber),
-      phone:
-          appUser['phoneNumber']?.toString() ??
-          userService.normalizePhone(phoneNumber),
-      name: appUser['name']?.toString(),
-      role: appUser['role']?.toString() ?? 'parent',
-      isActive: appUser['isActive'] ?? true,
-    );
+    final authService = ref.read(prodPhoneAuthServiceProvider);
+    return authService.verifyOtp(otp);
   }
 
   Future<void> _verifyOtp() async {

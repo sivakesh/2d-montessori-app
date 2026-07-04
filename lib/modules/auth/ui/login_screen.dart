@@ -59,12 +59,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Future<void> handleProdLogin(BuildContext context) async {
     final rawPhone = _phoneController.text.trim();
-    final authService = ref.read(firebasePhoneAuthServiceProvider);
-    final fullPhone = authService.buildE164Phone(
-      _countryCodeController.text,
-      rawPhone,
+    final authService = ref.read(prodPhoneAuthServiceProvider);
+    await authService.sendOtp(
+      countryCode: _countryCodeController.text,
+      phone: rawPhone,
     );
-    await authService.sendOtp(fullPhone);
     if (!context.mounted) return;
     Navigator.pushNamed(context, '/otp', arguments: {'phone': rawPhone});
   }
