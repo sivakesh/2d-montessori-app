@@ -36,6 +36,10 @@ function requestAs(uid: string, role: string, data: unknown = {}): CallableReque
   return { data, auth: { uid, token: { role } as never }, rawRequest: {} } as unknown as CallableRequest<never>;
 }
 
+function unauthenticatedRequest(data: unknown = {}): CallableRequest<never> {
+  return { data, auth: undefined, rawRequest: {} } as unknown as CallableRequest<never>;
+}
+
 async function seedSuperAdmin(uid: string, email: string): Promise<void> {
   await auth.createUser({ uid, email, password: 'seed-password-1' });
   await auth.setCustomUserClaims(uid, { role: 'superAdmin', status: 'active' });
@@ -57,19 +61,39 @@ async function cleanupUser(uid: string): Promise<void> {
   await Promise.allSettled([auth.deleteUser(uid), db.collection('users').doc(uid).delete()]);
 }
 
+async function auditLogCount(): Promise<number> {
+  const snapshot = await db.collection('auditLogs').count().get();
+  return snapshot.data().count;
+}
+
+async function auditEntriesFor(entityId: string): Promise<FirebaseFirestore.DocumentData[]> {
+  const snapshot = await db.collection('auditLogs').where('entityId', '==', entityId).get();
+  return snapshot.docs.map((doc) => doc.data());
+}
+
 describe('createUser', () => {
   const callerUid = 'super-admin-createUser';
 
   beforeAll(() => seedSuperAdmin(callerUid, 'super-admin-createuser@example.test'));
   afterAll(() => cleanupUser(callerUid));
 
-  it('rejects a non-Super-Admin caller', async () => {
+  it('rejects an unauthenticated caller and creates no audit entry', async () => {
+    const before = await auditLogCount();
+    await expect(
+      createUser.run(unauthenticatedRequest({ email: 'x@example.test', displayName: 'X', role: 'editor' })),
+    ).rejects.toThrow(/unauthenticated/);
+    expect(await auditLogCount()).toBe(before);
+  });
+
+  it('rejects a non-Super-Admin caller and creates no audit entry', async () => {
+    const before = await auditLogCount();
     await expect(
       createUser.run(requestAs('someone', 'editor', { email: 'x@example.test', displayName: 'X', role: 'editor' })),
     ).rejects.toThrow(/permission-denied/);
+    expect(await auditLogCount()).toBe(before);
   });
 
-  it('creates an active user requiring a password change, and returns a temporary password', async () => {
+  it('creates an active user requiring a password change, and writes exactly one audit entry', async () => {
     const email = `new-user-${Date.now()}@example.test`;
     const response = await createUser.run(
       requestAs(callerUid, 'superAdmin', { email, displayName: 'New User', role: 'editor' }),
@@ -82,6 +106,10 @@ describe('createUser', () => {
 
     const doc = await db.collection('users').doc(response.uid).get();
     expect(doc.data()).toMatchObject({ email, role: 'editor', status: 'active', mustChangePassword: true });
+
+    const auditEntries = await auditEntriesFor(response.uid);
+    expect(auditEntries).toHaveLength(1);
+    expect(auditEntries[0]).toMatchObject({ eventType: 'create', entityType: 'user', actorId: callerUid, source: 'function' });
 
     await cleanupUser(response.uid);
   });
@@ -109,19 +137,53 @@ describe('setUserRole / setUserStatus — last active Super Admin guard', () => 
 
   afterEach(() => Promise.all([cleanupUser(soleSuperAdminUid), cleanupUser(secondSuperAdminUid), cleanupUser(editorUid)]));
 
-  it('blocks demoting the only active Super Admin', async () => {
+  it('rejects an unauthenticated caller for setUserRole', async () => {
+    await expect(setUserRole.run(unauthenticatedRequest({ uid: soleSuperAdminUid, role: 'editor' }))).rejects.toThrow(
+      /unauthenticated/,
+    );
+  });
+
+  it('rejects a non-Super-Admin caller for setUserStatus', async () => {
+    await db.collection('users').doc(editorUid).set({
+      email: 'editor-caller@example.test',
+      displayName: 'Editor Caller',
+      photoUrl: null,
+      role: 'editor',
+      status: 'active',
+      mustChangePassword: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdBy: 'seed',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedBy: 'seed',
+    });
+    await expect(
+      setUserStatus.run(requestAs(editorUid, 'editor', { uid: soleSuperAdminUid, status: 'suspended' })),
+    ).rejects.toThrow(/permission-denied/);
+  });
+
+  it('blocks demoting the only active Super Admin and creates no audit entry', async () => {
+    const before = await auditLogCount();
     await expect(
       setUserRole.run(requestAs(soleSuperAdminUid, 'superAdmin', { uid: soleSuperAdminUid, role: 'editor' })),
     ).rejects.toThrow(/failed-precondition/);
+    expect(await auditLogCount()).toBe(before);
+
+    const record = await auth.getUser(soleSuperAdminUid);
+    expect(record.customClaims).toMatchObject({ role: 'superAdmin' });
   });
 
-  it('blocks suspending the only active Super Admin', async () => {
+  it('blocks suspending the only active Super Admin and creates no audit entry', async () => {
+    const before = await auditLogCount();
     await expect(
       setUserStatus.run(requestAs(soleSuperAdminUid, 'superAdmin', { uid: soleSuperAdminUid, status: 'suspended' })),
     ).rejects.toThrow(/failed-precondition/);
+    expect(await auditLogCount()).toBe(before);
+
+    const record = await auth.getUser(soleSuperAdminUid);
+    expect(record.disabled).toBe(false);
   });
 
-  it('allows demoting a Super Admin when a second active one exists', async () => {
+  it('allows demoting a Super Admin when a second active one exists, and writes an audit entry', async () => {
     await seedSuperAdmin(secondSuperAdminUid, 'second-super-admin@example.test');
 
     await expect(
@@ -130,9 +192,12 @@ describe('setUserRole / setUserStatus — last active Super Admin guard', () => 
 
     const record = await auth.getUser(soleSuperAdminUid);
     expect(record.customClaims).toMatchObject({ role: 'editor' });
+
+    const auditEntries = await auditEntriesFor(soleSuperAdminUid);
+    expect(auditEntries.some((e) => e.eventType === 'roleChange' && e.actorId === secondSuperAdminUid)).toBe(true);
   });
 
-  it('suspending sets the Auth user disabled and the status claim to suspended', async () => {
+  it('suspending sets the Auth user disabled, the status claim to suspended, and writes an audit entry', async () => {
     await seedSuperAdmin(secondSuperAdminUid, 'second-super-admin-2@example.test');
 
     await setUserStatus.run(requestAs(secondSuperAdminUid, 'superAdmin', { uid: soleSuperAdminUid, status: 'suspended' }));
@@ -140,6 +205,55 @@ describe('setUserRole / setUserStatus — last active Super Admin guard', () => 
     const record = await auth.getUser(soleSuperAdminUid);
     expect(record.disabled).toBe(true);
     expect(record.customClaims).toMatchObject({ status: 'suspended' });
+
+    const auditEntries = await auditEntriesFor(soleSuperAdminUid);
+    expect(auditEntries.some((e) => e.eventType === 'statusChange' && e.actorId === secondSuperAdminUid)).toBe(true);
+  });
+});
+
+describe('setUserRole / setUserStatus concurrency — last active Super Admin guard under a race', () => {
+  const adminAUid = 'race-admin-a';
+  const adminBUid = 'race-admin-b';
+
+  beforeEach(() =>
+    Promise.all([seedSuperAdmin(adminAUid, 'race-admin-a@example.test'), seedSuperAdmin(adminBUid, 'race-admin-b@example.test')]),
+  );
+
+  afterEach(() => Promise.all([cleanupUser(adminAUid), cleanupUser(adminBUid)]));
+
+  it('never suspends both of the last two active Super Admins concurrently (item 4: "including under concurrent requests")', async () => {
+    const [resultA, resultB] = await Promise.allSettled([
+      setUserStatus.run(requestAs(adminAUid, 'superAdmin', { uid: adminBUid, status: 'suspended' })),
+      setUserStatus.run(requestAs(adminBUid, 'superAdmin', { uid: adminAUid, status: 'suspended' })),
+    ]);
+
+    const statuses = [resultA.status, resultB.status];
+    // Firestore transactions serialize on the active-Super-Admin count
+    // query both requests read: whichever commits first sees count=2 and
+    // succeeds; the other is forced to retry, then sees count=1 and is
+    // correctly blocked. Exactly one of each is expected — not "at most
+    // one succeeds" (too weak) and not "both must be rejected" (which
+    // would mean the guard is now too strict to ever demote anyone).
+    expect(statuses.filter((s) => s === 'fulfilled')).toHaveLength(1);
+    expect(statuses.filter((s) => s === 'rejected')).toHaveLength(1);
+
+    const [recordA, recordB] = await Promise.all([auth.getUser(adminAUid), auth.getUser(adminBUid)]);
+    expect([recordA.disabled, recordB.disabled].filter((disabled) => !disabled)).toHaveLength(1);
+  });
+
+  it('never demotes both of the last two active Super Admins concurrently', async () => {
+    const [resultA, resultB] = await Promise.allSettled([
+      setUserRole.run(requestAs(adminAUid, 'superAdmin', { uid: adminBUid, role: 'editor' })),
+      setUserRole.run(requestAs(adminBUid, 'superAdmin', { uid: adminAUid, role: 'editor' })),
+    ]);
+
+    const statuses = [resultA.status, resultB.status];
+    expect(statuses.filter((s) => s === 'fulfilled')).toHaveLength(1);
+    expect(statuses.filter((s) => s === 'rejected')).toHaveLength(1);
+
+    const [recordA, recordB] = await Promise.all([auth.getUser(adminAUid), auth.getUser(adminBUid)]);
+    const remainingSuperAdmins = [recordA, recordB].filter((r) => r.customClaims?.role === 'superAdmin');
+    expect(remainingSuperAdmins).toHaveLength(1);
   });
 });
 
@@ -167,12 +281,23 @@ describe('resetUserPassword', () => {
 
   afterAll(() => Promise.all([cleanupUser(callerUid), cleanupUser(targetUid)]));
 
-  it('sets a new temporary password and requires a change at next sign-in', async () => {
+  it('rejects a non-Super-Admin caller and creates no audit entry', async () => {
+    const before = await auditLogCount();
+    await expect(resetUserPassword.run(requestAs(targetUid, 'editor', { uid: callerUid }))).rejects.toThrow(
+      /permission-denied/,
+    );
+    expect(await auditLogCount()).toBe(before);
+  });
+
+  it('sets a new temporary password, requires a change at next sign-in, and writes an audit entry', async () => {
     const response = await resetUserPassword.run(requestAs(callerUid, 'superAdmin', { uid: targetUid }));
     expect(response.temporaryPassword).toHaveLength(12);
 
     const doc = await db.collection('users').doc(targetUid).get();
     expect(doc.data()?.mustChangePassword).toBe(true);
+
+    const auditEntries = await auditEntriesFor(targetUid);
+    expect(auditEntries.some((e) => e.eventType === 'update' && e.actorId === callerUid)).toBe(true);
   });
 });
 
@@ -198,14 +323,24 @@ describe('completeFirstLogin', () => {
 
   afterEach(() => cleanupUser(uid));
 
-  it('clears mustChangePassword for the calling user', async () => {
+  it('rejects an unauthenticated caller', async () => {
+    await expect(completeFirstLogin.run(unauthenticatedRequest())).rejects.toThrow(/unauthenticated/);
+  });
+
+  it('clears mustChangePassword for the calling user and writes an audit entry', async () => {
     await expect(completeFirstLogin.run(requestAs(uid, 'editor'))).resolves.toBeNull();
     const doc = await db.collection('users').doc(uid).get();
     expect(doc.data()?.mustChangePassword).toBe(false);
+
+    const auditEntries = await auditEntriesFor(uid);
+    expect(auditEntries.some((e) => e.eventType === 'update' && e.actorId === uid)).toBe(true);
   });
 
-  it('is idempotent when called again', async () => {
+  it('is idempotent when called again, without writing a second audit entry', async () => {
     await completeFirstLogin.run(requestAs(uid, 'editor'));
+    const afterFirst = await auditLogCount();
+
     await expect(completeFirstLogin.run(requestAs(uid, 'editor'))).resolves.toBeNull();
+    expect(await auditLogCount()).toBe(afterFirst);
   });
 });

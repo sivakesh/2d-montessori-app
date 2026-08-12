@@ -20,19 +20,35 @@ rules_version = '2';
 // a narrowly-scoped self-update rule (restricted to those two fields)
 // when that screen is built, not before.
 //
-// Role/status source of truth for these rules is the custom claims on
-// `request.auth.token` (`role`, `status`), not the Firestore mirror —
-// claims are what Cloud Functions set authoritatively (functions/src/auth
-// guards.ts), and reading claims here costs nothing extra per request,
-// unlike a `get()` lookup. This does mean a just-suspended Super Admin's
-// existing session can keep *reading* the user list for up to the
-// remaining life of their cached ID token (~1h) — the Cloud Functions
-// layer closes this gap for anything that actually *mutates* state (see
-// assertCallerIsActiveSuperAdmin's extra Firestore freshness check),
-// which is the part that matters; this is a documented, accepted
-// tradeoff for a read-only list view, not an oversight.
+// Role/status trust model for these rules — corrected at the Foundation
+// Verification checkpoint after review found the original version
+// inconsistent (see docs/architecture/decisions.md "Security-rule
+// inconsistency found and resolved" for the full writeup):
+//
+//   - Self-read of your OWN `users/{uid}` doc is allowed unconditionally
+//     (active or suspended). This is not privileged access — it is what
+//     every account, including a just-suspended one, needs to see its own
+//     state — and it costs nothing extra since no cross-document lookup
+//     is involved.
+//   - Reading ANY OTHER user's profile (the Super Admin User Management
+//     list) requires `isActiveSuperAdmin()`, which re-checks the
+//     caller's status via a live `get()` on their OWN doc — NOT the
+//     cached custom claim. Custom claims are embedded in the ID token at
+//     issuance and stay stale in an already-signed-in client for up to
+//     ~1 hour after a Super Admin is suspended (Firebase does not push
+//     claim changes to existing sessions), so a claims-only check would
+//     let a just-suspended Super Admin keep reading every other user's
+//     profile for that entire window. The extra Firestore read this
+//     costs is worth it specifically because this is the one rule in the
+//     whole ruleset that grants cross-user access.
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function isActiveSuperAdmin() {
+      return request.auth != null
+        && request.auth.token.role == 'superAdmin'
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active';
+    }
 
     // ---- Public, sanitized read models (PRD §12) ----
     match /publishedPages/{document=**} { allow read: if true; allow write: if false; }
@@ -51,13 +67,13 @@ service cloud.firestore {
     // Redirects are resolved server-side only (PRD §12) — no client read.
 
     // ---- users/{uid}: SRS AUTH-01..AUTH-05 ----
-    // A user may read their own profile; a Super Admin may read any
+    // A user may always read their own profile; an active Super Admin
+    // (verified live, see isActiveSuperAdmin() above) may read any
     // profile (User Management screen, feature_identity's
     // observeUsers()). No client writes — see the module comment above.
     match /users/{uid} {
       allow read: if request.auth != null
-        && (request.auth.uid == uid
-          || (request.auth.token.role == 'superAdmin' && request.auth.token.status == 'active'));
+        && (request.auth.uid == uid || isActiveSuperAdmin());
       allow write: if false;
     }
 

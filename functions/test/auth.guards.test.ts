@@ -1,13 +1,7 @@
-import type { Firestore } from 'firebase-admin/firestore';
+import type { Firestore, Transaction } from 'firebase-admin/firestore';
 import { HttpsError, type CallableRequest } from 'firebase-functions/v2/https';
 
-import {
-  assertCallerIsActiveSuperAdmin,
-  assertRoleChangeAllowed,
-  assertStatusChangeAllowed,
-  countActiveSuperAdmins,
-  requireAuthenticatedCaller,
-} from '../src/auth/guards';
+import { assertCallerIsActiveSuperAdmin, assertRoleChangeAllowed, assertStatusChangeAllowed, requireAuthenticatedCaller } from '../src/auth/guards';
 
 function fakeRequest(auth: { uid: string; token: Record<string, unknown> } | undefined): CallableRequest<unknown> {
   return { data: undefined, auth, rawRequest: {} } as unknown as CallableRequest<unknown>;
@@ -23,14 +17,23 @@ function fakeFirestoreForUserDoc(data: Record<string, unknown> | undefined): Fir
   } as unknown as Firestore;
 }
 
-function fakeFirestoreWithActiveSuperAdminCount(count: number): Firestore {
+// A minimal fake `db` good enough to build a query object — the fake
+// Transaction below never inspects it, since `Transaction.get(query)` is
+// what actually returns data in these tests.
+function fakeFirestoreForQuery(): Firestore {
   return {
     collection: () => ({
       where: () => ({
-        where: () => ({ get: async () => ({ size: count }) }),
+        where: () => 'fake-active-super-admin-query',
       }),
     }),
   } as unknown as Firestore;
+}
+
+function fakeTransactionWithActiveSuperAdminCount(count: number): Transaction {
+  return {
+    get: async () => ({ size: count }),
+  } as unknown as Transaction;
 }
 
 describe('requireAuthenticatedCaller', () => {
@@ -78,17 +81,12 @@ describe('assertCallerIsActiveSuperAdmin', () => {
   });
 });
 
-describe('countActiveSuperAdmins', () => {
-  it('returns the query size', async () => {
-    await expect(countActiveSuperAdmins(fakeFirestoreWithActiveSuperAdminCount(3))).resolves.toBe(3);
-  });
-});
-
 describe('assertRoleChangeAllowed — last active Super Admin guard', () => {
   it('blocks demoting the only active Super Admin', async () => {
     await expect(
       assertRoleChangeAllowed(
-        fakeFirestoreWithActiveSuperAdminCount(1),
+        fakeTransactionWithActiveSuperAdminCount(1),
+        fakeFirestoreForQuery(),
         { role: 'superAdmin', status: 'active' },
         'editor',
       ),
@@ -98,29 +96,33 @@ describe('assertRoleChangeAllowed — last active Super Admin guard', () => {
   it('allows demoting a Super Admin when another active one exists', async () => {
     await expect(
       assertRoleChangeAllowed(
-        fakeFirestoreWithActiveSuperAdminCount(2),
+        fakeTransactionWithActiveSuperAdminCount(2),
+        fakeFirestoreForQuery(),
         { role: 'superAdmin', status: 'active' },
         'editor',
       ),
     ).resolves.toBeUndefined();
   });
 
-  it('does not query Firestore when the target is not an active Super Admin', async () => {
-    let queried = false;
-    const db = {
-      collection: () => {
-        queried = true;
+  it('does not read Firestore at all when the target is not an active Super Admin', async () => {
+    let read = false;
+    const transaction = {
+      get: async () => {
+        read = true;
         throw new Error('should not be called');
       },
-    } as unknown as Firestore;
-    await expect(assertRoleChangeAllowed(db, { role: 'editor', status: 'active' }, 'publisher')).resolves.toBeUndefined();
-    expect(queried).toBe(false);
+    } as unknown as Transaction;
+    await expect(
+      assertRoleChangeAllowed(transaction, fakeFirestoreForQuery(), { role: 'editor', status: 'active' }, 'publisher'),
+    ).resolves.toBeUndefined();
+    expect(read).toBe(false);
   });
 
   it('allows promoting a role (never blocked)', async () => {
     await expect(
       assertRoleChangeAllowed(
-        fakeFirestoreWithActiveSuperAdminCount(0),
+        fakeTransactionWithActiveSuperAdminCount(0),
+        fakeFirestoreForQuery(),
         { role: 'editor', status: 'active' },
         'superAdmin',
       ),
@@ -132,7 +134,8 @@ describe('assertStatusChangeAllowed — last active Super Admin guard', () => {
   it('blocks suspending the only active Super Admin', async () => {
     await expect(
       assertStatusChangeAllowed(
-        fakeFirestoreWithActiveSuperAdminCount(1),
+        fakeTransactionWithActiveSuperAdminCount(1),
+        fakeFirestoreForQuery(),
         { role: 'superAdmin', status: 'active' },
         'suspended',
       ),
@@ -142,7 +145,8 @@ describe('assertStatusChangeAllowed — last active Super Admin guard', () => {
   it('allows suspending a Super Admin when another active one exists', async () => {
     await expect(
       assertStatusChangeAllowed(
-        fakeFirestoreWithActiveSuperAdminCount(2),
+        fakeTransactionWithActiveSuperAdminCount(2),
+        fakeFirestoreForQuery(),
         { role: 'superAdmin', status: 'active' },
         'suspended',
       ),
@@ -152,7 +156,8 @@ describe('assertStatusChangeAllowed — last active Super Admin guard', () => {
   it('allows reactivating (never blocked)', async () => {
     await expect(
       assertStatusChangeAllowed(
-        fakeFirestoreWithActiveSuperAdminCount(0),
+        fakeTransactionWithActiveSuperAdminCount(0),
+        fakeFirestoreForQuery(),
         { role: 'superAdmin', status: 'suspended' },
         'active',
       ),

@@ -73,16 +73,45 @@ Role and status live in **both** Firebase Auth custom claims and the
 
 This means a role/status change made by a Super Admin can take up to ~1
 hour to reach the *target* user's cached ID token in the general case.
-Two things narrow that window where it matters: (1) Firestore/Storage
-rules re-check `status` live via Firestore for privileged operations (see
-`firebase/firestore.rules`' header comment and
-`functions/src/auth/guards.ts`'s `assertCallerIsActiveSuperAdmin`), and
-(2) suspending a user calls `revokeRefreshTokens` and disables the Auth
-account outright, which blocks new sign-ins immediately even though it
-doesn't retroactively invalidate an already-issued, unexpired ID token —
-a documented Firebase platform limitation, not an oversight here.
+Three things narrow that window where it matters: (1) Firestore rules
+re-check `status` live via Firestore — not the cached claim — for the one
+cross-user read they grant (see "Security-rule inconsistency found and
+resolved" below), (2) `functions/src/auth/guards.ts`'s
+`assertCallerIsActiveSuperAdmin` does the same live re-check before any
+Cloud Function mutation, and (3) suspending a user calls
+`revokeRefreshTokens` and disables the Auth account outright, which
+blocks new sign-ins immediately even though it doesn't retroactively
+invalidate an already-issued, unexpired ID token — a documented Firebase
+platform limitation, not an oversight here.
 
-### Last-active-Super-Admin guard
+### Security-rule inconsistency found and resolved (Foundation Verification checkpoint)
+
+The Phase 1 Foundation report claimed Firestore rules "re-check status
+live via Firestore for privileged operations," citing
+`firebase/firestore.rules`. That was only true of the Cloud Functions
+guard (`assertCallerIsActiveSuperAdmin`) — the **rules file itself**
+checked only `request.auth.token.status`, the cached claim, for the one
+cross-user read it grants (a Super Admin reading another user's profile
+in User Management). Since a suspended Super Admin's already-issued ID
+token keeps its old claims for up to ~1 hour, that version of the rule
+would have let a just-suspended Super Admin keep reading every other
+user's profile for the rest of that window — a real gap, not just
+inconsistent documentation, caught by explicit review at this checkpoint.
+
+**Fix:** `firebase/firestore.rules` now defines `isActiveSuperAdmin()`,
+which re-checks the caller's status via a live `get()` on their own
+`users/{uid}` doc — the same pattern the Cloud Functions guard already
+used — rather than trusting the token's cached claim. Self-read of one's
+own document is unaffected (still claim-independent, always allowed,
+since it grants no privilege beyond seeing your own state). See the
+rules file's own header comment for the full reasoning, and
+`firebase/test/firestore.rules.test.ts`'s "denies a Super Admin
+cross-user read when their cached token is stale" test, which seeds the
+caller's Firestore doc as suspended while authenticating them with
+claims that still say active — the scenario a claims-only check would
+have missed.
+
+### Last-active-Super-Admin guard, including under concurrent requests
 
 `setUserRole` and `setUserStatus` both refuse an operation that would
 leave zero active Super Admins (`functions/src/auth/guards.ts`'s
@@ -93,6 +122,26 @@ when it can see (from its own already-permitted read of the user list)
 that a row is the sole active Super Admin — a UX nicety, not the actual
 guard, which is server-side and unconditional.
 
+**Concurrency:** the read (current role/status), the active-Super-Admin
+count check, and the eventual write are all performed inside a single
+Firestore transaction (`db.runTransaction(...)` in `setUserRole.ts` /
+`setUserStatus.ts`), with the count read via `transaction.get(query)`
+rather than a standalone query. The original version of this guard read
+the count as a plain, non-transactional query before writing — two
+concurrent requests demoting/suspending two different Super Admins when
+exactly two existed could each have read "2 active" before either write
+landed, and both would have proceeded, leaving zero. Firestore tracks a
+query read inside a transaction as part of that transaction's read set:
+any write that could change the query's result before the transaction
+commits forces an automatic retry. Wrapping the whole sequence in one
+transaction makes the two concurrent requests serialize correctly —
+whichever commits first sees count=2 and succeeds; the other retries,
+then sees count=1 and is correctly blocked. Proven by
+`functions/test/emulator/auth.functions.test.ts`'s "never suspends/
+demotes both of the last two active Super Admins concurrently" tests,
+which fire both requests via `Promise.allSettled` and assert exactly one
+succeeds.
+
 ### Password policy
 
 Minimum 8 characters, at least one letter and one digit
@@ -101,7 +150,13 @@ Minimum 8 characters, at least one letter and one digit
 cross-reference, not shared code — Dart vs. TypeScript). The SRS does not
 specify a password complexity policy; this is a reasonable baseline
 **pending stakeholder confirmation**, called out explicitly rather than
-silently assumed permanent.
+silently assumed permanent. **Explicitly retained unchanged at the
+Foundation Verification checkpoint** — each side has exactly one place
+(`PasswordPolicy.minLength`/`validate` in Dart,
+`MIN_PASSWORD_LENGTH`/`isPasswordPolicyCompliant` in TypeScript) that
+defines the policy, so strengthening it later (e.g. an uppercase or
+special-character requirement) means editing those two functions, not
+hunting through every screen/callable that collects a password.
 
 ### Self-service password reset vs. AUTH-01's "no invitation email"
 
@@ -110,7 +165,9 @@ SRS AUTH-01 excludes invitation/notification emails from account
 This milestone implements standard Firebase Auth password-reset emails
 (`sendPasswordResetEmail`/`confirmPasswordReset`) as a distinct,
 standard security feature, not an "invitation" — flagged here as an
-interpretation call, not a silent scope addition.
+interpretation call, not a silent scope addition. **Explicitly confirmed
+at the Foundation Verification checkpoint**: this does not conflict with
+the decision to avoid invitation-based onboarding and is retained.
 
 ### Admin routing
 
@@ -123,20 +180,27 @@ non-bookmarkable admin URLs become a real cost, not before.
 
 ### Test execution status
 
+As of the Foundation Verification checkpoint (after the fixes documented
+above), this development environment still has JDK 17/11, not the 21+
+`firebase-tools` requires to run any emulator — per explicit instruction,
+JDK 21 was not installed locally. Emulator-dependent suites are instead
+verified via CI (GitHub Actions installs JDK 21 in the `security-rules`
+job) — see that job's run linked from the milestone report for the actual
+pass/fail result; do not treat the `tsc --noEmit` clean-compile below as
+equivalent to an executed test.
+
 | Suite | Run in this environment? | Result |
 |---|---|---|
-| Dart unit/widget tests (`core_contracts`, `firebase_adapters`, `feature_identity`, both apps) | Yes | 87/87 passing |
-| Cloud Functions unit tests (`functions/test/*.test.ts`, excludes `test/emulator/`) | Yes | 55/55 passing |
-| Cloud Functions integration tests (`functions/test/emulator/auth.functions.test.ts`) | **No** | Authored, type-checked clean (`tsc --noEmit`); not executed |
-| Firestore/Storage rules tests (`firebase/test/*.test.ts`) | **No** | Authored, type-checked clean; not executed |
-| Auth account-status (disabled-user) test (`firebase/test/auth.account-status.test.ts`) | **No** | Authored, type-checked clean; not executed |
+| Dart unit/widget tests (`core_contracts`, `firebase_adapters`, `feature_identity`, both apps) | Yes | 86/86 passing |
+| Cloud Functions unit tests (`functions/test/*.test.ts`, excludes `test/emulator/`) | Yes | 54/54 passing |
+| Cloud Functions integration tests (`functions/test/emulator/auth.functions.test.ts`) | **No — see CI** | Authored, type-checked clean (`tsc --noEmit`); not executed locally |
+| Firestore rules tests (`firebase/test/firestore.rules.test.ts`) | **No — see CI** | Authored, type-checked clean; not executed locally |
+| Storage rules tests (`firebase/test/storage.rules.test.ts`) | **No — see CI** | Authored, type-checked clean; not executed locally |
+| Auth account-status (disabled-user) test (`firebase/test/auth.account-status.test.ts`) | **No — see CI** | Authored, type-checked clean; not executed locally |
 
-The three "No" rows all require the Firebase Emulator Suite, which in
-turn requires JDK 21+; this environment has JDK 17/11 only. See the root
-README's "Prerequisites" and "Testing" sections for exact run commands
-once a JDK 21+ is available. Nothing in this row set has been reported as
-passing without actually running — see the root README for the same
-caveat stated for the human reader.
+Nothing in this row set has been reported as passing without actually
+running — see the root README for the same caveat stated for the human
+reader.
 
 ## Traceability
 

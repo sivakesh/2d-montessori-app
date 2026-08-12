@@ -17,7 +17,6 @@ let testEnv: RulesTestEnvironment;
 
 const ACTIVE_EDITOR = { role: 'editor', status: 'active' };
 const ACTIVE_SUPER_ADMIN = { role: 'superAdmin', status: 'active' };
-const SUSPENDED_SUPER_ADMIN_CLAIMS = { role: 'superAdmin', status: 'suspended' };
 
 beforeAll(async () => {
   testEnv = await initializeTestEnvironment({
@@ -51,6 +50,12 @@ describe('users/{uid} read access', () => {
     await assertSucceeds(getDoc(doc(u1.firestore(), 'users', 'u1')));
   });
 
+  it('allows a suspended user to read their own profile (so the app can show them why they are blocked)', async () => {
+    await seedUserDoc('u1', { email: 'u1@example.test', role: 'editor', status: 'suspended' });
+    const u1 = testEnv.authenticatedContext('u1', { role: 'editor', status: 'suspended' });
+    await assertSucceeds(getDoc(doc(u1.firestore(), 'users', 'u1')));
+  });
+
   it('denies a signed-in user reading a different profile', async () => {
     await seedUserDoc('u2', { email: 'u2@example.test', role: 'editor', status: 'active' });
     const u1 = testEnv.authenticatedContext('u1', ACTIVE_EDITOR);
@@ -63,16 +68,30 @@ describe('users/{uid} read access', () => {
     await assertFails(getDoc(doc(anon.firestore(), 'users', 'u1')));
   });
 
-  it('allows an active Super Admin to read any profile', async () => {
+  it('allows an active Super Admin (Firestore-verified, not just claimed) to read any profile', async () => {
     await seedUserDoc('u1', { email: 'u1@example.test', role: 'editor', status: 'active' });
+    await seedUserDoc('admin1', { email: 'admin1@example.test', role: 'superAdmin', status: 'active' });
     const admin = testEnv.authenticatedContext('admin1', ACTIVE_SUPER_ADMIN);
     await assertSucceeds(getDoc(doc(admin.firestore(), 'users', 'u1')));
   });
 
-  it('denies a Super Admin whose own claims say suspended from reading other profiles', async () => {
+  // This is the critical regression test for the inconsistency found at
+  // the Foundation Verification checkpoint (see
+  // docs/architecture/decisions.md "Security-rule inconsistency found and
+  // resolved"): a Super Admin's ID token can still carry role=superAdmin,
+  // status=active for up to ~1 hour after they are suspended, because
+  // Firebase does not push claim changes to already-signed-in clients.
+  // The rule must re-verify status against Firestore — the caller's own
+  // *current* record, not the token they happen to be holding — for any
+  // cross-user read, or a just-suspended Super Admin keeps full read
+  // access to every profile until their stale token expires.
+  it('denies a Super Admin cross-user read when their cached token is stale (token says active, Firestore says suspended)', async () => {
     await seedUserDoc('u1', { email: 'u1@example.test', role: 'editor', status: 'active' });
-    const suspendedAdmin = testEnv.authenticatedContext('admin1', SUSPENDED_SUPER_ADMIN_CLAIMS);
-    await assertFails(getDoc(doc(suspendedAdmin.firestore(), 'users', 'u1')));
+    await seedUserDoc('admin1', { email: 'admin1@example.test', role: 'superAdmin', status: 'suspended' });
+    // authenticatedContext's claims simulate a token issued *before* the
+    // suspension above — exactly the stale-token scenario.
+    const staleAdmin = testEnv.authenticatedContext('admin1', ACTIVE_SUPER_ADMIN);
+    await assertFails(getDoc(doc(staleAdmin.firestore(), 'users', 'u1')));
   });
 
   it('denies a non-Super-Admin role reading another profile', async () => {
@@ -89,13 +108,33 @@ describe('users/{uid} write access — everything goes through Cloud Functions',
     await assertFails(setDoc(doc(u1.firestore(), 'users', 'u1'), { displayName: 'New Name' }, { merge: true }));
   });
 
+  it('denies a user promoting their own role directly', async () => {
+    await seedUserDoc('u1', { email: 'u1@example.test', role: 'editor', status: 'active' });
+    const u1 = testEnv.authenticatedContext('u1', ACTIVE_EDITOR);
+    await assertFails(setDoc(doc(u1.firestore(), 'users', 'u1'), { role: 'superAdmin' }, { merge: true }));
+  });
+
+  it('denies a user reactivating their own suspended status directly', async () => {
+    await seedUserDoc('u1', { email: 'u1@example.test', role: 'editor', status: 'suspended' });
+    const u1 = testEnv.authenticatedContext('u1', { role: 'editor', status: 'suspended' });
+    await assertFails(setDoc(doc(u1.firestore(), 'users', 'u1'), { status: 'active' }, { merge: true }));
+  });
+
+  it('denies a user clearing their own mustChangePassword flag directly', async () => {
+    await seedUserDoc('u1', { email: 'u1@example.test', role: 'editor', status: 'active', mustChangePassword: true });
+    const u1 = testEnv.authenticatedContext('u1', ACTIVE_EDITOR);
+    await assertFails(setDoc(doc(u1.firestore(), 'users', 'u1'), { mustChangePassword: false }, { merge: true }));
+  });
+
   it('denies a Super Admin writing another user’s role directly (must go through setUserRole)', async () => {
     await seedUserDoc('u1', { email: 'u1@example.test', role: 'editor', status: 'active' });
+    await seedUserDoc('admin1', { email: 'admin1@example.test', role: 'superAdmin', status: 'active' });
     const admin = testEnv.authenticatedContext('admin1', ACTIVE_SUPER_ADMIN);
     await assertFails(setDoc(doc(admin.firestore(), 'users', 'u1'), { role: 'superAdmin' }, { merge: true }));
   });
 
   it('denies a client creating a new user document directly (must go through createUser)', async () => {
+    await seedUserDoc('admin1', { email: 'admin1@example.test', role: 'superAdmin', status: 'active' });
     const admin = testEnv.authenticatedContext('admin1', ACTIVE_SUPER_ADMIN);
     await assertFails(
       setDoc(doc(admin.firestore(), 'users', 'new-user'), {
@@ -109,6 +148,7 @@ describe('users/{uid} write access — everything goes through Cloud Functions',
 
   it('denies a client deleting a user document directly', async () => {
     await seedUserDoc('u1', { email: 'u1@example.test', role: 'editor', status: 'active' });
+    await seedUserDoc('admin1', { email: 'admin1@example.test', role: 'superAdmin', status: 'active' });
     const admin = testEnv.authenticatedContext('admin1', ACTIVE_SUPER_ADMIN);
     await assertFails(deleteDoc(doc(admin.firestore(), 'users', 'u1')));
   });
@@ -119,6 +159,7 @@ describe('auditLogs — Admin-SDK-only, no client access at all', () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), 'auditLogs', 'e1'), { eventType: 'create' });
     });
+    await seedUserDoc('admin1', { email: 'admin1@example.test', role: 'superAdmin', status: 'active' });
     const admin = testEnv.authenticatedContext('admin1', ACTIVE_SUPER_ADMIN);
     await assertFails(getDoc(doc(admin.firestore(), 'auditLogs', 'e1')));
   });
@@ -146,6 +187,7 @@ describe('published* collections — unchanged public-read baseline', () => {
 
 describe('everything else — default deny', () => {
   it('denies read/write on an undeclared collection even for an active Super Admin', async () => {
+    await seedUserDoc('admin1', { email: 'admin1@example.test', role: 'superAdmin', status: 'active' });
     const admin = testEnv.authenticatedContext('admin1', ACTIVE_SUPER_ADMIN);
     await assertFails(getDoc(doc(admin.firestore(), 'programs', 'p1')));
     await assertFails(setDoc(doc(admin.firestore(), 'programs', 'p1'), { title: 'x' }));

@@ -52,9 +52,15 @@ export function validateUid(value: unknown): string {
 }
 
 /**
- * Minimum password policy. Must stay numerically in sync with
- * packages/feature_identity/lib/src/domain/password_policy.dart (not
- * code-shared — Dart vs TypeScript) — see that file's doc comment.
+ * Minimum password policy — the server-side authority (the client's copy
+ * in packages/feature_identity/lib/src/domain/password_policy.dart is a
+ * UX convenience; this is what actually gates password changes, since
+ * every callable re-validates regardless of what the client already
+ * checked). Retained as-is at the Foundation Verification checkpoint.
+ * `MIN_PASSWORD_LENGTH` is the single place this policy is configured on
+ * the server side — strengthen it (or add character-class checks) here
+ * only; must stay numerically in sync with the Dart copy by hand (not
+ * code-shared — Dart vs TypeScript).
  */
 const MIN_PASSWORD_LENGTH = 8;
 
