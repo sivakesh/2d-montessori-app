@@ -258,21 +258,38 @@ rather than cleaned up into a story where the first fix worked:
      exactly what that error message describes. Fixed by calling
      `.firestore()` once per test and reusing the reference for both
      operations — a one-line change once correctly diagnosed.
-4. **Test bug**: `auth.account-status.test.ts`'s two tests shared one
-   hardcoded email; "allows sign-in while enabled" created that account,
-   and "rejects sign-in once disabled" assumed it still existed via
-   `adminAuth.getUserByEmail(email)`. CI failed that lookup with "There
-   is no user record corresponding to the provided identifier" — an
-   unintended cross-test dependency, not a production issue. Fixed by
-   giving each test its own uniquely-generated email and having each
-   create/tear down its own account.
+4. **Test bug, also multi-attempt**: `auth.account-status.test.ts`'s two
+   tests shared one hardcoded email; "allows sign-in while enabled"
+   created that account, and "rejects sign-in once disabled" assumed it
+   still existed via `adminAuth.getUserByEmail(email)`. CI failed that
+   lookup with "There is no user record corresponding to the provided
+   identifier."
+   - Fix attempt bundled two changes at once: unique per-test emails
+     (correct — removed the real cross-test dependency), *and* giving
+     this file its own distinct project ID like the Firestore files got
+     for bug 3 (by analogy, since it looked like the same shape of
+     problem). The next CI run showed this made it *worse*: now even the
+     *first* test failed the identical lookup, immediately after its own
+     `createUserWithEmailAndPassword` had just succeeded — the client SDK
+     write and the Admin SDK read were no longer seeing the same data at
+     all.
+   - **Actual cause**: unlike the Firestore emulator, the Auth emulator
+     does not reliably treat an arbitrary `demo-`-prefixed project ID as
+     an independent namespace shared consistently between the Client and
+     Admin SDKs. Reverted this file to the same project ID
+     `firebase emulators:exec --project` was started with; kept the named
+     app instances (`auth-status-test-client`/`-admin`), which already
+     provide enough isolation from the *Firestore*-side SDK state that
+     was bug 3's actual problem — a problem this file, touching only
+     Auth, never had in the first place.
 
 All fixes are covered by a subsequent CI run — see the milestone report
 for that run's actual result. Recorded in this much detail specifically
-because two of the three attempts on bug 3 looked plausible, were
-individually reasonable engineering, and were still wrong — a reminder
-that "a plausible-sounding fix" and "an actually-verified fix" are not
-the same claim, which is the entire point of this checkpoint insisting on
+because three of these four fix attempts looked plausible, were
+individually reasonable engineering by analogy to a nearby bug, and were
+still wrong — a reminder that "a plausible-sounding fix" and "an
+actually-verified fix" are not the same claim, which is the entire point
+of this checkpoint insisting on
 real execution over review or `tsc --noEmit`.
 
 ## Traceability

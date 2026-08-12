@@ -19,19 +19,26 @@ import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 
 // Client SDK, pointed at the Auth emulator only — this file intentionally
 // does not touch Firestore, so it doesn't need a rules-unit-testing
-// environment.
-// Distinct project ID from firestore.rules.test.ts / storage.rules.test.ts
-// — see firestore.rules.test.ts's comment on its projectId line for why
-// (a real cross-file SDK-state collision caught by CI).
-const clientApp = initializeApp(
-  { projectId: 'demo-montessori-2d-auth-status', apiKey: 'demo-api-key' },
-  'auth-status-test-client',
-);
+// environment, and does NOT use a distinct project ID the way
+// firestore.rules.test.ts / storage.rules.test.ts do. That was tried
+// here too and made things *worse*: CI showed `createUserWithEmailAndPassword`
+// (client SDK) succeeding while the immediately-following
+// `adminAuth.getUserByEmail` (Admin SDK) failed with "no user record
+// corresponding to the provided identifier" against the same non-default
+// project ID — unlike the Firestore emulator, the Auth emulator does not
+// reliably treat an arbitrary demo-* project ID as an independent,
+// fully-functional namespace shared consistently between the client and
+// Admin SDKs. Using the same project ID `firebase emulators:exec
+// --project` was started with avoids that; the named app instances
+// below (`auth-status-test-client`/`-admin`) already provide enough
+// isolation from the *Firestore*-side SDK state that was the actual
+// problem in the other two files.
+const clientApp = initializeApp({ projectId: 'demo-montessori-2d', apiKey: 'demo-api-key' }, 'auth-status-test-client');
 const clientAuth = getAuth(clientApp);
 connectAuthEmulator(clientAuth, 'http://localhost:9099', { disableWarnings: true });
 
 // Admin SDK, for setting up and disabling the test account.
-const adminApp = initializeAdminApp({ projectId: 'demo-montessori-2d-auth-status' }, 'auth-status-test-admin');
+const adminApp = initializeAdminApp({ projectId: 'demo-montessori-2d' }, 'auth-status-test-admin');
 const adminAuth = getAdminAuth(adminApp);
 
 const TEST_PASSWORD = 'original-pw-1';
