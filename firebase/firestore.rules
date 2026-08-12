@@ -50,6 +50,16 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active';
     }
 
+    // SRS §3 "Edit all content: full" for Publisher/Super Admin. Same
+    // live-status-over-cached-claim reasoning as isActiveSuperAdmin()
+    // above — a just-suspended Publisher should not keep read access to
+    // every draft for up to the ~1h claim-staleness window.
+    function isActivePublisherOrAbove() {
+      return request.auth != null
+        && (request.auth.token.role == 'publisher' || request.auth.token.role == 'superAdmin')
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active';
+    }
+
     // ---- Public, sanitized read models (PRD §12) ----
     match /publishedPages/{document=**} { allow read: if true; allow write: if false; }
     match /publishedPrograms/{document=**} { allow read: if true; allow write: if false; }
@@ -82,6 +92,35 @@ service cloud.firestore {
     // in this milestone, so it is not even Super-Admin-readable here).
     match /auditLogs/{eventId} {
       allow read, write: if false;
+    }
+
+    // ---- content/{contentId}: SRS CMS-02, CMS-03 (Phase 1 — CMS Core) ----
+    // The publishing-workflow envelope feature_pages/feature_programs/etc.
+    // will extend — see docs/architecture/firestore-model.md. The owner
+    // may always read their own draft (SRS §3 "Create/edit own drafts:
+    // full" for every role); an active Publisher/Super Admin may read any
+    // content item (SRS §3 "Edit all content: full"). Editor reading
+    // content it does not own is denied here, matching SRS §3's
+    // "Assigned/permitted" cell — a real assignment mechanism (`allow
+    // read` extended to `assignedEditorIds`) is added once feature_pages
+    // actually needs it; until then, over-restricting is the safe
+    // default, not under-restricting. No client writes at all — every
+    // mutation (createDraft, every transition) goes through
+    // functions/src/publishing.
+    match /content/{contentId} {
+      allow read: if request.auth != null
+        && (resource.data.ownerId == request.auth.uid || isActivePublisherOrAbove());
+      allow write: if false;
+
+      // Immutable transition history (SRS CMS-03 "comments and
+      // transitions stay in history"). Same read access as the parent
+      // content doc; no client writes.
+      match /transitions/{transitionId} {
+        allow read: if request.auth != null
+          && (get(/databases/$(database)/documents/content/$(contentId)).data.ownerId == request.auth.uid
+            || isActivePublisherOrAbove());
+        allow write: if false;
+      }
     }
 
     // ---- Everything else: deny by default until its owning milestone ----

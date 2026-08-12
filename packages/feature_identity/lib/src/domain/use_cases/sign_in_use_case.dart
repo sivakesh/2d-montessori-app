@@ -1,6 +1,5 @@
 import 'package:core_contracts/core_contracts.dart';
 
-import '../auth_failures.dart';
 import '../auth_repository.dart';
 
 class SignInUseCase {

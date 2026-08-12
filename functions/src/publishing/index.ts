@@ -1,16 +1,20 @@
 /**
  * Capability: publishing
  *
- * Transactional publish/unpublish/schedule/rollback: validates references, writes published* snapshot, version record, redirects and audit event atomically.
+ * Editorial workflow states, transitions, scheduling foundation and
+ * audit trail — createDraft plus the single parameterized
+ * transitionContent callable behind every named action.
  *
- * Traceability: SRS CMS-02, CMS-05, CMS-06; PRD Section 9 (Editorial Workflow and Versioning)
+ * Traceability: SRS CMS-02, CMS-03, CMS-05, CMS-08; PRD Section 9
+ * (Editorial Workflow and Versioning)
  *
- * Phase 0 scaffold only — no callable/trigger functions are exported yet.
- * Real implementations land per the milestone that owns this capability
- * (see /README.md "Implementation milestones"). Every exported function
- * added here must go through the shared audit helper in ../lib/audit.ts
- * and must never trust client-supplied role/permission claims without
- * re-verifying them server-side (SRS NFR-05).
+ * Deployed/emulated as `publishingFns-<name>` per the grouped-export
+ * naming in ../index.ts (`export * as publishingFns from './publishing'`).
  */
-
 export const capability = 'publishing' as const;
+
+export { createDraft } from './createDraft';
+export * from './guards';
+export * from './stateMachine';
+export { transitionContent } from './transitionContent';
+export * from './validators';

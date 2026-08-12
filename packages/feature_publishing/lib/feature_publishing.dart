@@ -1,22 +1,32 @@
 /// Publishing & Versions
 ///
-/// Editorial workflow states, immutable version snapshots, scheduling and rollback.
+/// Editorial workflow states, transitions, scheduling foundation and
+/// audit trail — the reusable engine every content feature
+/// (feature_pages, feature_programs, ...) applies to its own documents.
 ///
-/// Traceability: SRS CMS-02, CMS-05, CMS-06; PRD Section 9 (Editorial Workflow and Versioning)
+/// Traceability: SRS CMS-02, CMS-03, CMS-05, CMS-08; PRD Section 9
+/// (Editorial Workflow and Versioning)
 ///
-/// Public API barrel. This feature owns lib/src/domain (entities, use
-/// cases, repository interfaces), lib/src/data (DTOs, mappers, Firestore/
-/// Storage/Functions repository implementations) and lib/src/presentation
-/// (Flutter screens/widgets/state) per PRD Section 11.1. No other feature
-/// package may import lib/src/** directly — only this barrel, and only
-/// through core_contracts/design_system-typed public members.
-///
-/// Phase 0 scaffold: domain/data/presentation are intentionally empty
-/// (.gitkeep only). Real exports land in the CMS Core / Public Website
-/// implementation phases.
+/// Public API barrel — see docs/architecture/repository-structure.md for
+/// why only this file (never lib/src/**) may be imported by other
+/// packages.
 library;
 
-/// Package identifier, useful for logging/diagnostics. Also keeps this
-/// barrel a non-empty library so Phase 0 smoke tests have a real symbol
-/// to import instead of an unused import.
-const String featureModuleName = 'feature_publishing';
+export 'src/data/firestore_publishing_repository.dart';
+export 'src/domain/publishing_action.dart';
+export 'src/domain/publishing_failures.dart';
+export 'src/domain/publishing_record.dart';
+export 'src/domain/publishing_repository.dart';
+export 'src/domain/publishing_state_machine.dart';
+export 'src/domain/publishing_status.dart';
+export 'src/domain/publishing_transition_event.dart';
+export 'src/domain/use_cases/approve_content_use_case.dart';
+export 'src/domain/use_cases/archive_content_use_case.dart';
+export 'src/domain/use_cases/publish_content_use_case.dart';
+export 'src/domain/use_cases/reject_content_use_case.dart';
+export 'src/domain/use_cases/restore_content_use_case.dart';
+export 'src/domain/use_cases/schedule_content_use_case.dart';
+export 'src/domain/use_cases/submit_for_review_use_case.dart';
+export 'src/domain/use_cases/transition_content_use_case.dart';
+export 'src/domain/use_cases/unpublish_content_use_case.dart';
+export 'src/domain/use_cases/unschedule_content_use_case.dart';

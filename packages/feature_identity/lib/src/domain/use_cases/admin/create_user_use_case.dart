@@ -1,6 +1,5 @@
 import 'package:core_contracts/core_contracts.dart';
 
-import '../../auth_failures.dart';
 import '../../user_admin_repository.dart';
 
 /// SRS AUTH-01: only the Super Admin creates accounts. [actingRole] is a

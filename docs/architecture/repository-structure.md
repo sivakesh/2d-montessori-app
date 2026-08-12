@@ -14,7 +14,9 @@ packages/firebase_adapters/  Firebase SDK adapters + environment/emulator bootst
 
 packages/feature_identity/       Auth session, profile, claims, authorization gates
 packages/feature_pages/          Managed pages, section-template registry, previews
-packages/feature_publishing/     Workflow states, version snapshots, scheduling, rollback
+packages/feature_publishing/     Shared workflow engine (domain/data live as of Phase 1 CMS
+                                  Core; no presentation layer yet — see below): states,
+                                  transitions, role enforcement, scheduling foundation
 packages/feature_media/          Media library, uploads, derivatives, consent
 packages/feature_programs/       Program collection/detail
 packages/feature_experiences/    Experience collection/detail
@@ -64,8 +66,13 @@ addition is traceable to real work rather than speculative wiring:
 
 - `apps/admin_web` depends on `core_contracts`, `design_system`,
   `firebase_adapters` **and, as of Phase 1 Foundation, `feature_identity`**
-  (auth, custom claims, role matrix, user management). The remaining 15
-  feature packages land here as Phase 2/3 build their admin screens.
+  (auth, custom claims, role matrix, user management). `feature_publishing`
+  is **not yet** an `apps/admin_web` dependency even though its domain/data
+  layers are implemented and tested as of Phase 1 CMS Core — it has no
+  `presentation/` layer yet, since no screen exercises it directly until a
+  content feature (e.g. `feature_pages`) is built on top of it. The
+  remaining feature packages land here as Phase 2/3 build their admin
+  screens.
 - `apps/public_web` still depends only on `core_contracts`,
   `design_system` and `firebase_adapters` — no feature is wired in yet,
   and `feature_identity` in particular is deliberately never a dependency

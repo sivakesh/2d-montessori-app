@@ -1,8 +1,9 @@
 /**
  * Cloud Functions entrypoint. Re-exports each capability namespace so
  * `firebase deploy --only functions` and the emulator can discover them.
- * No functions are exported yet — see /README.md "Implementation
- * milestones" for when each capability's real callables/triggers land.
+ * `authFns` (Phase 1 Foundation) and `publishingFns` (Phase 1 — CMS Core)
+ * have real callables; the rest are still Phase 0 stubs — see
+ * /README.md "Implementation milestones".
  */
 import * as admin from 'firebase-admin';
 

@@ -1,5 +1,14 @@
 import 'package:core_contracts/core_contracts.dart';
 
+// Re-exported for backward compatibility: PermissionFailure and
+// ValidationFailure used to be defined in this file, but moved to
+// core_contracts at the Phase 1 — CMS Core milestone once
+// feature_publishing needed the same two shapes (see
+// core_contracts/lib/src/common_failures.dart's doc comment). Anything
+// importing feature_identity's barrel still sees these names.
+export 'package:core_contracts/core_contracts.dart'
+    show PermissionFailure, ValidationFailure;
+
 /// Auth-specific failures. Data-layer adapters (Firebase Auth, Cloud
 /// Functions) map SDK exceptions to these so presentation code never has
 /// to inspect `FirebaseAuthException.code` strings directly.
@@ -63,22 +72,6 @@ final class UnknownAuthFailure extends AuthFailure {
   const UnknownAuthFailure([
     super.message = 'Something went wrong. Please try again.',
   ]) : super(code: 'unknown');
-}
-
-/// Raised by admin-management use cases when the *client* can already
-/// tell an operation is not permitted (e.g. UI somehow reachable by a
-/// non-Super-Admin). This is a defense-in-depth / UX layer only — the
-/// authoritative check is always server-side (functions/src/auth/guards.ts).
-final class PermissionFailure extends Failure {
-  const PermissionFailure([
-    super.message = 'You do not have permission to perform this action.',
-  ]) : super(code: 'permission-denied');
-}
-
-/// Raised by admin-management use cases for invalid input (bad email,
-/// missing role) before a network call is even attempted.
-final class ValidationFailure extends Failure {
-  const ValidationFailure(super.message) : super(code: 'validation');
 }
 
 /// The server rejected an operation that would have left zero active

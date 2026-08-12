@@ -1,6 +1,5 @@
 import 'package:core_contracts/core_contracts.dart';
 
-import '../../auth_failures.dart';
 import '../../user_admin_repository.dart';
 
 /// SRS AUTH-05: "reset access with a temporary password". See

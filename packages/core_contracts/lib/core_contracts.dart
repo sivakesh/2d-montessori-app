@@ -4,6 +4,7 @@ library;
 
 export 'src/capability.dart';
 export 'src/clock.dart';
+export 'src/common_failures.dart';
 export 'src/domain_event.dart';
 export 'src/entity_id.dart';
 export 'src/pagination.dart';

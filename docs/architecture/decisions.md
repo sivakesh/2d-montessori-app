@@ -180,23 +180,24 @@ non-bookmarkable admin URLs become a real cost, not before.
 
 ### Test execution status
 
-As of the Foundation Verification checkpoint (after the fixes documented
-above), this development environment still has JDK 17/11, not the 21+
-`firebase-tools` requires to run any emulator — per explicit instruction,
-JDK 21 was not installed locally. Emulator-dependent suites are instead
-verified via CI (GitHub Actions installs JDK 21 in the `security-rules`
-job) — see that job's run linked from the milestone report for the actual
-pass/fail result; do not treat the `tsc --noEmit` clean-compile below as
-equivalent to an executed test.
+As of the Foundation Verification checkpoint, this development
+environment still has JDK 17/11, not the 21+ `firebase-tools` requires to
+run any emulator — per explicit instruction, JDK 21 was not installed
+locally. Emulator-dependent suites were instead verified via CI (GitHub
+Actions, JDK 21 via `actions/setup-java@v4`) — run
+[`31610954681`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31610954681),
+**all three jobs green**, is the run that reflects every fix documented
+above. Do not treat the `tsc --noEmit` clean-compile below as equivalent
+to an executed test — the "Result" column states which is which.
 
 | Suite | Run in this environment? | Result |
 |---|---|---|
-| Dart unit/widget tests (`core_contracts`, `firebase_adapters`, `feature_identity`, both apps) | Yes | 86/86 passing |
-| Cloud Functions unit tests (`functions/test/*.test.ts`, excludes `test/emulator/`) | Yes | 54/54 passing |
-| Cloud Functions integration tests (`functions/test/emulator/auth.functions.test.ts`) | **No — see CI** | Authored, type-checked clean (`tsc --noEmit`); not executed locally |
-| Firestore rules tests (`firebase/test/firestore.rules.test.ts`) | **No — see CI** | Authored, type-checked clean; not executed locally |
-| Storage rules tests (`firebase/test/storage.rules.test.ts`) | **No — see CI** | Authored, type-checked clean; not executed locally |
-| Auth account-status (disabled-user) test (`firebase/test/auth.account-status.test.ts`) | **No — see CI** | Authored, type-checked clean; not executed locally |
+| Dart unit/widget tests (`core_contracts`, `firebase_adapters`, `feature_identity`, both apps) | Yes (local) | 86/86 passing |
+| Cloud Functions unit tests (`functions/test/*.test.ts`, excludes `test/emulator/`) | Yes (local) | 54/54 passing |
+| Cloud Functions integration tests (`functions/test/emulator/auth.functions.test.ts`) | Yes (CI run `31610954681`, JDK 21) | Passing |
+| Firestore rules tests (`firebase/test/firestore.rules.test.ts`) | Yes (CI run `31610954681`, JDK 21) | Passing |
+| Storage rules tests (`firebase/test/storage.rules.test.ts`) | Yes (CI run `31610954681`, JDK 21) | Passing |
+| Auth account-status (disabled-user) test (`firebase/test/auth.account-status.test.ts`) | Yes (CI run `31610954681`, JDK 21) | Passing |
 
 Nothing in this row set has been reported as passing without actually
 running — see the root README for the same caveat stated for the human
@@ -291,6 +292,150 @@ still wrong — a reminder that "a plausible-sounding fix" and "an
 actually-verified fix" are not the same claim, which is the entire point
 of this checkpoint insisting on
 real execution over review or `tsc --noEmit`.
+
+### Foundation Verification: final CI result
+
+CI run [`31610954681`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31610954681)
+(`workflow_dispatch`, `feature/montessori-cms-monorepo` branch) is the
+run that reflects every fix above — all three jobs green: Cloud Functions
+lint/build/unit-test, the Flutter workspace (format/analyze/test), and
+the emulator-backed job (Firestore/Storage rules, disabled-account
+sign-in, and every auth callable, all against a real JDK 21 emulator
+instance). The `test:sequential`/`.firestore()`-once fix (bug 3) and the
+project-ID revert (bug 4) are both proven correct by this run, not just
+argued for. Updated "Test execution status" table below reflects this.
+
+## Phase 1 — CMS Core: `feature_publishing` (shared publishing workflow)
+
+Traceability: SRS CMS-02, CMS-03, CMS-05, CMS-08; PRD Section 9
+(Editorial Workflow and Versioning). Per the milestone boundary agreed
+before starting this work, this package implements the workflow engine
+only — states, transitions, role enforcement, timestamps/actors, audit,
+and the scheduled-publishing foundation — against a minimal reference
+content envelope (`contentType` + `title`). It does not implement the
+page builder, media library, or any other CMS module; those are later
+milestones that compose with this engine rather than reimplementing it.
+
+### States and transitions
+
+Six states — Draft, InReview, Approved, Scheduled, Published, Archived —
+with 14 server-enforced edges:
+
+| From | Action | To | Capability required | Extra requirement |
+|---|---|---|---|---|
+| Draft | submitForReview | InReview | `submitForReview` (full for all 3 roles) | — |
+| Draft | archive | Archived | `approveRejectPublish` | — |
+| InReview | approve | Approved | `approveRejectPublish` | — |
+| InReview | reject | Draft | `approveRejectPublish` | comment required |
+| InReview | archive | Archived | `approveRejectPublish` | — |
+| Approved | publish | Published | `approveRejectPublish` | — |
+| Approved | reject | Draft | `approveRejectPublish` | comment required |
+| Approved | schedule | Scheduled | `schedulePublishing` (Publisher/Super Admin only) | `scheduledAt` must be in the future |
+| Approved | archive | Archived | `approveRejectPublish` | — |
+| Scheduled | publish | Published | `approveRejectPublish` | — |
+| Scheduled | unschedule | Approved | `schedulePublishing` | — |
+| Scheduled | archive | Archived | `approveRejectPublish` | — |
+| Published | unpublish | Archived | `approveRejectPublish` | — |
+| Archived | restore | Draft | `approveRejectPublish` | — |
+
+No other `(from, action)` pair has an edge; both the Dart
+`PublishingStateMachine` and the TypeScript `resolveTransition` return
+`null`/`undefined` for anything not in this table, and the shared engine
+on each side (`TransitionContentUseCase` client-side,
+`applyTransition.ts` server-side) treats that as a rejection, not a
+default no-op. Every action writes a `content/{contentId}/transitions/`
+history entry (action, from/to status, actor, actor role, comment,
+timestamp) in addition to updating the content doc's own
+status/timestamp/actor fields — the transitions subcollection is the
+authoritative audit trail for "who did what, when" on a specific piece of
+content, distinct from the global `auditLogs` collection.
+
+### Role/capability enforcement — client, server, and rules, in that order of trust
+
+1. **Client (Dart, `TransitionContentUseCase`)**: resolves the edge,
+   checks `RolePermissionMatrix.hasFull`, checks comment/schedule
+   requirements — all before ever calling the repository. This is
+   defense-in-depth/UX only (fails fast, avoids a round-trip for an
+   obviously-invalid action); it is never the actual authority.
+2. **Server (`functions/src/publishing/applyTransition.ts`)**: the real
+   authority. Re-resolves the edge from the content doc's status *as read
+   inside a Firestore transaction*, re-checks capability
+   (`hasFullCapability`), re-checks comment/schedule requirements, and
+   only then writes — all inside that one transaction, so a concurrent
+   request can never observe or apply a transition against a status that
+   a different request has already moved the content out of (see
+   "concurrent transitions" below).
+3. **Firestore Rules (`content/{contentId}`, `content/{contentId}/
+   transitions/{transitionId}`)**: `allow write: if false` unconditionally
+   — no client, regardless of role or claim, can write to either
+   collection directly. All mutation goes through the callables above.
+   Reads are owner-or-active-Publisher/Super-Admin, using the same live
+   `get()`-based `isActivePublisherOrAbove()` re-check pattern established
+   for `users/{uid}` at the Foundation Verification checkpoint, for the
+   same reason: a cached claim must not outlive a Firestore-recorded
+   suspension.
+
+### Concurrent transitions
+
+Proven by `functions/test/emulator/publishing.functions.test.ts`'s "never
+applies two conflicting concurrent transitions from the same status to
+the same content" test: two different valid actions from the same
+starting status (`approve` and `archive`, both valid from `InReview`)
+fired concurrently via `Promise.allSettled` at the same content doc.
+Because both the status read and the write happen inside one
+`db.runTransaction(...)`, whichever commits first moves the doc out of
+`InReview`; the other is forced to retry, re-reads the new status, finds
+its action no longer has an edge from it, and is rejected with
+`failed-precondition` — exactly one of the two succeeds, never both, and
+never neither.
+
+### Single parameterized callable, not nine distinct ones
+
+Unlike `feature_identity`'s auth module — five *distinct* callables
+because each does meaningfully different work — every publishing action
+(`submitForReview`, `approve`, `reject`, `publish`, `unpublish`,
+`schedule`, `unschedule`, `archive`, `restore`) shares one
+implementation, `applyTransition.ts`, invoked through a single
+`transitionContent` callable that takes `action` as a parameter. They
+differ only in which edge of the transition table applies — exactly what
+`action` selects — so nine near-identical callables would have been
+duplication, not additional safety: the same transaction, the same
+capability check, the same audit-write call, nine times over. The nine
+named Dart use cases (`SubmitForReviewUseCase`, `ApproveContentUseCase`,
+...) exist purely to keep call sites readable and each action's
+required/optional parameters (e.g. `RejectContentUseCase.comment` and
+`ScheduleContentUseCase.scheduledAt` are required, non-nullable
+parameters, not optional ones with a runtime check) — they all delegate
+to the same `TransitionContentUseCase`.
+
+### Reusable contracts for later content modules
+
+`PublishingRecord`, `PublishingStatus`, `PublishingAction`,
+`PublishingStateMachine`, and the publishing `Failure` subclasses live in
+`feature_publishing`'s own domain layer, not `core_contracts` — they are
+publishing-specific, not shared kernel. The intended reuse shape for
+`feature_pages` and later content features is composition: a page's own
+Firestore document type wraps or references a `content/{contentId}`
+envelope (or stores its own status/workflow fields shaped identically)
+rather than each feature reimplementing its own state machine, capability
+checks, or transitions history. `RolePermissionMatrix` and `UserRole`
+(the actual shared kernel pieces this module depends on) already live in
+`core_contracts`, unchanged by this milestone.
+
+### Test execution status (feature_publishing)
+
+| Suite | Run in this environment? | Result |
+|---|---|---|
+| Dart domain/use-case tests (`packages/feature_publishing/test/`) | Yes | 39/39 passing |
+| Cloud Functions unit tests (`functions/test/publishing.*.test.ts`) | Yes | included in the 107/107 total below |
+| Firestore rules tests (`firebase/test/content.rules.test.ts`) | **No — needs CI** | Authored, type-checked clean; not executed locally |
+| Cloud Functions integration test (`functions/test/emulator/publishing.functions.test.ts`) | **No — needs CI** | Authored, type-checked clean (`tsc --noEmit` against the strict compiler options, matching `tsconfig.json`); not executed locally |
+
+The two emulator-dependent rows above have not yet been proven green by
+CI the way the Foundation Verification suites have — that CI run has not
+been dispatched as of this writing. Do not treat their clean type-check
+as equivalent to a passing test; see the milestone report for whether a
+CI run against them has since landed.
 
 ## Traceability
 
