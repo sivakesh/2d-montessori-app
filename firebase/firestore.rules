@@ -1,0 +1,39 @@
+rules_version = '2';
+
+// Phase 0 baseline: deny-by-default everywhere except the sanitized
+// `published*`/`public*` read models, which are public-read only (never
+// public-write). This satisfies SRS NFR-05 ("least privilege... deny by
+// default") and PRD §13 ("Deny-by-default Firestore... rules") as a safe
+// starting point.
+//
+// Role-based write rules (Editor/Publisher/Super Admin per SRS §3, backed
+// by Firebase Auth custom claims) are implemented in Phase 1 (Foundation)
+// and Phase 2 (CMS Core) — see docs/architecture/firestore-model.md.
+// Do NOT open client writes to `enquiries/**` even then: SRS ENQ-01
+// requires server-side validation, so enquiry creation goes through a
+// callable Cloud Function, never a direct client write.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- Public, sanitized read models (PRD §12) ----
+    match /publishedPages/{document=**} { allow read: if true; allow write: if false; }
+    match /publishedPrograms/{document=**} { allow read: if true; allow write: if false; }
+    match /publishedExperiences/{document=**} { allow read: if true; allow write: if false; }
+    match /publishedEvents/{document=**} { allow read: if true; allow write: if false; }
+    match /publishedTeam/{document=**} { allow read: if true; allow write: if false; }
+    match /publishedDocuments/{document=**} { allow read: if true; allow write: if false; }
+    match /publishedAlbums/{document=**} { allow read: if true; allow write: if false; }
+    match /publishedTestimonials/{document=**} { allow read: if true; allow write: if false; }
+    match /publishedArticles/{document=**} { allow read: if true; allow write: if false; }
+    match /publishedFaqs/{document=**} { allow read: if true; allow write: if false; }
+    match /publicMedia/{document=**} { allow read: if true; allow write: if false; }
+    match /publicSettings/{document=**} { allow read: if true; allow write: if false; }
+
+    // Redirects are resolved server-side only (PRD §12) — no client read.
+
+    // ---- Everything else: deny by default until Phase 1/2 role rules land ----
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

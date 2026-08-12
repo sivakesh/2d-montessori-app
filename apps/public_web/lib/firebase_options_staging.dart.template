@@ -1,0 +1,35 @@
+// TEMPLATE — not compiled (this file is .dart.template, not .dart).
+//
+// Once the staging Firebase project exists, generate the real file with:
+//
+//   flutterfire configure \
+//     --project=<staging-project-id> \
+//     --out=lib/firebase_options_staging.dart \
+//     --platforms=web
+//
+// `lib/firebase_options_staging.dart` is gitignored (see /.gitignore) because
+// its contents are project-specific and only meaningful once the staging
+// project is provisioned — it is not a secret (Firebase web config is not
+// a credential), but it must not be fabricated ahead of time. The generated
+// file will look like this:
+//
+// import 'package:firebase_core/firebase_core.dart';
+//
+// class DefaultFirebaseOptionsStaging {
+//   static const FirebaseOptions web = FirebaseOptions(
+//     apiKey: '<generated>',
+//     appId: '<generated>',
+//     messagingSenderId: '<generated>',
+//     projectId: '<staging-project-id>',
+//     authDomain: '<staging-project-id>.firebaseapp.com',
+//     storageBucket: '<staging-project-id>.appspot.com',
+//   );
+// }
+//
+// A `main_staging.dart` entrypoint (added alongside the real options file)
+// then calls:
+//
+//   bootstrapFirebase(
+//     options: DefaultFirebaseOptionsStaging.web,
+//     environment: AppEnvironment.staging,
+//   );

@@ -1,0 +1,36 @@
+# Admin/CMS composition root (PRD §11.1 apps/admin_web: admin routing,
+# shell, authentication gates).
+#
+# Phase 0 note: only the three foundation packages are wired in below.
+# feature_identity lands in Phase 1 (Foundation, auth + claims); the
+# remaining feature_* packages (feature_pages, feature_media,
+# feature_publishing, feature_audit, feature_settings, feature_enquiries,
+# plus every content-collection feature) get added here as Phase 2 (CMS
+# Core) implements each admin screen.
+name: admin_web
+description: "2D Montessori admin/CMS portal"
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.11.0
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  core_contracts:
+    path: ../../packages/core_contracts
+  design_system:
+    path: ../../packages/design_system
+  firebase_adapters:
+    path: ../../packages/firebase_adapters
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

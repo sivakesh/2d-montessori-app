@@ -1,0 +1,29 @@
+# Identity & Access
+# Authentication session, user profile, custom-claim role display and authorization gates.
+# Traceability: SRS AUTH-01..AUTH-05; PRD Section 2 (Users, Roles and Permissions)
+name: feature_identity
+description: Identity & Access feature module for the 2D Montessori CMS/public site.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.11.0
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  core_contracts:
+    path: ../core_contracts
+  design_system:
+    path: ../design_system
+  firebase_adapters:
+    path: ../firebase_adapters
+
+dev_dependencies:
+  flutter_lints: ^5.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:

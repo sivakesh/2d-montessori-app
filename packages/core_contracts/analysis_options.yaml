@@ -1,0 +1,10 @@
+# core_contracts is intentionally Flutter-free (see pubspec.yaml), so it
+# uses the pure-Dart `lints` package rather than the workspace-wide
+# flutter_lints baseline in ../../analysis_options.yaml.
+include: package:lints/recommended.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true

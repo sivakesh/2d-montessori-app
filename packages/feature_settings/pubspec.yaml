@@ -1,0 +1,29 @@
+# Navigation & Settings
+# Brand, contact, navigation, footer, SEO defaults, legal/policy pages and cookie configuration.
+# Traceability: SRS CMS-13, CMS-14, LEG-01..LEG-05, SEO-01..SEO-04
+name: feature_settings
+description: Navigation & Settings feature module for the 2D Montessori CMS/public site.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.11.0
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  core_contracts:
+    path: ../core_contracts
+  design_system:
+    path: ../design_system
+  firebase_adapters:
+    path: ../firebase_adapters
+
+dev_dependencies:
+  flutter_lints: ^5.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:

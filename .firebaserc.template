@@ -1,0 +1,18 @@
+{
+  "//": "Copy this file to .firebaserc (gitignored) once the three Firebase projects exist. See docs/architecture/environments.md.",
+  "projects": {
+    "dev": "REPLACE_WITH_DEV_PROJECT_ID",
+    "staging": "REPLACE_WITH_STAGING_PROJECT_ID",
+    "prod": "REPLACE_WITH_PROD_PROJECT_ID",
+    "default": "REPLACE_WITH_DEV_PROJECT_ID"
+  },
+  "targets": {
+    "REPLACE_WITH_DEV_PROJECT_ID": {
+      "hosting": {
+        "public": ["REPLACE_WITH_DEV_PUBLIC_SITE_ID"],
+        "admin": ["REPLACE_WITH_DEV_ADMIN_SITE_ID"]
+      }
+    }
+  },
+  "etags": {}
+}

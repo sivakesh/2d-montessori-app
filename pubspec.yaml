@@ -1,0 +1,32 @@
+# Workspace root. Not published, not shipped — this file exists solely to
+# declare the Dart pub workspace (Dart 3.6+ / Flutter 3.27+) so a single
+# `flutter pub get` here resolves every app and package below in lockstep.
+# See docs/architecture/repository-structure.md for the full layout rationale.
+name: montessori_cms_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.11.0
+
+workspace:
+  - apps/public_web
+  - apps/admin_web
+  - packages/core_contracts
+  - packages/design_system
+  - packages/firebase_adapters
+  - packages/feature_identity
+  - packages/feature_pages
+  - packages/feature_publishing
+  - packages/feature_media
+  - packages/feature_programs
+  - packages/feature_experiences
+  - packages/feature_events
+  - packages/feature_team
+  - packages/feature_documents
+  - packages/feature_gallery
+  - packages/feature_testimonials
+  - packages/feature_news
+  - packages/feature_faqs
+  - packages/feature_enquiries
+  - packages/feature_settings
+  - packages/feature_audit

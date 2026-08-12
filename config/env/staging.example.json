@@ -1,0 +1,5 @@
+{
+  "APP_ENV": "staging",
+  "SITE_TIMEZONE": "Asia/Kolkata",
+  "USE_EMULATORS": "false"
+}

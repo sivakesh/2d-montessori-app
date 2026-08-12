@@ -1,0 +1,29 @@
+# Events & Announcements
+# Events, holidays, workshops and admission notices with scheduling and expiry.
+# Traceability: SRS WEB-06 (approved Phase 1 addition; absent from PRD v1.1 — SRS takes precedence)
+name: feature_events
+description: Events & Announcements feature module for the 2D Montessori CMS/public site.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.11.0
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  core_contracts:
+    path: ../core_contracts
+  design_system:
+    path: ../design_system
+  firebase_adapters:
+    path: ../firebase_adapters
+
+dev_dependencies:
+  flutter_lints: ^5.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:

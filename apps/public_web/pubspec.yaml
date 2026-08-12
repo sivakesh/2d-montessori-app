@@ -1,0 +1,39 @@
+# Public website composition root (PRD §11.1 apps/public_web: routing,
+# composition root, public shell, bootstrap).
+#
+# Phase 0 note: only the three foundation packages are wired in below.
+# Each feature_* package (public_web will eventually depend on
+# feature_pages, feature_programs, feature_experiences, feature_events,
+# feature_team, feature_gallery, feature_testimonials, feature_news,
+# feature_faqs, feature_documents, feature_media, feature_settings,
+# feature_enquiries) gets added to `dependencies:` in the milestone that
+# actually implements its public-facing screens (Phase 2/3), so every
+# dependency addition is traceable to the work that needed it rather than
+# scaffolded speculatively.
+name: public_web
+description: "2D Montessori public website"
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.11.0
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  core_contracts:
+    path: ../../packages/core_contracts
+  design_system:
+    path: ../../packages/design_system
+  firebase_adapters:
+    path: ../../packages/firebase_adapters
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

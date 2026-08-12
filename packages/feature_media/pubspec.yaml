@@ -1,0 +1,29 @@
+# Gallery & Media
+# Media library uploads, processing status, derivatives, usage tracking and consent.
+# Traceability: SRS MED-01..MED-06; PRD Section 7 (Media Library)
+name: feature_media
+description: Gallery & Media feature module for the 2D Montessori CMS/public site.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.11.0
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  core_contracts:
+    path: ../core_contracts
+  design_system:
+    path: ../design_system
+  firebase_adapters:
+    path: ../firebase_adapters
+
+dev_dependencies:
+  flutter_lints: ^5.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:

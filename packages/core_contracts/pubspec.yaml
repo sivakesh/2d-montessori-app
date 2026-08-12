@@ -1,0 +1,20 @@
+# Shared kernel: IDs, Result/error types, pagination, clocks, domain events.
+# Dart-only by design (see docs/architecture/repository-structure.md) — this
+# package must never depend on Flutter or Firebase so every other package
+# and both apps can depend on it without pulling in UI or platform code.
+name: core_contracts
+description: Shared domain-agnostic types used across every 2D Montessori feature package.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.11.0
+
+resolution: workspace
+
+dependencies:
+  meta: ^1.15.0
+
+dev_dependencies:
+  lints: ^5.0.0
+  test: ^1.25.0

@@ -1,0 +1,87 @@
+# =========================================================================
+# 2D Montessori — root .gitignore
+# Covers Dart/Flutter workspace, Firebase tooling, Cloud Functions (Node/TS),
+# environment/config, and OS/editor noise. See docs/architecture/environments.md
+# for how real values are supplied at build/deploy time.
+# =========================================================================
+
+# ---- OS / editor / local tooling ----
+.claude/
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.iml
+*.swp
+
+# ---- Dart / Flutter (applies under apps/*, packages/*) ----
+**/.dart_tool/
+**/.packages
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/build/
+**/.pub-cache/
+**/.pub/
+**/pubspec.lock
+!/pubspec.lock
+**/*.g.dart
+**/*.freezed.dart
+**/*.mocks.dart
+**/coverage/
+**/.symlinks/
+**/ios/Flutter/.last_build_id
+**/android/.gradle/
+**/android/local.properties
+**/*.iml
+
+# Web build output
+**/web/build/
+
+# ---- Environment / secrets (never commit real values) ----
+# Real per-environment values live outside git or in a secrets manager.
+# Only *.example.json files are tracked; see config/env/README.md.
+config/env/*.json
+!config/env/*.example.json
+*.env
+.env*
+!.env.example
+
+# ---- Firebase ----
+# Generated FlutterFire options contain per-project (non-secret but
+# project-specific) identifiers. Only the .template files are tracked
+# until real dev/staging/prod projects exist — see
+# docs/architecture/environments.md.
+**/lib/firebase_options*.dart
+!**/lib/firebase_options*.dart.template
+.firebaserc
+!.firebaserc.template
+firebase-debug.log
+firebase-export-*/
+ui-debug.log
+firestore-debug.log
+pubsub-debug.log
+database-debug.log
+storage-debug.log
+*.emulator-data/
+
+# Service account keys / admin credentials — must never be committed.
+**/*serviceAccount*.json
+**/*service-account*.json
+**/*-firebase-adminsdk-*.json
+
+# ---- Cloud Functions (Node/TypeScript) ----
+functions/node_modules/
+functions/lib/
+functions/*.log
+functions/.env
+functions/.env.*
+!functions/.env.example
+
+# ---- CI / misc ----
+*.log
+npm-debug.log*

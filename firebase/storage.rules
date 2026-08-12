@@ -1,0 +1,20 @@
+rules_version = '2';
+
+// Phase 0 baseline: deny-by-default. Original uploads live under
+// /private/** and are never client-readable; approved public derivatives
+// are written by trusted Cloud Functions to /public/** and are read-only
+// for clients (PRD §7 "Original media is private by default"). Upload/
+// write rules requiring authenticated role checks are implemented in
+// Phase 1/2 alongside feature_media.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /public/{allPaths=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

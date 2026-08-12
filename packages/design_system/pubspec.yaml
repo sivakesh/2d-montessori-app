@@ -1,0 +1,24 @@
+# Design tokens and accessible responsive primitives implementing the
+# Apple-inspired direction in PRD §3.1–§3.7. Flutter-only; must never import
+# a feature package (PRD §11.1 "core/design_system: Flutter only; no feature
+# imports").
+name: design_system
+description: 2D Montessori shared design tokens, breakpoints and accessible UI primitives.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.11.0
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_lints: ^5.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:

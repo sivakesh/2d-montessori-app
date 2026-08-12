@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  flutter:
+    name: Flutter workspace (format, analyze, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.6'
+          channel: stable
+
+      # Pub workspaces: a single `pub get` at the repo root resolves every
+      # app and package in pubspec.yaml's `workspace:` list.
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test (apps + packages)
+        run: |
+          set -e
+          for dir in apps/* packages/*; do
+            if [ -f "$dir/pubspec.yaml" ]; then
+              echo "::group::flutter test $dir"
+              (cd "$dir" && flutter test)
+              echo "::endgroup::"
+            fi
+          done
+
+  functions:
+    name: Cloud Functions (lint, build, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: functions
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+  security-rules:
+    name: Firestore/Storage security rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # firebase-tools checks the Java version at startup for any
+      # emulators:start/emulators:exec invocation (even Auth/Storage-only
+      # runs), and requires 21+. See README.md "Prerequisites".
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Validate emulator config and rules syntax
+        run: |
+          firebase emulators:exec \
+            --project demo-montessori-2d \
+            --only firestore,storage \
+            'echo "emulators started with current firestore.rules / storage.rules — OK"'
+        # TODO(Phase 1+): replace this smoke check with the real
+        # @firebase/rules-unit-testing positive/negative test suite once
+        # role-based rules exist (SRS §14 "Role/permission matrix and
+        # Firebase Security Rules tested with positive and negative cases").

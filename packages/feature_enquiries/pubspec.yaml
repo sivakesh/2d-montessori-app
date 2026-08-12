@@ -1,0 +1,29 @@
+# Enquiry Management
+# Enquiry capture, assignment, follow-ups, reminders, export and Super-Admin deletion.
+# Traceability: SRS ENQ-01..ENQ-07 (approved Phase 1 module; PRD suggested deferring this — SRS takes precedence)
+name: feature_enquiries
+description: Enquiry Management feature module for the 2D Montessori CMS/public site.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.11.0
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  core_contracts:
+    path: ../core_contracts
+  design_system:
+    path: ../design_system
+  firebase_adapters:
+    path: ../firebase_adapters
+
+dev_dependencies:
+  flutter_lints: ^5.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
