@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Lets CI be triggered manually on any branch (e.g. `gh workflow run
+  # ci.yml --ref <branch>`) without changing the automatic push/PR
+  # triggers above. Used to run this workflow on feature/verification
+  # branches that don't share history with `main` and so can't go
+  # through a PR.
+  workflow_dispatch:
 
 jobs:
   flutter:
