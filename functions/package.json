@@ -12,7 +12,7 @@
     "build:watch": "tsc --watch",
     "lint": "eslint src --ext .ts",
     "test": "jest",
-    "test:emulator": "npm run build && firebase emulators:exec --project demo-montessori-2d --only auth,firestore \"jest --roots test/emulator --testPathIgnorePatterns=/node_modules/\"",
+    "test:emulator": "npm run build && firebase emulators:exec --project demo-montessori-2d --only auth,firestore \"jest --runInBand --roots test/emulator --testPathIgnorePatterns=/node_modules/\"",
     "seed:super-admin": "node scripts/seed-super-admin.js",
     "serve": "npm run build && firebase emulators:start --only functions",
     "shell": "npm run build && firebase functions:shell",
