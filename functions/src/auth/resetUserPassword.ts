@@ -8,6 +8,7 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 
 import { writeAuditEvent } from '../lib/audit';
+import { resolveRequestId } from '../lib/requestId';
 import { assertCallerIsActiveSuperAdmin } from './guards';
 import { generateTemporaryPassword, validateUid } from './validators';
 
@@ -51,7 +52,7 @@ export const resetUserPassword = onCall<ResetUserPasswordRequestData, Promise<Re
     actorId: callerUid,
     actorRole: 'superAdmin',
     changeSummary: 'Password reset by Super Admin',
-    requestId: request.rawRequest?.headers['x-request-id']?.toString() ?? targetUid,
+    requestId: resolveRequestId(request, targetUid),
     source: 'function',
   });
 

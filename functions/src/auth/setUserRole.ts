@@ -13,6 +13,7 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 
 import { writeAuditEvent } from '../lib/audit';
+import { resolveRequestId } from '../lib/requestId';
 import { assertCallerIsActiveSuperAdmin, assertRoleChangeAllowed } from './guards';
 import { validateRole, validateUid } from './validators';
 
@@ -56,7 +57,7 @@ export const setUserRole = onCall<SetUserRoleRequestData, Promise<null>>(async (
     actorRole: 'superAdmin',
     changeSummary: `Role changed from ${previousRole} to ${newRole}`,
     changedFields: ['role'],
-    requestId: request.rawRequest?.headers['x-request-id']?.toString() ?? targetUid,
+    requestId: resolveRequestId(request, targetUid),
     source: 'function',
   });
 

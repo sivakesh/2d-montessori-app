@@ -71,6 +71,20 @@ async function auditEntriesFor(entityId: string): Promise<FirebaseFirestore.Docu
   return snapshot.docs.map((doc) => doc.data());
 }
 
+/**
+ * `HttpsError`'s `.message` is the human-readable text (e.g. "Sign in
+ * required."), not the machine-readable `.code` (e.g. "unauthenticated")
+ * — `jest`'s `.rejects.toThrow(/pattern/)` matches against `.message`, so
+ * asserting on the code needs `.toMatchObject({ code })` instead. This
+ * was itself a bug caught by actually running these tests: every
+ * `.rejects.toThrow(/some-code/)` in an earlier version of this file
+ * failed, not because the callables were wrong, but because the
+ * assertion was checking the wrong field.
+ */
+async function expectHttpsErrorCode(promise: Promise<unknown>, code: string): Promise<void> {
+  await expect(promise).rejects.toMatchObject({ code });
+}
+
 describe('createUser', () => {
   const callerUid = 'super-admin-createUser';
 
@@ -79,17 +93,19 @@ describe('createUser', () => {
 
   it('rejects an unauthenticated caller and creates no audit entry', async () => {
     const before = await auditLogCount();
-    await expect(
+    await expectHttpsErrorCode(
       createUser.run(unauthenticatedRequest({ email: 'x@example.test', displayName: 'X', role: 'editor' })),
-    ).rejects.toThrow(/unauthenticated/);
+      'unauthenticated',
+    );
     expect(await auditLogCount()).toBe(before);
   });
 
   it('rejects a non-Super-Admin caller and creates no audit entry', async () => {
     const before = await auditLogCount();
-    await expect(
+    await expectHttpsErrorCode(
       createUser.run(requestAs('someone', 'editor', { email: 'x@example.test', displayName: 'X', role: 'editor' })),
-    ).rejects.toThrow(/permission-denied/);
+      'permission-denied',
+    );
     expect(await auditLogCount()).toBe(before);
   });
 
@@ -118,9 +134,10 @@ describe('createUser', () => {
     const email = `dupe-${Date.now()}@example.test`;
     const first = await createUser.run(requestAs(callerUid, 'superAdmin', { email, displayName: 'A', role: 'editor' }));
 
-    await expect(
+    await expectHttpsErrorCode(
       createUser.run(requestAs(callerUid, 'superAdmin', { email, displayName: 'B', role: 'editor' })),
-    ).rejects.toThrow(/already-exists/);
+      'already-exists',
+    );
 
     await cleanupUser(first.uid);
   });
@@ -138,8 +155,9 @@ describe('setUserRole / setUserStatus — last active Super Admin guard', () => 
   afterEach(() => Promise.all([cleanupUser(soleSuperAdminUid), cleanupUser(secondSuperAdminUid), cleanupUser(editorUid)]));
 
   it('rejects an unauthenticated caller for setUserRole', async () => {
-    await expect(setUserRole.run(unauthenticatedRequest({ uid: soleSuperAdminUid, role: 'editor' }))).rejects.toThrow(
-      /unauthenticated/,
+    await expectHttpsErrorCode(
+      setUserRole.run(unauthenticatedRequest({ uid: soleSuperAdminUid, role: 'editor' })),
+      'unauthenticated',
     );
   });
 
@@ -156,16 +174,18 @@ describe('setUserRole / setUserStatus — last active Super Admin guard', () => 
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedBy: 'seed',
     });
-    await expect(
+    await expectHttpsErrorCode(
       setUserStatus.run(requestAs(editorUid, 'editor', { uid: soleSuperAdminUid, status: 'suspended' })),
-    ).rejects.toThrow(/permission-denied/);
+      'permission-denied',
+    );
   });
 
   it('blocks demoting the only active Super Admin and creates no audit entry', async () => {
     const before = await auditLogCount();
-    await expect(
+    await expectHttpsErrorCode(
       setUserRole.run(requestAs(soleSuperAdminUid, 'superAdmin', { uid: soleSuperAdminUid, role: 'editor' })),
-    ).rejects.toThrow(/failed-precondition/);
+      'failed-precondition',
+    );
     expect(await auditLogCount()).toBe(before);
 
     const record = await auth.getUser(soleSuperAdminUid);
@@ -174,9 +194,10 @@ describe('setUserRole / setUserStatus — last active Super Admin guard', () => 
 
   it('blocks suspending the only active Super Admin and creates no audit entry', async () => {
     const before = await auditLogCount();
-    await expect(
+    await expectHttpsErrorCode(
       setUserStatus.run(requestAs(soleSuperAdminUid, 'superAdmin', { uid: soleSuperAdminUid, status: 'suspended' })),
-    ).rejects.toThrow(/failed-precondition/);
+      'failed-precondition',
+    );
     expect(await auditLogCount()).toBe(before);
 
     const record = await auth.getUser(soleSuperAdminUid);
@@ -283,8 +304,9 @@ describe('resetUserPassword', () => {
 
   it('rejects a non-Super-Admin caller and creates no audit entry', async () => {
     const before = await auditLogCount();
-    await expect(resetUserPassword.run(requestAs(targetUid, 'editor', { uid: callerUid }))).rejects.toThrow(
-      /permission-denied/,
+    await expectHttpsErrorCode(
+      resetUserPassword.run(requestAs(targetUid, 'editor', { uid: callerUid })),
+      'permission-denied',
     );
     expect(await auditLogCount()).toBe(before);
   });
@@ -324,7 +346,7 @@ describe('completeFirstLogin', () => {
   afterEach(() => cleanupUser(uid));
 
   it('rejects an unauthenticated caller', async () => {
-    await expect(completeFirstLogin.run(unauthenticatedRequest())).rejects.toThrow(/unauthenticated/);
+    await expectHttpsErrorCode(completeFirstLogin.run(unauthenticatedRequest()), 'unauthenticated');
   });
 
   it('clears mustChangePassword for the calling user and writes an audit entry', async () => {

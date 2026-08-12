@@ -9,6 +9,7 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 
 import { writeAuditEvent } from '../lib/audit';
+import { resolveRequestId } from '../lib/requestId';
 import { assertCallerIsActiveSuperAdmin } from './guards';
 import { generateTemporaryPassword, validateDisplayName, validateEmail, validateRole } from './validators';
 
@@ -73,7 +74,7 @@ export const createUser = onCall<CreateUserRequestData, Promise<CreateUserRespon
     actorId: callerUid,
     actorRole: 'superAdmin',
     changeSummary: `Created user ${email} with role ${role}`,
-    requestId: request.rawRequest?.headers['x-request-id']?.toString() ?? uid,
+    requestId: resolveRequestId(request, uid),
     source: 'function',
   });
 

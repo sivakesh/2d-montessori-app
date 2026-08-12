@@ -23,6 +23,7 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 
 import { writeAuditEvent } from '../lib/audit';
+import { resolveRequestId } from '../lib/requestId';
 import { assertCallerIsActiveSuperAdmin, assertStatusChangeAllowed } from './guards';
 import { validateStatus, validateUid } from './validators';
 
@@ -70,7 +71,7 @@ export const setUserStatus = onCall<SetUserStatusRequestData, Promise<null>>(asy
     actorRole: 'superAdmin',
     changeSummary: `Status changed from ${previousStatus} to ${newStatus}`,
     changedFields: ['status'],
-    requestId: request.rawRequest?.headers['x-request-id']?.toString() ?? targetUid,
+    requestId: resolveRequestId(request, targetUid),
     source: 'function',
   });
 

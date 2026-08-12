@@ -18,6 +18,7 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 
 import { writeAuditEvent } from '../lib/audit';
+import { resolveRequestId } from '../lib/requestId';
 import { requireAuthenticatedCaller } from './guards';
 
 export const completeFirstLogin = onCall<unknown, Promise<null>>(async (request) => {
@@ -48,7 +49,7 @@ export const completeFirstLogin = onCall<unknown, Promise<null>>(async (request)
     actorId: caller.uid,
     actorRole: caller.role ?? 'unknown',
     changeSummary: 'Completed forced password change',
-    requestId: request.rawRequest?.headers['x-request-id']?.toString() ?? caller.uid,
+    requestId: resolveRequestId(request, caller.uid),
     source: 'function',
   });
 

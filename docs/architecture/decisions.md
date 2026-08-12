@@ -202,6 +202,40 @@ Nothing in this row set has been reported as passing without actually
 running — see the root README for the same caveat stated for the human
 reader.
 
+### Bugs found by CI execution, not by review or `tsc --noEmit`
+
+The point of insisting on real execution rather than "compiles cleanly":
+the first CI run against `functions/test/emulator/auth.functions.test.ts`
+(GitHub Actions, JDK 21) failed all 15 tests, and it found two genuine
+bugs neither `tsc --noEmit` nor eslint had any way to catch:
+
+1. **Production bug**: every callable built its audit event's
+   `requestId` via `request.rawRequest?.headers['x-request-id']?.toString()
+   ?? fallback`. Optional chaining (`?.`) only guards the property access
+   immediately after it — `rawRequest?.headers` short-circuits to
+   `undefined` safely, but the following `['x-request-id']` is a plain,
+   unguarded index into that `undefined`, so it throws
+   `TypeError: Cannot read properties of undefined (reading
+   'x-request-id')`. In production this likely never surfaced, because a
+   real Express `rawRequest.headers` is always an object; the test
+   harness's hand-built `CallableRequest` doesn't have one, which is
+   exactly what exposed it. Fixed by extracting the logic into
+   `functions/src/lib/requestId.ts`'s `resolveRequestId`, with two
+   explicit `?.` guards and unit-testable in isolation.
+2. **Test bug**: the same test file asserted rejected-promise codes with
+   `.rejects.toThrow(/permission-denied/)` etc. Jest's `.toThrow(regex)`
+   matches against the thrown error's `.message`, but `HttpsError`'s
+   `.message` is the human-readable text ("Super Admin role required."),
+   not the `.code` ("permission-denied") — the regex could never match.
+   Fixed with an `expectHttpsErrorCode(promise, code)` helper that checks
+   `.rejects.toMatchObject({ code })` instead.
+
+Both fixes are covered by the second CI run — see the milestone report
+for that run's actual result. Recorded here specifically because both
+bugs would have been reported as "passing" under a review-only or
+compile-only verification standard, which is the failure mode this
+checkpoint's insistence on real execution exists to catch.
+
 ## Traceability
 
 Every implementation story must reference an SRS requirement ID (e.g.
