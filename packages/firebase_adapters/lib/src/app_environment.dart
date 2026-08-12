@@ -3,6 +3,11 @@
 /// — see config/env/README.md. Never hardcode a project ID; that always
 /// comes from the matching `firebase_options_<env>.dart`, generated later
 /// by `flutterfire configure` once the three projects exist.
+///
+/// Deliberately independent of emulator usage — see [useEmulators] on
+/// [bootstrapFirebase]. A `dev`-flavored build may run against either the
+/// local Emulator Suite or the real dev project; which one is a separate,
+/// explicit choice, not implied by the environment name.
 enum AppEnvironment {
   dev,
   staging,
@@ -18,10 +23,4 @@ enum AppEnvironment {
       'Expected dev, staging or prod',
     ),
   };
-
-  /// True for any environment that should connect to the local Firebase
-  /// Emulator Suite instead of a live project. Only `dev` does today;
-  /// kept as a method (not a hardcoded check) so a future local-against-
-  /// staging workflow doesn't require touching call sites.
-  bool get usesEmulators => this == AppEnvironment.dev;
 }

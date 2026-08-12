@@ -4,23 +4,26 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
-import 'app_environment.dart';
 import 'emulator_config.dart';
 
-/// Initializes Firebase for the given [environment] and, for `dev`, points
-/// every SDK at the local Emulator Suite instead of a live backend. Apps
-/// call this once from `main()` — see apps/public_web/lib/main.dart.
+/// Initializes Firebase and, when [useEmulators] is true, points every SDK
+/// at the local Emulator Suite instead of a live backend. Apps call this
+/// once from `main()` — see apps/admin_web/lib/main.dart.
 ///
-/// [options] must come from the caller (a generated `firebase_options_*.dart`
-/// or, for local dev, [demoEmulatorFirebaseOptions]) so this package never
-/// needs to know which project IDs exist.
+/// [useEmulators] is intentionally a separate parameter from
+/// [AppEnvironment] rather than derived from it: which Firebase *project*
+/// a build targets (dev/staging/prod, chosen by [options]) and whether
+/// that build talks to the emulators or the real backend are independent
+/// choices. Today only one combination is wired up in the apps (`dev` +
+/// emulators, via `demoEmulatorFirebaseOptions`), but the signature does
+/// not bake that assumption in.
 Future<void> bootstrapFirebase({
   required FirebaseOptions options,
-  required AppEnvironment environment,
+  required bool useEmulators,
 }) async {
   await Firebase.initializeApp(options: options);
 
-  if (!environment.usesEmulators) return;
+  if (!useEmulators) return;
 
   await FirebaseAuth.instance.useAuthEmulator(
     EmulatorConfig.host,

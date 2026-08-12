@@ -16,17 +16,26 @@ Firebase infrastructure.
 | staging | Yes (to be created) | Production-equivalent rehearsal (PRD §17) |
 | prod | Yes (to be created) | Production |
 
-## Current Phase 0 status
+## Current status
 
-`apps/*/lib/main.dart` always boots the **local** tier — it calls
-`bootstrapFirebase(options: demoEmulatorFirebaseOptions, environment: AppEnvironment.dev)`.
-This is intentionally simplified: today, `AppEnvironment.dev` and "use
-emulators" are the same thing because no real `dev` project exists yet.
-Once it does, this mapping needs revisiting — likely by decoupling
-`usesEmulators` from the enum value entirely (e.g. a separate
-`--dart-define=USE_EMULATORS=` flag, per `config/env/README.md`) so a
-developer can point a `dev`-flavored build at either the emulators or the
-real dev project. Flagged here so it isn't mistaken for a finished design.
+`AppEnvironment` (dev/staging/prod — which Firebase *project* a build
+targets) and emulator usage are two independent inputs to
+`bootstrapFirebase`:
+
+```dart
+Future<void> bootstrapFirebase({required FirebaseOptions options, required bool useEmulators})
+```
+
+`useEmulators` is a plain, explicit parameter — not derived from
+`AppEnvironment` — precisely so a `dev`-flavored build can point at either
+the emulators or the real dev project without an API change. As of Phase
+1 Foundation, `apps/*/lib/main.dart` calls
+`bootstrapFirebase(options: demoEmulatorFirebaseOptions, useEmulators: true)`
+unconditionally: there is still no real `dev` project to point the other
+way at, so both apps only ever boot the **local** tier today. Wiring
+`AppEnvironment` selection itself (via `--dart-define=APP_ENV=`, per
+`config/env/README.md`) into the entrypoint is part of standing up the
+first real project, below.
 
 ## Bringing up a real project (dev/staging/prod), once created
 
@@ -46,8 +55,7 @@ real dev project. Flagged here so it isn't mistaken for a finished design.
    Both generated files are gitignored (see `/.gitignore`) — they hold
    project-specific, non-secret web config, not credentials.
 5. Add a `main_<env>.dart` entrypoint that imports the generated options
-   file and calls `bootstrapFirebase(options: ..., environment:
-   AppEnvironment.<env>)` with `usesEmulators` returning `false`.
+   file and calls `bootstrapFirebase(options: ..., useEmulators: false)`.
 6. Deploy: `firebase deploy --project <env> --only firestore:rules,storage:rules,functions,hosting`.
 
 ## Secrets

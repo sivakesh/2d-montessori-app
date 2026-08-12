@@ -56,16 +56,23 @@ on its own `domain/` use cases plus `design_system`. No file outside
 `feature_x` may import anything under `feature_x/lib/src/` — only the
 barrel file.
 
-## Phase 0 dependency-wiring decision
+## Dependency-wiring decision
 
-Both apps' `pubspec.yaml` currently depend only on `core_contracts`,
-`design_system` and `firebase_adapters` — none of the 16 feature packages
-are wired into the apps yet, even though all 16 exist as empty scaffolds.
-Each feature gets added to the relevant app's `dependencies:` in the
-milestone that actually implements its screens (Phase 1 for
-`feature_identity`; Phase 2/3 for the rest), so every dependency addition
-is traceable to real work rather than speculative wiring. See the root
-README's "Implementation milestones" section.
+Each feature package is added to an app's `dependencies:` only in the
+milestone that actually implements its screens, so every dependency
+addition is traceable to real work rather than speculative wiring:
+
+- `apps/admin_web` depends on `core_contracts`, `design_system`,
+  `firebase_adapters` **and, as of Phase 1 Foundation, `feature_identity`**
+  (auth, custom claims, role matrix, user management). The remaining 15
+  feature packages land here as Phase 2/3 build their admin screens.
+- `apps/public_web` still depends only on `core_contracts`,
+  `design_system` and `firebase_adapters` — no feature is wired in yet,
+  and `feature_identity` in particular is deliberately never a dependency
+  of the public site, since public visitors never authenticate (see
+  `apps/public_web/lib/main.dart`'s doc comment).
+
+See the root README's "Implementation milestones" section.
 
 ## Why Dart pub workspaces instead of Melos
 

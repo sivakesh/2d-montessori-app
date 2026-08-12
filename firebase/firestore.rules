@@ -1,17 +1,36 @@
 rules_version = '2';
 
-// Phase 0 baseline: deny-by-default everywhere except the sanitized
-// `published*`/`public*` read models, which are public-read only (never
-// public-write). This satisfies SRS NFR-05 ("least privilege... deny by
-// default") and PRD §13 ("Deny-by-default Firestore... rules") as a safe
-// starting point.
+// Deny-by-default (SRS NFR-05, PRD §13). Two rule groups are live:
+//   1. Sanitized `published*`/`public*` read models — public read only.
+//   2. `users/{uid}` (Phase 1 Foundation, this milestone) — narrow,
+//      role-based read; NO client writes at all.
+// Everything else (pages, programs, enquiries, auditLogs, ...) stays
+// fully denied until the milestone that implements it — see
+// docs/architecture/firestore-model.md for the target shape and
+// docs/architecture/decisions.md for what's deliberately still closed.
 //
-// Role-based write rules (Editor/Publisher/Super Admin per SRS §3, backed
-// by Firebase Auth custom claims) are implemented in Phase 1 (Foundation)
-// and Phase 2 (CMS Core) — see docs/architecture/firestore-model.md.
-// Do NOT open client writes to `enquiries/**` even then: SRS ENQ-01
-// requires server-side validation, so enquiry creation goes through a
-// callable Cloud Function, never a direct client write.
+// `users/{uid}` write policy for this milestone: every mutation (role,
+// status, mustChangePassword, account creation) goes through a callable
+// Cloud Function using the Admin SDK, which bypasses these rules entirely
+// — see functions/src/auth. Client-side self-service profile edits
+// (display name / photo, per SRS AUTH-04) are intentionally NOT opened
+// here yet because no "My Profile" screen exists to use them (milestone
+// boundary: "do not implement later CMS modules beyond the minimum
+// interfaces... needed for the identity and security foundation"); add
+// a narrowly-scoped self-update rule (restricted to those two fields)
+// when that screen is built, not before.
+//
+// Role/status source of truth for these rules is the custom claims on
+// `request.auth.token` (`role`, `status`), not the Firestore mirror —
+// claims are what Cloud Functions set authoritatively (functions/src/auth
+// guards.ts), and reading claims here costs nothing extra per request,
+// unlike a `get()` lookup. This does mean a just-suspended Super Admin's
+// existing session can keep *reading* the user list for up to the
+// remaining life of their cached ID token (~1h) — the Cloud Functions
+// layer closes this gap for anything that actually *mutates* state (see
+// assertCallerIsActiveSuperAdmin's extra Firestore freshness check),
+// which is the part that matters; this is a documented, accepted
+// tradeoff for a read-only list view, not an oversight.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -31,7 +50,25 @@ service cloud.firestore {
 
     // Redirects are resolved server-side only (PRD §12) — no client read.
 
-    // ---- Everything else: deny by default until Phase 1/2 role rules land ----
+    // ---- users/{uid}: SRS AUTH-01..AUTH-05 ----
+    // A user may read their own profile; a Super Admin may read any
+    // profile (User Management screen, feature_identity's
+    // observeUsers()). No client writes — see the module comment above.
+    match /users/{uid} {
+      allow read: if request.auth != null
+        && (request.auth.uid == uid
+          || (request.auth.token.role == 'superAdmin' && request.auth.token.status == 'active'));
+      allow write: if false;
+    }
+
+    // `auditLogs` is append-only and Admin-SDK-only (SRS NFR-07 "logs are
+    // not editable by ordinary administrators"; no viewer UI exists yet
+    // in this milestone, so it is not even Super-Admin-readable here).
+    match /auditLogs/{eventId} {
+      allow read, write: if false;
+    }
+
+    // ---- Everything else: deny by default until its owning milestone ----
     match /{document=**} {
       allow read, write: if false;
     }

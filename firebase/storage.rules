@@ -1,11 +1,15 @@
 rules_version = '2';
 
-// Phase 0 baseline: deny-by-default. Original uploads live under
-// /private/** and are never client-readable; approved public derivatives
-// are written by trusted Cloud Functions to /public/** and are read-only
-// for clients (PRD §7 "Original media is private by default"). Upload/
-// write rules requiring authenticated role checks are implemented in
-// Phase 1/2 alongside feature_media.
+// Deny-by-default baseline. Original uploads live under /private/** and
+// are never client-readable; approved public derivatives are written by
+// trusted Cloud Functions to /public/** and are read-only for clients
+// (PRD §7 "Original media is private by default").
+//
+// Reviewed at the Phase 1 Foundation milestone (identity & security) and
+// left unchanged: this milestone adds no Storage usage (no profile-photo
+// upload, no media library yet), so there is nothing to open beyond the
+// Phase 0 baseline. Upload/write rules requiring authenticated role
+// checks are added alongside feature_media (Phase 2 — CMS Core).
 service firebase.storage {
   match /b/{bucket}/o {
     match /public/{allPaths=**} {

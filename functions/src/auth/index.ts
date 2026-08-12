@@ -1,16 +1,22 @@
 /**
  * Capability: auth
  *
- * User administration: createUser, resetAccess, suspend/reactivate, custom-claims (role) management.
+ * User administration: createUser, setUserRole, setUserStatus,
+ * resetUserPassword, completeFirstLogin, and the shared authorization
+ * guards/validators they use.
  *
- * Traceability: SRS AUTH-01, AUTH-05; PRD Section 2 (Authorization must be enforced... via custom claims)
+ * Traceability: SRS AUTH-01, AUTH-03, AUTH-05; PRD Section 2
+ * (Authorization must be enforced via custom claims)
  *
- * Phase 0 scaffold only — no callable/trigger functions are exported yet.
- * Real implementations land per the milestone that owns this capability
- * (see /README.md "Implementation milestones"). Every exported function
- * added here must go through the shared audit helper in ../lib/audit.ts
- * and must never trust client-supplied role/permission claims without
- * re-verifying them server-side (SRS NFR-05).
+ * Deployed/emulated as `authFns-<name>` per the grouped-export naming in
+ * ../index.ts (`export * as authFns from './auth'`).
  */
-
 export const capability = 'auth' as const;
+
+export { completeFirstLogin } from './completeFirstLogin';
+export { createUser } from './createUser';
+export * from './guards';
+export { resetUserPassword } from './resetUserPassword';
+export { setUserRole } from './setUserRole';
+export { setUserStatus } from './setUserStatus';
+export * from './validators';

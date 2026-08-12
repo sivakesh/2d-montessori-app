@@ -3,11 +3,11 @@
  * (publishing, auth, media, enquiries, ...) must route through this
  * instead of writing to `auditLogs/{eventId}` directly, so the event shape
  * stays consistent with PRD §9.1 (Audit event fields) and SRS CMS-15 /
- * NFR-07.
- *
- * Phase 0 scaffold — implemented once feature_audit's Firestore schema is
- * finalized in Phase 1.
+ * NFR-07. `auditLogs` has no client read/write access at all (see
+ * firebase/firestore.rules) — only the Admin SDK, which this module uses,
+ * can write here.
  */
+import * as admin from 'firebase-admin';
 
 export type AuditEventType =
   | 'create'
@@ -20,6 +20,7 @@ export type AuditEventType =
   | 'restore'
   | 'login'
   | 'roleChange'
+  | 'statusChange'
   | 'mediaConsentChange';
 
 export interface AuditEventInput {
@@ -34,11 +35,9 @@ export interface AuditEventInput {
   source: 'cms' | 'function' | 'migration';
 }
 
-/**
- * TODO(Phase 1): write to `auditLogs/{eventId}` via the Admin SDK once the
- * Firestore client/emulator wiring for functions lands. Kept as an async
- * no-op for now so callers can already depend on the final signature.
- */
-export async function writeAuditEvent(_input: AuditEventInput): Promise<void> {
-  return Promise.resolve();
+export async function writeAuditEvent(input: AuditEventInput): Promise<void> {
+  await admin.firestore().collection('auditLogs').add({
+    ...input,
+    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+  });
 }

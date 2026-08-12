@@ -14,6 +14,7 @@ resolution: workspace
 dependencies:
   flutter:
     sdk: flutter
+  meta: ^1.15.0
   core_contracts:
     path: ../core_contracts
   design_system:

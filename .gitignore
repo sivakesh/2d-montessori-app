@@ -82,6 +82,9 @@ functions/.env
 functions/.env.*
 !functions/.env.example
 
+# ---- Any other Node-based tooling (e.g. firebase/test/) ----
+**/node_modules/
+
 # ---- CI / misc ----
 *.log
 npm-debug.log*

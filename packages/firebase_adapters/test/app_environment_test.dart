@@ -12,12 +12,6 @@ void main() {
     test('rejects unknown names', () {
       expect(() => AppEnvironment.fromName('production'), throwsArgumentError);
     });
-
-    test('only dev uses emulators', () {
-      expect(AppEnvironment.dev.usesEmulators, isTrue);
-      expect(AppEnvironment.staging.usesEmulators, isFalse);
-      expect(AppEnvironment.prod.usesEmulators, isFalse);
-    });
   });
 
   test('demo emulator options use the reserved demo- project prefix', () {

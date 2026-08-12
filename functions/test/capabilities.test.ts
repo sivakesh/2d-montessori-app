@@ -6,12 +6,16 @@ import { capability as publishingCapability } from '../src/publishing';
 import { capability as redirectsCapability } from '../src/redirects';
 import { capability as schedulingCapability } from '../src/scheduling';
 import { capability as seoCapability } from '../src/seo';
-import { writeAuditEvent } from '../src/lib/audit';
 
-// Phase 0 smoke test: proves every capability module compiles and its
-// barrel constant matches its folder name. This intentionally does NOT
-// import src/index.ts, which calls admin.initializeApp() and needs a real
-// (or emulated) Firebase environment — out of scope for a unit test.
+// Smoke test: proves every capability module compiles and its barrel
+// constant matches its folder name. This intentionally does NOT import
+// src/index.ts, which calls admin.initializeApp() and needs a real (or
+// emulated) Firebase environment — out of scope for a unit test.
+//
+// writeAuditEvent (src/lib/audit.ts) is no longer tested here: as of the
+// Phase 1 Foundation milestone it writes to Firestore for real, so
+// exercising it needs the emulator — see test/emulator/auth.functions.test.ts
+// (authored but not executed in this environment; see README "Testing").
 describe('Cloud Functions capability scaffold', () => {
   it.each([
     ['auth', authCapability],
@@ -24,19 +28,5 @@ describe('Cloud Functions capability scaffold', () => {
     ['maintenance', maintenanceCapability],
   ])('%s capability exports its own name', (expected, actual) => {
     expect(actual).toBe(expected);
-  });
-
-  it('writeAuditEvent resolves without throwing (Phase 0 no-op)', async () => {
-    await expect(
-      writeAuditEvent({
-        eventType: 'create',
-        entityType: 'test',
-        entityId: 'test-1',
-        actorId: 'test-actor',
-        actorRole: 'superAdmin',
-        requestId: 'req-1',
-        source: 'function',
-      }),
-    ).resolves.toBeUndefined();
   });
 });

@@ -4,16 +4,20 @@ import 'package:flutter/material.dart';
 /// Public site entrypoint. Today this always bootstraps against the local
 /// Firebase Emulator Suite using the safe `demo-` project (see
 /// [demoEmulatorFirebaseOptions]) — there is no real dev/staging/prod
-/// Firebase project wired up yet (Phase 0). Once those projects exist,
-/// Phase 1 replaces this with environment-selected entrypoints that load
-/// the generated `firebase_options_<env>.dart` files; see
-/// docs/architecture/environments.md for the exact steps.
+/// Firebase project wired up yet. Once those projects exist, Phase 1+
+/// replaces this with environment-selected entrypoints that load the
+/// generated `firebase_options_<env>.dart` files and pass
+/// `useEmulators: false`; see docs/architecture/environments.md.
+///
+/// No authentication wiring lives here: public visitors never sign in
+/// (SRS — "Public visitor" is not an account), so `feature_identity` is
+/// deliberately not a dependency of this app.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await bootstrapFirebase(
     options: demoEmulatorFirebaseOptions,
-    environment: AppEnvironment.dev,
+    useEmulators: true,
   );
 
   runApp(const PublicWebApp());

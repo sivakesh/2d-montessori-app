@@ -68,7 +68,7 @@ jobs:
         run: npm test
 
   security-rules:
-    name: Firestore/Storage security rules
+    name: Firestore/Storage rules + Cloud Functions callables (emulator-backed)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -79,7 +79,12 @@ jobs:
 
       # firebase-tools checks the Java version at startup for any
       # emulators:start/emulators:exec invocation (even Auth/Storage-only
-      # runs), and requires 21+. See README.md "Prerequisites".
+      # runs), and requires 21+. See README.md "Prerequisites". This
+      # environment is what actually exercises the suites authored in
+      # functions/test/emulator and firebase/test — they were only
+      # statically type-checked, not run, in the environment that wrote
+      # them (see docs/architecture/decisions.md "Phase 1 Foundation —
+      # test execution status").
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -88,13 +93,18 @@ jobs:
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
 
-      - name: Validate emulator config and rules syntax
-        run: |
-          firebase emulators:exec \
-            --project demo-montessori-2d \
-            --only firestore,storage \
-            'echo "emulators started with current firestore.rules / storage.rules — OK"'
-        # TODO(Phase 1+): replace this smoke check with the real
-        # @firebase/rules-unit-testing positive/negative test suite once
-        # role-based rules exist (SRS §14 "Role/permission matrix and
-        # Firebase Security Rules tested with positive and negative cases").
+      - name: Install functions dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Cloud Functions callables against Auth + Firestore emulators
+        working-directory: functions
+        run: npm run test:emulator
+
+      - name: Install security-rules test dependencies
+        working-directory: firebase/test
+        run: npm ci
+
+      - name: Firestore/Storage rules + disabled-account sign-in, against emulators
+        working-directory: firebase/test
+        run: npm run test:against-emulators
