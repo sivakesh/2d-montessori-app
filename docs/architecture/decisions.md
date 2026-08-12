@@ -437,6 +437,51 @@ been dispatched as of this writing. Do not treat their clean type-check
 as equivalent to a passing test; see the milestone report for whether a
 CI run against them has since landed.
 
+### Bug found by CI execution: a fifth one, same category as before
+
+The first CI run against the `feature_publishing` commit (`31613980326`)
+failed both `test/emulator/publishing.functions.test.ts` **and**
+`test/emulator/auth.functions.test.ts` — a file that had passed cleanly
+in the immediately preceding CI run. Root cause, read directly from the
+failure output rather than guessed:
+
+`test/emulator/` previously had exactly one file. `npm run test:emulator`
+runs `jest --roots test/emulator ...` with no `--runInBand`, so Jest used
+its default parallel workers — harmless with one file, but as soon as
+`publishing.functions.test.ts` existed alongside
+`auth.functions.test.ts`, both ran **concurrently, in separate
+processes, against the same shared Firestore emulator/project**. Both
+files' assertions depend on collection-wide state that isn't scoped per
+file:
+
+- `auditLogCount()` counts the entire `auditLogs` collection; a
+  `before`/`after` delta assertion in one file is invalidated if the
+  other file writes an audit entry in between, in a different process.
+- `setUserRole`/`setUserStatus`'s active-Super-Admin guard counts *every*
+  `users` doc with `role == 'superAdmin' && status == 'active'`,
+  globally — not scoped to a test file. `auth.functions.test.ts`'s
+  "blocks demoting the only active Super Admin" test assumes it is the
+  only active Super Admin in the whole emulator at that moment; with
+  `publishing.functions.test.ts` running concurrently and having just
+  seeded its own `workflow-super-admin` (active), the guard correctly
+  saw *two* active Super Admins and *correctly* allowed the demotion —
+  the test's premise was violated by the other file's concurrent
+  activity, not a guard bug. (Confirmed from the actual failure:
+  `expect(promise).rejects.toMatchObject(...)` — "Received promise
+  resolved instead of rejected".)
+
+**Fix:** `functions/package.json`'s `test:emulator` script now passes
+`--runInBand` to Jest, forcing every emulator test file to run fully
+sequentially in one process — no file's `beforeAll`/tests/`afterAll` can
+overlap with another's. This is the same pattern
+`firebase/test/package.json`'s `test:sequential` already uses for the
+rules tests, and for the identical underlying reason: these are
+integration tests against one shared emulator instance, not unit tests
+with isolated state, so cross-file concurrency was never actually safe
+here — it simply had nothing to collide with until a second file
+existed. Not yet re-verified by a subsequent CI run as of this writing;
+see the milestone report.
+
 ## Traceability
 
 Every implementation story must reference an SRS requirement ID (e.g.
