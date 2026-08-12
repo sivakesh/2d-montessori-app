@@ -230,44 +230,50 @@ bugs neither `tsc --noEmit` nor eslint had any way to catch:
    Fixed with an `expectHttpsErrorCode(promise, code)` helper that checks
    `.rejects.toMatchObject({ code })` instead.
 
-The second CI run then found two more, in `firebase/test/`'s suite:
+The second CI run then found more, in `firebase/test/`'s suite — this one
+took three CI iterations to actually root-cause, recorded honestly below
+rather than cleaned up into a story where the first fix worked:
 
-3. **Test-isolation bug**: `firestore.rules.test.ts` and
-   `storage.rules.test.ts` both called `initializeTestEnvironment` with
-   the same `projectId: 'demo-montessori-2d'`. `npm run
-   test:against-emulators` runs every `*.test.ts` file in one Jest
-   invocation; when two files in the same worker process each initialize
-   a rules-testing environment for the same project ID, the second one
-   failed with `FirebaseError: Firestore has already been started and its
-   settings can no longer be changed` — an SDK-level conflict, not a
-   rules problem. First attempt: giving each of the three files its own
-   `demo-`-prefixed project ID. **This did not fully fix it** — a third
-   CI run still hit the same error, plus a new failure in
-   `auth.account-status.test.ts` (see #4). Distinct project IDs alone
-   don't guarantee process isolation; Jest can still reuse one worker
-   *process* for multiple test files sequentially, and some Firebase JS
-   SDK state (component registration, `globalThis`-scoped bits) sits
-   outside Jest's per-file module-registry isolation. The actual fix:
-   `firebase/test/package.json`'s `test:sequential` script now runs each
-   file as its own separate `jest --runTestsByPath <file>` process
-   invocation, chained with `&&` inside the one `firebase emulators:exec`
-   wrapper — full OS-process isolation between files, not just distinct
-   project IDs (kept, since they're still correct practice and cheap).
+3. **`FirebaseError: Firestore has already been started and its settings
+   can no longer be changed`**, on `firestore.rules.test.ts`'s last test
+   only, both times it recurred. Two contributing fixes were applied
+   before finding the real cause:
+   - Attempt 1: `firestore.rules.test.ts` and `storage.rules.test.ts`
+     both called `initializeTestEnvironment` with the same
+     `projectId: 'demo-montessori-2d'`; gave each file its own
+     `demo-`-prefixed project ID instead. Reasonable practice, kept, but
+     the next CI run hit the identical error.
+   - Attempt 2: `firebase/test/package.json`'s `test:sequential` now
+     runs each file as its own separate `jest --runTestsByPath <file>`
+     process, in case a reused Jest worker process was sharing SDK state
+     across files. Also kept as reasonable defensive isolation, but the
+     next CI run *still* hit the identical error — proving the cross-file
+     theory wrong, not just insufficiently applied.
+   - **Actual cause**: the failing test was the only one in the file
+     calling `.firestore()` twice on the same `RulesTestContext`
+     (once for a `getDoc`, once for a `setDoc`) — every other test in the
+     file performs exactly one operation per context. `RulesTestContext
+     .firestore()` is evidently not memoized; a second call re-runs
+     Firestore initialization for an app that already has one, which is
+     exactly what that error message describes. Fixed by calling
+     `.firestore()` once per test and reusing the reference for both
+     operations — a one-line change once correctly diagnosed.
 4. **Test bug**: `auth.account-status.test.ts`'s two tests shared one
    hardcoded email; "allows sign-in while enabled" created that account,
    and "rejects sign-in once disabled" assumed it still existed via
-   `adminAuth.getUserByEmail(email)`. CI's third run failed that lookup
-   with "There is no user record corresponding to the provided
-   identifier" — an unintended cross-test dependency, not a production
-   issue. Fixed by giving each test its own uniquely-generated email and
-   having each create/tear down its own account, removing the dependency
-   regardless of what exactly caused the shared-fixture lookup to miss.
+   `adminAuth.getUserByEmail(email)`. CI failed that lookup with "There
+   is no user record corresponding to the provided identifier" — an
+   unintended cross-test dependency, not a production issue. Fixed by
+   giving each test its own uniquely-generated email and having each
+   create/tear down its own account.
 
-All four fixes are covered by a subsequent CI run — see the milestone
-report for that run's actual result. Recorded here specifically because
-all four would have been reported as "passing" under a review-only or
-compile-only verification standard, which is the failure mode this
-checkpoint's insistence on real execution exists to catch.
+All fixes are covered by a subsequent CI run — see the milestone report
+for that run's actual result. Recorded in this much detail specifically
+because two of the three attempts on bug 3 looked plausible, were
+individually reasonable engineering, and were still wrong — a reminder
+that "a plausible-sounding fix" and "an actually-verified fix" are not
+the same claim, which is the entire point of this checkpoint insisting on
+real execution over review or `tsc --noEmit`.
 
 ## Traceability
 

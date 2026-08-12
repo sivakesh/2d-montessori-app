@@ -200,7 +200,15 @@ describe('everything else — default deny', () => {
   it('denies read/write on an undeclared collection even for an active Super Admin', async () => {
     await seedUserDoc('admin1', { email: 'admin1@example.test', role: 'superAdmin', status: 'active' });
     const admin = testEnv.authenticatedContext('admin1', ACTIVE_SUPER_ADMIN);
-    await assertFails(getDoc(doc(admin.firestore(), 'programs', 'p1')));
-    await assertFails(setDoc(doc(admin.firestore(), 'programs', 'p1'), { title: 'x' }));
+    // Call .firestore() once and reuse it — calling it a second time on
+    // the same context threw "Firestore has already been started and its
+    // settings can no longer be changed" in CI (this was the only test
+    // in the file calling .firestore() twice on one context; every other
+    // test does one operation per context). Whatever RulesTestContext
+    // does internally on each .firestore() call, it isn't safe to call
+    // more than once per context.
+    const db = admin.firestore();
+    await assertFails(getDoc(doc(db, 'programs', 'p1')));
+    await assertFails(setDoc(doc(db, 'programs', 'p1'), { title: 'x' }));
   });
 });
