@@ -20,7 +20,18 @@ const ACTIVE_SUPER_ADMIN = { role: 'superAdmin', status: 'active' };
 
 beforeAll(async () => {
   testEnv = await initializeTestEnvironment({
-    projectId: 'demo-montessori-2d',
+    // Deliberately a distinct project ID per test file (still emulator-
+    // only — see the demo- prefix convention documented in
+    // packages/firebase_adapters/lib/src/demo_firebase_options.dart).
+    // When Jest runs multiple test files that each call
+    // initializeTestEnvironment for the *same* projectId in the same
+    // worker process, the second call can fail with "Firestore has
+    // already been started and its settings can no longer be changed" —
+    // a real failure caught by CI (GitHub Actions, JDK 21), not a
+    // theoretical one. The Firestore/Storage emulators are multi-project
+    // regardless of which project ID started them via `firebase
+    // emulators:exec --project`, so distinct IDs per file are safe.
+    projectId: 'demo-montessori-2d-firestore-rules',
     firestore: {
       rules: readFileSync(join(__dirname, '..', 'firestore.rules'), 'utf8'),
       host: 'localhost',

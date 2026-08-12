@@ -17,7 +17,10 @@ let testEnv: RulesTestEnvironment;
 
 beforeAll(async () => {
   testEnv = await initializeTestEnvironment({
-    projectId: 'demo-montessori-2d',
+    // Distinct project ID per test file — see firestore.rules.test.ts's
+    // comment on the same line for why (a real "already started" failure
+    // caught by CI when two files shared one project ID).
+    projectId: 'demo-montessori-2d-storage-rules',
     storage: {
       rules: readFileSync(join(__dirname, '..', 'storage.rules'), 'utf8'),
       host: 'localhost',

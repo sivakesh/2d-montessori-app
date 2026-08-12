@@ -20,12 +20,18 @@ import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 // Client SDK, pointed at the Auth emulator only — this file intentionally
 // does not touch Firestore, so it doesn't need a rules-unit-testing
 // environment.
-const clientApp = initializeApp({ projectId: 'demo-montessori-2d', apiKey: 'demo-api-key' }, 'auth-status-test-client');
+// Distinct project ID from firestore.rules.test.ts / storage.rules.test.ts
+// — see firestore.rules.test.ts's comment on its projectId line for why
+// (a real cross-file SDK-state collision caught by CI).
+const clientApp = initializeApp(
+  { projectId: 'demo-montessori-2d-auth-status', apiKey: 'demo-api-key' },
+  'auth-status-test-client',
+);
 const clientAuth = getAuth(clientApp);
 connectAuthEmulator(clientAuth, 'http://localhost:9099', { disableWarnings: true });
 
 // Admin SDK, for setting up and disabling the test account.
-const adminApp = initializeAdminApp({ projectId: 'demo-montessori-2d' }, 'auth-status-test-admin');
+const adminApp = initializeAdminApp({ projectId: 'demo-montessori-2d-auth-status' }, 'auth-status-test-admin');
 const adminAuth = getAdminAuth(adminApp);
 
 const TEST_EMAIL = 'disabled-account-test@example.test';

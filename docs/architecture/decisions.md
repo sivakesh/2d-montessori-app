@@ -230,9 +230,28 @@ bugs neither `tsc --noEmit` nor eslint had any way to catch:
    Fixed with an `expectHttpsErrorCode(promise, code)` helper that checks
    `.rejects.toMatchObject({ code })` instead.
 
-Both fixes are covered by the second CI run — see the milestone report
-for that run's actual result. Recorded here specifically because both
-bugs would have been reported as "passing" under a review-only or
+The second CI run then found a third, in `firebase/test/`'s suite:
+
+3. **Test-isolation bug**: `firestore.rules.test.ts` and
+   `storage.rules.test.ts` both called `initializeTestEnvironment` with
+   the same `projectId: 'demo-montessori-2d'`. `npm run
+   test:against-emulators` runs every `*.test.ts` file in one Jest
+   invocation; when two files in the same worker process each initialize
+   a rules-testing environment for the same project ID, the second one
+   failed with `FirebaseError: Firestore has already been started and its
+   settings can no longer be changed` — an SDK-level conflict, not a
+   rules problem. Fixed by giving each of the three files in
+   `firebase/test/` its own `demo-`-prefixed project ID
+   (`demo-montessori-2d-firestore-rules`,
+   `-storage-rules`, `-auth-status`). Safe because the Firestore/Storage
+   emulators are multi-project regardless of which project ID started
+   them via `firebase emulators:exec --project`, and `firestore.rules`/
+   `storage.rules` apply uniformly to every project the running emulator
+   serves, not per-project.
+
+All three fixes are covered by a subsequent CI run — see the milestone
+report for that run's actual result. Recorded here specifically because
+all three would have been reported as "passing" under a review-only or
 compile-only verification standard, which is the failure mode this
 checkpoint's insistence on real execution exists to catch.
 
