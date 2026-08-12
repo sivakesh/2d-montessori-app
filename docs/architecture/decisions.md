@@ -230,7 +230,7 @@ bugs neither `tsc --noEmit` nor eslint had any way to catch:
    Fixed with an `expectHttpsErrorCode(promise, code)` helper that checks
    `.rejects.toMatchObject({ code })` instead.
 
-The second CI run then found a third, in `firebase/test/`'s suite:
+The second CI run then found two more, in `firebase/test/`'s suite:
 
 3. **Test-isolation bug**: `firestore.rules.test.ts` and
    `storage.rules.test.ts` both called `initializeTestEnvironment` with
@@ -240,18 +240,32 @@ The second CI run then found a third, in `firebase/test/`'s suite:
    a rules-testing environment for the same project ID, the second one
    failed with `FirebaseError: Firestore has already been started and its
    settings can no longer be changed` — an SDK-level conflict, not a
-   rules problem. Fixed by giving each of the three files in
-   `firebase/test/` its own `demo-`-prefixed project ID
-   (`demo-montessori-2d-firestore-rules`,
-   `-storage-rules`, `-auth-status`). Safe because the Firestore/Storage
-   emulators are multi-project regardless of which project ID started
-   them via `firebase emulators:exec --project`, and `firestore.rules`/
-   `storage.rules` apply uniformly to every project the running emulator
-   serves, not per-project.
+   rules problem. First attempt: giving each of the three files its own
+   `demo-`-prefixed project ID. **This did not fully fix it** — a third
+   CI run still hit the same error, plus a new failure in
+   `auth.account-status.test.ts` (see #4). Distinct project IDs alone
+   don't guarantee process isolation; Jest can still reuse one worker
+   *process* for multiple test files sequentially, and some Firebase JS
+   SDK state (component registration, `globalThis`-scoped bits) sits
+   outside Jest's per-file module-registry isolation. The actual fix:
+   `firebase/test/package.json`'s `test:sequential` script now runs each
+   file as its own separate `jest --runTestsByPath <file>` process
+   invocation, chained with `&&` inside the one `firebase emulators:exec`
+   wrapper — full OS-process isolation between files, not just distinct
+   project IDs (kept, since they're still correct practice and cheap).
+4. **Test bug**: `auth.account-status.test.ts`'s two tests shared one
+   hardcoded email; "allows sign-in while enabled" created that account,
+   and "rejects sign-in once disabled" assumed it still existed via
+   `adminAuth.getUserByEmail(email)`. CI's third run failed that lookup
+   with "There is no user record corresponding to the provided
+   identifier" — an unintended cross-test dependency, not a production
+   issue. Fixed by giving each test its own uniquely-generated email and
+   having each create/tear down its own account, removing the dependency
+   regardless of what exactly caused the shared-fixture lookup to miss.
 
-All three fixes are covered by a subsequent CI run — see the milestone
+All four fixes are covered by a subsequent CI run — see the milestone
 report for that run's actual result. Recorded here specifically because
-all three would have been reported as "passing" under a review-only or
+all four would have been reported as "passing" under a review-only or
 compile-only verification standard, which is the failure mode this
 checkpoint's insistence on real execution exists to catch.
 

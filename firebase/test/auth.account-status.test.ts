@@ -34,8 +34,21 @@ connectAuthEmulator(clientAuth, 'http://localhost:9099', { disableWarnings: true
 const adminApp = initializeAdminApp({ projectId: 'demo-montessori-2d-auth-status' }, 'auth-status-test-admin');
 const adminAuth = getAdminAuth(adminApp);
 
-const TEST_EMAIL = 'disabled-account-test@example.test';
 const TEST_PASSWORD = 'original-pw-1';
+
+/**
+ * Each test creates and tears down its own account with a unique email,
+ * deliberately not sharing a fixture across tests. An earlier version of
+ * this file had "allows sign-in while enabled" create the account and a
+ * second test look it up by a shared email — CI (GitHub Actions, JDK 21)
+ * showed that second test failing with "There is no user record
+ * corresponding to the provided identifier," a real cross-test
+ * dependency this file should never have had regardless of what
+ * ultimately caused the lookup to miss.
+ */
+function uniqueTestEmail(label: string): string {
+  return `disabled-account-test-${label}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.test`;
+}
 
 afterEach(async () => {
   await signOut(clientAuth).catch(() => undefined);
@@ -43,25 +56,30 @@ afterEach(async () => {
 
 describe('disabled account sign-in (SRS AUTH-05 suspend/reactivate)', () => {
   it('allows sign-in while the account is enabled', async () => {
-    await createUserWithEmailAndPassword(clientAuth, TEST_EMAIL, TEST_PASSWORD);
+    const email = uniqueTestEmail('enabled');
+    await createUserWithEmailAndPassword(clientAuth, email, TEST_PASSWORD);
     await signOut(clientAuth);
 
-    await expect(signInWithEmailAndPassword(clientAuth, TEST_EMAIL, TEST_PASSWORD)).resolves.toBeDefined();
+    await expect(signInWithEmailAndPassword(clientAuth, email, TEST_PASSWORD)).resolves.toBeDefined();
+
+    const record = await adminAuth.getUserByEmail(email);
+    await adminAuth.deleteUser(record.uid);
   });
 
   it('rejects sign-in once setUserStatus has disabled the account', async () => {
-    const record = await adminAuth.getUserByEmail(TEST_EMAIL);
+    const email = uniqueTestEmail('disabled');
+    await createUserWithEmailAndPassword(clientAuth, email, TEST_PASSWORD);
+    await signOut(clientAuth);
+    const record = await adminAuth.getUserByEmail(email);
+
     // Mirrors what functions/src/auth/setUserStatus.ts does when
     // suspending — see that file for why disabling the Auth user (not
     // just flipping the Firestore/claims status) matters: it blocks new
     // sign-ins immediately, independent of any cached ID token.
     await adminAuth.updateUser(record.uid, { disabled: true });
 
-    await expect(signInWithEmailAndPassword(clientAuth, TEST_EMAIL, TEST_PASSWORD)).rejects.toThrow(/user-disabled/);
+    await expect(signInWithEmailAndPassword(clientAuth, email, TEST_PASSWORD)).rejects.toThrow(/user-disabled/);
 
-    // Cleanup: re-enable and delete so this test is independently
-    // re-runnable.
-    await adminAuth.updateUser(record.uid, { disabled: false });
     await adminAuth.deleteUser(record.uid);
   });
 });
