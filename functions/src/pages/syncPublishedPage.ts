@@ -109,7 +109,24 @@ export async function syncPublishedPageForChange(
   }
 }
 
-export const syncPublishedPage = onDocumentWritten('content/{contentId}', async (event) => {
+/**
+ * Region is pinned explicitly to `asia-south1` — not left to infer a
+ * default the way every other Function in this codebase does — because
+ * this is the one Firestore-triggered (`onDocumentWritten`) Function,
+ * and Eventarc requires a Firestore trigger's region to match the
+ * region of the Firestore database it watches. The real Dev Firestore
+ * database (`twod-montessori-dev`) is confirmed to live in
+ * `asia-south1`; every other Function in this codebase is `onCall`/
+ * `onSchedule`, which has no such co-location constraint and is left on
+ * the (equally explicit, just SDK-default rather than code-pinned)
+ * `us-central1` — see `docs/architecture/environments.md`'s "Cloud
+ * Functions region policy" for the full reasoning and the intentional
+ * split this creates. Do not remove this option to "match the rest of
+ * the codebase" — doing so would silently move this specific trigger
+ * away from its database's region and reproduce the original deploy
+ * failure this option was added to prevent.
+ */
+export const syncPublishedPage = onDocumentWritten({ document: 'content/{contentId}', region: 'asia-south1' }, async (event) => {
   const before = event.data?.before.data();
   const after = event.data?.after.data();
   await syncPublishedPageForChange(getFirestore(), event.params.contentId, before, after);

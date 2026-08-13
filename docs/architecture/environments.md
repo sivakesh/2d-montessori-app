@@ -87,8 +87,18 @@ Hosting site ids are confirmed and already filled in to
 | Firebase project id | `twod-montessori-dev` |
 | Public Hosting site id | `twod-montessori-dev` |
 | Admin Hosting site id | `twod-montessori-admin-dev` |
-| Cloud Functions region | `us-central1` (default — explicitly confirmed, not left unconfigured) |
+| Cloud Functions region | `us-central1` for `onCall`/`onSchedule`; `asia-south1` for the one Firestore trigger — see "Cloud Functions region policy" below |
+| Firestore database location | `asia-south1` (confirmed via `gcloud firestore databases describe --database="(default)" --project=twod-montessori-dev`) |
 | Scheduled-publish timezone | `Asia/Kolkata` (`functions/src/scheduling/publishScheduledContent.ts`) |
+
+### Cloud Functions region policy
+
+Region assignment is intentionally split by trigger type, not uniform:
+
+- **`onCall`/`onSchedule` Functions** (everything except `pagesFns-syncPublishedPage`) have no explicit `region` option set anywhere in `functions/src`. These trigger types have no co-location constraint with any other GCP resource, so the Firebase SDK's own default — `us-central1` — applies and is left implicit rather than redundantly pinned in every file.
+- **`pagesFns-syncPublishedPage`** (`functions/src/pages/syncPublishedPage.ts`) is the one `onDocumentWritten` Firestore trigger in this codebase, and is explicitly pinned to `region: 'asia-south1'` in code. Firestore triggers use Eventarc, which requires the trigger's region to match the region of the Firestore database it watches — `twod-montessori-dev`'s Firestore database is confirmed to be in `asia-south1`, not `us-central1`. Leaving this one unset would have let Firebase's deploy tooling continue to infer it implicitly (which is what produced the original `asia-south1`/`us-central1` split observed in the first failed deployment); pinning it explicitly instead makes the region an intentional, reviewable part of the source rather than an inferred side effect that could silently change.
+
+This means a real deploy targets two regions, not one. That is expected and correct for this project, not a misconfiguration to unify — do not "fix" the split by forcing every Function to the same region.
 
 What remains before Dev can actually be deployed to is entirely actions
 that require an authenticated Firebase/Google Cloud CLI session on your
