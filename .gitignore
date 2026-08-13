@@ -54,10 +54,20 @@ config/env/*.json
 # ---- Firebase ----
 # Generated FlutterFire options contain per-project (non-secret but
 # project-specific) identifiers. Only the .template files are tracked
-# until real dev/staging/prod projects exist — see
-# docs/architecture/environments.md.
+# until a given environment's real project exists — see
+# docs/architecture/environments.md. staging/prod stay excluded (those
+# projects don't exist yet, so there's nothing real to commit); dev's two
+# generated files are explicitly un-ignored below now that
+# twod-montessori-dev is real and confirmed, and CI needs them to compile
+# main_dev.dart at all (it always does a fresh checkout, so a gitignored
+# file can never "already exist" there the way it can locally). Firebase
+# Web config is not a credential — the security boundary is Firestore/
+# Storage Rules and App Check, not hiding this file; see
+# docs/architecture/decisions.md's Dev deployment-prep section.
 **/lib/firebase_options*.dart
 !**/lib/firebase_options*.dart.template
+!apps/public_web/lib/firebase_options_dev.dart
+!apps/admin_web/lib/firebase_options_dev.dart
 # FlutterFire CLI's own per-app bookkeeping file (which options file maps
 # to which Firebase Web App id) — same generated-artifact policy as
 # firebase_options*.dart above, not the root /firebase.json (that one,
