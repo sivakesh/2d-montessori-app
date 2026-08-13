@@ -426,16 +426,16 @@ checks, or transitions history. `RolePermissionMatrix` and `UserRole`
 
 | Suite | Run in this environment? | Result |
 |---|---|---|
-| Dart domain/use-case tests (`packages/feature_publishing/test/`) | Yes | 39/39 passing |
-| Cloud Functions unit tests (`functions/test/publishing.*.test.ts`) | Yes | included in the 107/107 total below |
-| Firestore rules tests (`firebase/test/content.rules.test.ts`) | **No — needs CI** | Authored, type-checked clean; not executed locally |
-| Cloud Functions integration test (`functions/test/emulator/publishing.functions.test.ts`) | **No — needs CI** | Authored, type-checked clean (`tsc --noEmit` against the strict compiler options, matching `tsconfig.json`); not executed locally |
+| Dart domain/use-case tests (`packages/feature_publishing/test/`) | Yes (local) | 39/39 passing |
+| Cloud Functions unit tests (`functions/test/publishing.*.test.ts`) | Yes (local) | included in the 107/107 total below |
+| Firestore rules tests (`firebase/test/content.rules.test.ts`) | Yes (CI run [`31614601637`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31614601637), JDK 21) | Passing |
+| Cloud Functions integration test (`functions/test/emulator/publishing.functions.test.ts`) | Yes (CI run [`31614601637`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31614601637), JDK 21) | Passing |
 
-The two emulator-dependent rows above have not yet been proven green by
-CI the way the Foundation Verification suites have — that CI run has not
-been dispatched as of this writing. Do not treat their clean type-check
-as equivalent to a passing test; see the milestone report for whether a
-CI run against them has since landed.
+All rows now proven green by real execution — CI run `31614601637` (all
+three jobs) is the run that reflects the `--runInBand` fix documented
+above; the two emulator-dependent rows were red on the prior run
+(`31613980326`) for the cross-file-race reason explained there, not
+because of anything wrong with the publishing workflow logic itself.
 
 ### Bug found by CI execution: a fifth one, same category as before
 
@@ -479,8 +479,9 @@ rules tests, and for the identical underlying reason: these are
 integration tests against one shared emulator instance, not unit tests
 with isolated state, so cross-file concurrency was never actually safe
 here — it simply had nothing to collide with until a second file
-existed. Not yet re-verified by a subsequent CI run as of this writing;
-see the milestone report.
+existed. **Re-verified by CI run
+[`31614601637`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31614601637)**
+— all three jobs green, including both previously-failing files.
 
 ## Traceability
 

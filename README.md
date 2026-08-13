@@ -10,11 +10,11 @@ full conflict log and locked decisions, and
 [`docs/architecture/repository-structure.md`](docs/architecture/repository-structure.md)
 for the package layout rationale.
 
-**Status: Phase 1 Foundation (identity & security) verified green in CI
-(JDK 21, emulator-backed), and Phase 1 — CMS Core's first component,
-`feature_publishing` (the shared publishing-workflow engine), is
-code-complete on top of it.** No real Firebase project is connected yet —
-everything below runs against the local Emulator Suite. See
+**Status: Phase 1 Foundation (identity & security) and Phase 1 — CMS
+Core's first component, `feature_publishing` (the shared
+publishing-workflow engine), are both code-complete and verified green
+in CI (JDK 21, emulator-backed).** No real Firebase project is connected
+yet — everything below runs against the local Emulator Suite. See
 [`docs/architecture/environments.md`](docs/architecture/environments.md)
 for how the real dev/staging/prod projects get wired in later, and
 [`docs/architecture/decisions.md`](docs/architecture/decisions.md)'s
@@ -158,14 +158,16 @@ npm test
 
 These need JDK 21+; JDK 21 was not installed in this development
 environment (by explicit instruction), so they were **authored and
-statically type-checked (`tsc --noEmit`) but not executed locally.** The
-Phase 1 Foundation suites (auth callables, Firestore/Storage rules,
-disabled-account sign-in) *have* since been run for real in CI — see
-`docs/architecture/decisions.md`'s "Foundation Verification: final CI
-result". The Phase 1 CMS Core suites (`content.rules.test.ts`,
-`publishing.functions.test.ts`) have not yet had a CI run against them —
-see that doc's "Phase 1 — CMS Core: `feature_publishing`" section for
-which is which. Run them yourself once a JDK 21+ is available:
+statically type-checked (`tsc --noEmit`) locally, then run for real in
+CI** (GitHub Actions installs JDK 21). All of them — Phase 1 Foundation
+(auth callables, Firestore/Storage rules, disabled-account sign-in) and
+Phase 1 CMS Core (`content.rules.test.ts`,
+`publishing.functions.test.ts`) — are green as of CI run
+[`31614601637`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31614601637).
+See `docs/architecture/decisions.md`'s "Foundation Verification: final CI
+result" and "Phase 1 — CMS Core: `feature_publishing`" sections for the
+full history, including a cross-file test-isolation bug CI caught and
+its fix. Run them yourself once a JDK 21+ is available:
 
 ```bash
 # Cloud Functions callables (createUser, setUserRole, setUserStatus,
@@ -188,7 +190,7 @@ latest run for the actual pass/fail signal.
 |---|---|---|
 | 0 — Scaffolding | Workspace, packages, emulator config, CI, docs | This README's commands succeed; no real Firebase project needed — **done** |
 | 1 — Foundation | `feature_identity` (email/password auth, custom claims, SRS §3 role matrix, forced first-login change, admin user management, role-based Firestore/Storage rules for `users`/`auditLogs`) — **done, verified in CI**. Still open: the real dev/staging/prod Firebase projects (not created — out of this milestone's scope by explicit instruction), design tokens finalization | Dart + Cloud Functions unit tests pass (done, 141/141); emulator-based auth/role/rules tests pass in CI, run [`31610954681`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31610954681) — **all green** |
-| 2 — CMS Core | `feature_publishing` shared workflow engine (states/transitions/role enforcement/scheduling foundation/audit) — **domain, Cloud Functions and rules code-complete**, no presentation layer yet. Remaining: `feature_pages` page builder + approved section templates, `feature_media`, `feature_settings`, `feature_audit` viewer UI, recycle bin | SRS CMS-01–CMS-15 pass end-to-end with role matrix enforced; `feature_publishing`'s own suites: Dart 39/39 + Cloud Functions unit 107/107 pass locally, emulator-based `content` rules + `transitionContent`/`createDraft` tests authored and type-checked, **not yet run in CI** |
+| 2 — CMS Core | `feature_publishing` shared workflow engine (states/transitions/role enforcement/scheduling foundation/audit) — **domain, Cloud Functions and rules code-complete, verified in CI**, no presentation layer yet. Remaining: `feature_pages` page builder + approved section templates, `feature_media`, `feature_settings`, `feature_audit` viewer UI, recycle bin | SRS CMS-01–CMS-15 pass end-to-end with role matrix enforced; `feature_publishing`'s own suites: Dart 39/39 + Cloud Functions unit 107/107 pass locally, emulator-based `content` rules + `transitionContent`/`createDraft` tests pass in CI, run [`31614601637`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31614601637) — **all green** |
 | 3 — Public Website | All SRS WEB-01–WEB-15 routes incl. Events, Team, Documents, Admissions, FAQs; global search; SEO/sitemap/redirects | WEB acceptance criteria met; first real Lighthouse/CWV baseline |
 | 4 — Enquiry Management | `feature_enquiries` full ENQ-01–07 pipeline | ENQ criteria pass with audit entries; App Check + rate-limit verified |
 | 5 — Trust & Hardening | Legal/policy pages + cookie consent (LEG-01–05), accessibility/performance tuning, backup/restore drill | SRS NFR-01–12 targets met; SRS §14 checklist closed |
