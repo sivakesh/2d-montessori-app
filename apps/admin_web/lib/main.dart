@@ -4,16 +4,34 @@ import 'package:feature_pages/feature_pages.dart';
 import 'package:firebase_adapters/firebase_adapters.dart';
 import 'package:flutter/material.dart';
 
-/// Admin/CMS entrypoint. Bootstraps against the local Firebase Emulator
-/// Suite via [demoEmulatorFirebaseOptions] until the real dev/staging/prod
-/// projects exist — see docs/architecture/environments.md.
+/// Local/emulator entrypoint (`flutter run`/`flutter build web` with no
+/// `-t` override default to this file) — always boots against the local
+/// Firebase Emulator Suite via [demoEmulatorFirebaseOptions].
+/// Environment-selected entrypoints (`main_dev.dart`, and
+/// `main_staging.dart`/`main_prod.dart` once those projects exist) call
+/// the same [bootstrapAndRunAdminWebApp] with a real project's generated
+/// options and `useEmulators: false` instead of duplicating the
+/// bootstrap/repository-wiring logic — see `main_dev.dart`.
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  await bootstrapFirebase(
+  await bootstrapAndRunAdminWebApp(
     options: demoEmulatorFirebaseOptions,
     useEmulators: true,
   );
+}
+
+/// Bootstraps Firebase against [options] (the real backend when
+/// [useEmulators] is `false`, or the local Emulator Suite when `true`),
+/// wires up every repository/controller, and runs [AdminWebApp] — the
+/// one place this wiring is written, so every entrypoint stays a thin,
+/// environment-specific one-liner instead of a second copy that could
+/// drift out of sync.
+Future<void> bootstrapAndRunAdminWebApp({
+  required FirebaseOptions options,
+  required bool useEmulators,
+}) async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await bootstrapFirebase(options: options, useEmulators: useEmulators);
 
   final authRepository = FirebaseAuthRepository(
     auth: FirebaseAuth.instance,

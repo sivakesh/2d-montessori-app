@@ -58,6 +58,11 @@ config/env/*.json
 # docs/architecture/environments.md.
 **/lib/firebase_options*.dart
 !**/lib/firebase_options*.dart.template
+# FlutterFire CLI's own per-app bookkeeping file (which options file maps
+# to which Firebase Web App id) — same generated-artifact policy as
+# firebase_options*.dart above, not the root /firebase.json (that one,
+# the actual Hosting/deploy config, IS tracked).
+apps/*/firebase.json
 .firebaserc
 !.firebaserc.template
 firebase-debug.log

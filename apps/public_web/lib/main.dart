@@ -5,18 +5,35 @@ import 'package:flutter/material.dart';
 import 'src/page_by_slug_screen.dart';
 import 'src/url_strategy.dart';
 
-/// Public site entrypoint. Today this always bootstraps against the local
+/// Local/emulator entrypoint (`flutter run`/`flutter build web` with no
+/// `-t` override default to this file) — always boots against the local
 /// Firebase Emulator Suite using the safe `demo-` project (see
-/// [demoEmulatorFirebaseOptions]) — there is no real dev/staging/prod
-/// Firebase project wired up yet. Once those projects exist, Phase 1+
-/// replaces this with environment-selected entrypoints that load the
-/// generated `firebase_options_<env>.dart` files and pass
-/// `useEmulators: false`; see docs/architecture/environments.md.
+/// [demoEmulatorFirebaseOptions]). Environment-selected entrypoints
+/// (`main_dev.dart`, and `main_staging.dart`/`main_prod.dart` once those
+/// projects exist) call the same [bootstrapAndRunPublicWebApp] with a
+/// real project's generated options and `useEmulators: false` instead of
+/// duplicating the bootstrap/wiring logic — see `main_dev.dart`.
 ///
 /// No authentication wiring lives here: public visitors never sign in
 /// (SRS — "Public visitor" is not an account), so `feature_identity` is
 /// deliberately not a dependency of this app.
 Future<void> main() async {
+  await bootstrapAndRunPublicWebApp(
+    options: demoEmulatorFirebaseOptions,
+    useEmulators: true,
+  );
+}
+
+/// Bootstraps Firebase against [options] (the real backend when
+/// [useEmulators] is `false`, or the local Emulator Suite when `true`)
+/// and runs [PublicWebApp] — the one place this wiring is written, so
+/// every entrypoint (`main.dart`, `main_dev.dart`, ...) stays a thin,
+/// environment-specific one-liner instead of a second copy of this
+/// repository construction that could drift out of sync.
+Future<void> bootstrapAndRunPublicWebApp({
+  required FirebaseOptions options,
+  required bool useEmulators,
+}) async {
   WidgetsFlutterBinding.ensureInitialized();
   // Real (`/slug`) URLs instead of Flutter's default `#/slug` hash
   // routes — SRS/PRD both require real, bookmarkable, crawlable public
@@ -25,10 +42,7 @@ Future<void> main() async {
   // limitations, stated explicitly rather than assumed away).
   configureUrlStrategy();
 
-  await bootstrapFirebase(
-    options: demoEmulatorFirebaseOptions,
-    useEmulators: true,
-  );
+  await bootstrapFirebase(options: options, useEmulators: useEmulators);
 
   final publicPagesRepository = FirestorePublicPagesRepository(
     firestore: FirebaseFirestore.instance,
