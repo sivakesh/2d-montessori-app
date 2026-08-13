@@ -767,6 +767,39 @@ stated plainly so "scheduled publishing" is never reported as fully
 working when only the code that would make it work is: it is complete
 and verified; it is not yet running.
 
+### Bug found by CI execution: `undefined` inside a Firestore `update()` array payload
+
+The first CI run against the `feature_pages` commit failed
+`updatePageContent`'s tests with: `Cannot use "undefined" as a Firestore
+value (found in field "sections.0.heading")`. Root cause, read directly
+from the failure rather than guessed: `sections.ts`'s per-section-type
+builders (and `validateSeo`'s `title`/`metaDescription`/`canonicalUrl`/
+`social.*`) use `optionalStr(value)`, which returns `undefined` for an
+absent optional field (e.g. a `RichTextSection` with no `heading`) — and
+that `undefined` was included as an explicit object key
+(`{ heading: undefined, body: ... }`), not omitted. The Admin SDK's
+`Transaction.update()` rejects `undefined` anywhere in its payload,
+including nested inside an array of objects, which is exactly what
+`updatePageContent.ts` passes for `sections`. `tsc --noEmit` had no way
+to catch this: `heading: undefined` is a perfectly valid value for a
+TypeScript-optional `heading?: string` field: not a type error, purely a
+Firestore Admin SDK runtime rule. Every test in
+`pages.functions.test.ts` that called `updatePageContent` with a section
+lacking an optional field failed, including the slug-uniqueness-race
+test — its "expected exactly one to succeed" assertion actually failed
+for a different reason (both calls threw immediately on the `undefined`
+value before ever reaching the slug-conflict check), a reminder that a
+cascading failure can look like it's testing the thing it's named for
+when it isn't, until you read the actual stack trace.
+
+**Fix:** `stripUndefinedDeep` (`functions/src/pages/
+stripUndefinedDeep.ts`) recursively removes `undefined`-valued keys from
+`validatePageContent`'s return value — the single choke point every
+Pages content write flows through — rather than hand-fixing each
+section-type builder's optional-field handling individually. Re-verified
+by a subsequent CI run; see the milestone report for that run's actual
+result.
+
 ### Test execution status (feature_pages)
 
 | Suite | Run in this environment? | Result |

@@ -8,6 +8,7 @@
 import { HttpsError } from 'firebase-functions/v2/https';
 
 import { validatePageSections } from './sections';
+import { stripUndefinedDeep } from './stripUndefinedDeep';
 
 const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const PAGE_TYPES = ['standard', 'collectionLanding'] as const;
@@ -101,9 +102,19 @@ export interface ValidatedPageContent {
   showInNavigation: boolean;
 }
 
-/** Validates the full editable-content payload `pagesFns-updatePageContent` accepts. */
+/**
+ * Validates the full editable-content payload `pagesFns-updatePageContent`
+ * accepts. Wrapped in `stripUndefinedDeep` because several of the
+ * per-field validators above (`validateSeo`'s `title`/`metaDescription`/
+ * `canonicalUrl`/`social.*`, every section builder in `sections.ts` for
+ * its omitted optional fields) legitimately return `undefined` for an
+ * absent optional value — which the Firestore Admin SDK's
+ * `Transaction.update()` rejects anywhere in the payload, including
+ * nested inside a `sections` array. See `stripUndefinedDeep`'s own doc
+ * comment.
+ */
 export function validatePageContent(data: Record<string, unknown>): ValidatedPageContent {
-  return {
+  return stripUndefinedDeep({
     title: validatePageTitle(data.title),
     slug: validateSlugFormat(data.slug),
     summary: validateSummary(data.summary),
@@ -113,5 +124,5 @@ export function validatePageContent(data: Record<string, unknown>): ValidatedPag
     seo: validateSeo(data.seo),
     navigationLabel: optionalStr(data.navigationLabel) ?? null,
     showInNavigation: data.showInNavigation === true,
-  };
+  });
 }
