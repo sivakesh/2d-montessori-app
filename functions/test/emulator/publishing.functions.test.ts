@@ -278,25 +278,32 @@ describe('transitionContent — the full workflow', () => {
     expect(auditEntries.some((e) => e.eventType === 'update' && e.actorId === publisherUid)).toBe(true);
   });
 
-  it('never applies two conflicting concurrent transitions from the same status to the same content', async () => {
+  it('never applies the same concurrent transition twice to the same content', async () => {
     await transitionContent.run(requestAs(editorUid, 'editor', { contentId, action: 'submitForReview' }));
 
-    const [approveResult, archiveResult] = await Promise.allSettled([
+    const [firstResult, secondResult] = await Promise.allSettled([
       transitionContent.run(requestAs(publisherUid, 'publisher', { contentId, action: 'approve' })),
-      transitionContent.run(requestAs(superAdminUid, 'superAdmin', { contentId, action: 'archive' })),
+      transitionContent.run(requestAs(superAdminUid, 'superAdmin', { contentId, action: 'approve' })),
     ]);
 
-    // Both `approve` and `archive` are valid edges out of `inReview`, but
-    // only one can win: the Firestore transaction in applyTransition.ts
-    // reads the content doc's current status before writing, so whichever
-    // commits first moves it out of `inReview`; the second re-reads on
-    // retry, finds the edge no longer exists from the new status, and is
-    // rejected with `failed-precondition` rather than silently applying.
-    const statuses = [approveResult.status, archiveResult.status];
+    // Two callers race the *same* action from the same status. Racing two
+    // *different* actions here (e.g. `approve` and `archive`) is not a
+    // valid test of this guarantee: `archive` also has an edge from
+    // `approved` (approved -> archive -> archived), so if `approve` wins
+    // first, a retried `archive` call can legitimately find that new edge
+    // and succeed too — correct transactional-retry behavior, not a race
+    // bug, but it makes "exactly one succeeds" nondeterministic depending
+    // on commit order for that action pair (found by CI: this test used to
+    // race approve/archive and flaked exactly this way). `approve` has
+    // only one edge in the whole table (inReview -> approved), so once
+    // either caller's transaction commits, the other's retry is
+    // guaranteed to find no valid edge from `approved` and fail — this
+    // pair is deterministic regardless of which one wins.
+    const statuses = [firstResult.status, secondResult.status];
     expect(statuses.filter((s) => s === 'fulfilled')).toHaveLength(1);
     expect(statuses.filter((s) => s === 'rejected')).toHaveLength(1);
 
     const doc = await db.collection('content').doc(contentId).get();
-    expect(['approved', 'archived']).toContain(doc.data()?.status);
+    expect(doc.data()?.status).toBe('approved');
   });
 });

@@ -796,9 +796,50 @@ when it isn't, until you read the actual stack trace.
 stripUndefinedDeep.ts`) recursively removes `undefined`-valued keys from
 `validatePageContent`'s return value — the single choke point every
 Pages content write flows through — rather than hand-fixing each
-section-type builder's optional-field handling individually. Re-verified
-by a subsequent CI run; see the milestone report for that run's actual
-result.
+section-type builder's optional-field handling individually.
+
+### Bug found by CI execution: a pre-existing flaky assumption in `feature_publishing`'s own concurrency test
+
+The next CI run (after the `stripUndefinedDeep` fix) failed a test this
+milestone did not touch: `publishing.functions.test.ts`'s "never applies
+two conflicting concurrent transitions from the same status to the same
+content", which raced `approve` and `archive` from `inReview` and
+asserted exactly one could ever succeed. It failed with both fulfilled.
+
+Root cause, worked out from `PublishingStateMachine.transitions`, not
+guessed: `archive` has an edge from **both** `inReview` *and* `approved`
+(`approved -> archive -> archived` is a separate, valid edge in the same
+table). If `approve`'s transaction commits first (`inReview ->
+approved`), Firestore's automatic transaction retry re-runs `archive`'s
+transaction function, which re-reads the *new* status, finds `approved ->
+archive` is a real edge, and legitimately succeeds — correct
+transactional-retry behavior, not a bug in `applyTransition.ts`. If
+`archive` commits first instead (`inReview -> archived`), `approve`'s
+retry finds no edge from `archived` and correctly fails. Which outcome
+happens is decided by which concurrent request's transaction commits
+first — effectively random under `Promise.allSettled` — so the test's
+premise ("racing two *different* valid actions from the same status,
+exactly one can ever succeed") was never actually guaranteed by the
+engine for this specific action pair; it had just not been observed
+failing in earlier CI runs by chance of timing. Checking every pairwise
+combination of `inReview`'s three outbound actions
+(`approve`/`reject`/`archive`) confirms this isn't fixable by picking a
+different pair — each pair has at least one commit order where the
+loser's retry finds a legitimate second edge, because `archive` and
+`reject` both converge from multiple source statuses by design.
+
+**Fix:** changed the test to race two concurrent calls of the **same**
+action (`approve` twice, from two different privileged callers) instead
+of two different actions. `approve` has exactly one edge in the entire
+table, so once either transaction commits, the other's retry is
+guaranteed to find no valid edge and fail, regardless of commit order —
+a deterministic test of the same underlying guarantee (no concurrent
+transitions from a state that only supports one), without relying on an
+action pair that happens not to reconverge. Not a change to
+`applyTransition.ts` or any other production logic — the engine's
+behavior was correct throughout; only the test's premise was wrong.
+Re-verified by a subsequent CI run; see the milestone report for that
+run's actual result.
 
 ### Test execution status (feature_pages)
 
