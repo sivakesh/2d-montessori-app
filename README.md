@@ -10,16 +10,14 @@ full conflict log and locked decisions, and
 [`docs/architecture/repository-structure.md`](docs/architecture/repository-structure.md)
 for the package layout rationale.
 
-**Status: Phase 1 Foundation (identity & security) and Phase 1 — CMS
-Core's `feature_publishing` (shared workflow engine) are code-complete
-and verified green in CI (JDK 21, emulator-backed). `feature_pages` (the
-first complete CMS content type — creation, review, approval,
-publishing, scheduling and public rendering) is code-complete and
-passing locally; CI verification is in progress — see "Testing" below
-for exactly which suites have and haven't been proven green yet.** No
-real Firebase project is connected yet, and nothing in this repository
-has been deployed anywhere — everything below runs against the local
-Emulator Suite. See
+**Status: Phase 1 Foundation (identity & security), Phase 1 — CMS
+Core's `feature_publishing` (shared workflow engine) and `feature_pages`
+(the first complete CMS content type — creation, review, approval,
+publishing, scheduling and public rendering) are all code-complete and
+verified green in CI (JDK 21, emulator-backed).** No real Firebase
+project is connected yet, and nothing in this repository has been
+deployed anywhere — everything below runs against the local Emulator
+Suite. See
 [`docs/architecture/environments.md`](docs/architecture/environments.md)
 for how the real dev/staging/prod projects get wired in later, and
 [`docs/architecture/decisions.md`](docs/architecture/decisions.md)'s
@@ -176,11 +174,13 @@ Phase 1 CMS Core / `feature_publishing` (`content.rules.test.ts`,
 [`31614601637`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31614601637).
 Phase 1 CMS Core / `feature_pages`'s emulator suites
 (`content.rules.test.ts`'s new `revisions` coverage,
-`pages.functions.test.ts`, `scheduling.functions.test.ts`) are authored
-and type-checked but — as of this paragraph being written — not yet
-confirmed green by a CI run; see `docs/architecture/decisions.md`'s
-"Phase 1 — CMS Core: `feature_pages`" section for the current status.
-Run them yourself once a JDK 21+ is available:
+`pages.functions.test.ts`, `scheduling.functions.test.ts`) are green as
+of CI run
+[`31674647530`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31674647530)
+— see `docs/architecture/decisions.md`'s "Phase 1 — CMS Core:
+`feature_pages`" section for the full history, including two real bugs
+CI caught and their fixes. Run them yourself once a JDK 21+ is
+available:
 
 ```bash
 # Cloud Functions callables (createUser, setUserRole, setUserStatus,
@@ -204,7 +204,7 @@ latest run for the actual pass/fail signal.
 |---|---|---|
 | 0 — Scaffolding | Workspace, packages, emulator config, CI, docs | This README's commands succeed; no real Firebase project needed — **done** |
 | 1 — Foundation | `feature_identity` (email/password auth, custom claims, SRS §3 role matrix, forced first-login change, admin user management, role-based Firestore/Storage rules for `users`/`auditLogs`) — **done, verified in CI**. Still open: the real dev/staging/prod Firebase projects (not created — out of this milestone's scope by explicit instruction), design tokens finalization | Dart + Cloud Functions unit tests pass (done, 141/141); emulator-based auth/role/rules tests pass in CI, run [`31610954681`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31610954681) — **all green** |
-| 2 — CMS Core | `feature_publishing` shared workflow engine — **code-complete, verified in CI**. `feature_pages` (first complete CMS content type: creation/review/approval/publish/schedule/public rendering, 9 approved section types, revision history, scheduled-publish executor) — **code-complete, passing locally, CI verification in progress**. Remaining: `feature_media`, `feature_settings`, `feature_audit` viewer UI, recycle bin | SRS CMS-01–CMS-15 pass end-to-end with role matrix enforced; `feature_publishing` Dart 39/39 + Cloud Functions unit 107/107, emulator suites all green in CI run [`31614601637`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31614601637); `feature_pages` Dart 54/54 + Cloud Functions unit 160/160 (total, incl. publishing) pass locally, emulator suites authored/type-checked, CI result pending — see decisions.md |
+| 2 — CMS Core | `feature_publishing` shared workflow engine — **code-complete, verified in CI**. `feature_pages` (first complete CMS content type: creation/review/approval/publish/schedule/public rendering, 9 approved section types, revision history, scheduled-publish executor) — **code-complete, verified in CI**. Remaining: `feature_media`, `feature_settings`, `feature_audit` viewer UI, recycle bin | SRS CMS-01–CMS-15 pass end-to-end with role matrix enforced; `feature_publishing` Dart 39/39 + Cloud Functions unit 107/107, emulator suites all green in CI run [`31614601637`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31614601637); `feature_pages` Dart 54/54 + Cloud Functions unit 160/160 (total, incl. publishing) pass locally, emulator suites (Pages callables, scheduling executor, `content`/`revisions` rules) all green in CI run [`31674647530`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31674647530) — **all green** |
 | 3 — Public Website | All SRS WEB-01–WEB-15 routes incl. Events, Team, Documents, Admissions, FAQs; global search; SEO/sitemap/redirects | WEB acceptance criteria met; first real Lighthouse/CWV baseline |
 | 4 — Enquiry Management | `feature_enquiries` full ENQ-01–07 pipeline | ENQ criteria pass with audit entries; App Check + rate-limit verified |
 | 5 — Trust & Hardening | Legal/policy pages + cookie consent (LEG-01–05), accessibility/performance tuning, backup/restore drill | SRS NFR-01–12 targets met; SRS §14 checklist closed |

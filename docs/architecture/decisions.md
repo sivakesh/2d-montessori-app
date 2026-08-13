@@ -849,15 +849,16 @@ run's actual result.
 | `apps/admin_web`, `apps/public_web` widget tests | Yes (local) | Passing (admin_web 1/1, public_web 2/2) |
 | `feature_identity` (`AdminShell`/`AuthGate` regression from the `AdminNavEntry` refactor) | Yes (local) | 47/47 passing |
 | Cloud Functions unit tests (`functions/test/pages.*.test.ts`) | Yes (local) | Included in the 160/160 total (was 107; +53 for Pages) |
-| Firestore rules tests — `content`/`revisions` (`firebase/test/content.rules.test.ts`) | **No — needs CI** | Authored, type-checked clean; not executed locally |
-| Cloud Functions integration tests — Pages callables (`functions/test/emulator/pages.functions.test.ts`) | **No — needs CI** | Authored, type-checked clean (strict compiler options matching `tsconfig.json`); not executed locally |
-| Cloud Functions integration tests — scheduling executor (`functions/test/emulator/scheduling.functions.test.ts`) | **No — needs CI** | Authored, type-checked clean; not executed locally |
+| Firestore rules tests — `content`/`revisions` (`firebase/test/content.rules.test.ts`) | Yes (CI run [`31674647530`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31674647530), JDK 21) | Passing |
+| Cloud Functions integration tests — Pages callables (`functions/test/emulator/pages.functions.test.ts`) | Yes (CI run [`31674647530`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31674647530), JDK 21) | Passing |
+| Cloud Functions integration tests — scheduling executor (`functions/test/emulator/scheduling.functions.test.ts`) | Yes (CI run [`31674647530`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31674647530), JDK 21) | Passing |
 
-Every emulator-dependent row above is authored and statically verified
-only, per this environment's JDK constraint (JDK 21 not installed, per
-standing instruction) — do not treat that as equivalent to a passing
-test; see the milestone report for whether a CI run against them has
-since landed.
+Every emulator-dependent row above (this environment has no JDK 21, per
+standing instruction) was proven by real execution in CI, not merely
+type-checked — run
+[`31674647530`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31674647530),
+all three jobs green, is the run that reflects both fixes documented
+above (`stripUndefinedDeep` and the deterministic concurrency race).
 
 ### Deployment boundary
 
