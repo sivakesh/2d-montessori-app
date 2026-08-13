@@ -1,0 +1,56 @@
+// TEMPLATE — not compiled (this file is .dart.template, not .dart).
+//
+// The real `twod-montessori-dev` Firebase project exists as of Phase 1
+// CMS Core deployment prep. Generate the real file locally (this
+// requires an authenticated `firebase login`/`flutterfire` session, which
+// only you run — see docs/architecture/environments.md and the
+// deployment-readiness report for the full sequence):
+//
+//   flutterfire configure \
+//     --project=twod-montessori-dev \
+//     --out=apps/public_web/lib/firebase_options_dev.dart \
+//     --platforms=web
+//
+// When prompted for a Firebase Web App, create/select a **distinct** app
+// nickname for the public site (e.g. "2D Montessori — Public (dev)") —
+// not the same web app registration used for admin_web's own
+// firebase_options_dev.dart. Both apps share the same `projectId`
+// (`twod-montessori-dev`) but must have their own `appId`/`apiKey`, so
+// that Firebase Console usage/analytics/App Check can distinguish public
+// visitor traffic from admin traffic.
+//
+// `lib/firebase_options_dev.dart` is gitignored (see /.gitignore)
+// because its contents are project-specific — it is not a secret
+// (Firebase web config is not a credential; it is safe to ship inside a
+// public web bundle, which is exactly what happens on every deploy), but
+// it must not be fabricated ahead of time. The generated file will look
+// like this:
+//
+// import 'package:firebase_core/firebase_core.dart';
+//
+// class DefaultFirebaseOptionsDev {
+//   static const FirebaseOptions web = FirebaseOptions(
+//     apiKey: '<generated>',
+//     appId: '<generated>',
+//     messagingSenderId: '<generated>',
+//     projectId: 'twod-montessori-dev',
+//     authDomain: 'twod-montessori-dev.firebaseapp.com',
+//     storageBucket: 'twod-montessori-dev.appspot.com',
+//   );
+// }
+//
+// A `main_dev.dart` entrypoint (added alongside the real generated
+// options file, not committed until it can actually compile) then calls:
+//
+//   import 'firebase_options_dev.dart';
+//   ...
+//   await bootstrapFirebase(
+//     options: DefaultFirebaseOptionsDev.web,
+//     useEmulators: false,
+//   );
+//
+// `useEmulators: false` is what actually points this build at the real
+// `twod-montessori-dev` backend instead of the local Emulator Suite —
+// see packages/firebase_adapters/lib/src/firebase_bootstrap.dart's own
+// doc comment for why that flag is independent of which project
+// `options` selects.

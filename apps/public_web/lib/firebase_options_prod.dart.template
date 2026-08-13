@@ -31,5 +31,5 @@
 //
 //   bootstrapFirebase(
 //     options: DefaultFirebaseOptionsProd.web,
-//     environment: AppEnvironment.prod,
+//     useEmulators: false,
 //   );

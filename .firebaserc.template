@@ -1,16 +1,28 @@
 {
-  "//": "Copy this file to .firebaserc (gitignored) once the three Firebase projects exist. See docs/architecture/environments.md.",
+  "//": "Copy this file to .firebaserc (gitignored — see /.gitignore) before running any `firebase` command. `dev` is filled in with the real, confirmed twod-montessori-dev project (Phase 1 CMS Core deployment prep); staging/prod are still placeholders until those projects are created. See docs/architecture/environments.md.",
   "projects": {
-    "dev": "REPLACE_WITH_DEV_PROJECT_ID",
+    "dev": "twod-montessori-dev",
     "staging": "REPLACE_WITH_STAGING_PROJECT_ID",
     "prod": "REPLACE_WITH_PROD_PROJECT_ID",
-    "default": "REPLACE_WITH_DEV_PROJECT_ID"
+    "default": "twod-montessori-dev"
   },
   "targets": {
-    "REPLACE_WITH_DEV_PROJECT_ID": {
+    "twod-montessori-dev": {
       "hosting": {
-        "public": ["REPLACE_WITH_DEV_PUBLIC_SITE_ID"],
-        "admin": ["REPLACE_WITH_DEV_ADMIN_SITE_ID"]
+        "public": ["twod-montessori-dev"],
+        "admin": ["twod-montessori-admin-dev"]
+      }
+    },
+    "REPLACE_WITH_STAGING_PROJECT_ID": {
+      "hosting": {
+        "public": ["REPLACE_WITH_STAGING_PUBLIC_SITE_ID"],
+        "admin": ["REPLACE_WITH_STAGING_ADMIN_SITE_ID"]
+      }
+    },
+    "REPLACE_WITH_PROD_PROJECT_ID": {
+      "hosting": {
+        "public": ["REPLACE_WITH_PROD_PUBLIC_SITE_ID"],
+        "admin": ["REPLACE_WITH_PROD_ADMIN_SITE_ID"]
       }
     }
   },

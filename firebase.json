@@ -19,13 +19,56 @@
       "target": "public",
       "public": "apps/public_web/build/web",
       "ignore": ["firebase.json", "**/.*"],
-      "rewrites": [{ "source": "**", "destination": "/index.html" }]
+      "rewrites": [{ "source": "**", "destination": "/index.html" }],
+      "headers": [
+        {
+          "source": "/index.html",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "/flutter_service_worker.js",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "/version.json",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "**/*.@(js|css|png|jpg|jpeg|gif|svg|webp|woff|woff2|ttf|otf|ico|json)",
+          "headers": [{ "key": "Cache-Control", "value": "public, max-age=3600" }]
+        }
+      ]
     },
     {
       "target": "admin",
       "public": "apps/admin_web/build/web",
       "ignore": ["firebase.json", "**/.*"],
-      "rewrites": [{ "source": "**", "destination": "/index.html" }]
+      "rewrites": [{ "source": "**", "destination": "/index.html" }],
+      "headers": [
+        {
+          "source": "/index.html",
+          "headers": [
+            { "key": "Cache-Control", "value": "no-cache" },
+            { "key": "X-Robots-Tag", "value": "noindex, nofollow" }
+          ]
+        },
+        {
+          "source": "/flutter_service_worker.js",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "/version.json",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "**/*.@(js|css|png|jpg|jpeg|gif|svg|webp|woff|woff2|ttf|otf|ico|json)",
+          "headers": [{ "key": "Cache-Control", "value": "public, max-age=3600" }]
+        },
+        {
+          "source": "**",
+          "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
+        }
+      ]
     }
   ],
   "emulators": {

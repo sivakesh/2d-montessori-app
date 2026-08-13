@@ -117,6 +117,27 @@ export async function runScheduledPublish(db: Firestore, now: Date = new Date())
   return { publishedContentIds, failedContentIds };
 }
 
-export const publishScheduledContent = onSchedule('every 5 minutes', async () => {
-  await runScheduledPublish(getFirestore());
-});
+/**
+ * SRS Technical Architecture: "Server-side scheduled jobs using
+ * Asia/Kolkata-aware timestamps." `timeZone` controls the wall-clock
+ * meaning of the schedule itself (so "every 5 minutes" ticks are
+ * evaluated in the school's own timezone, not the deploying engineer's
+ * or the default UTC) — independent of which GCP region the function's
+ * compute runs in. `retryConfig` gives Cloud Scheduler's own retry a
+ * bounded window on top of `runScheduledPublish`'s per-document
+ * idempotency: a transient failure of the whole invocation (not just one
+ * document) gets a few automatic retries before waiting for the next
+ * natural 5-minute tick, per NFR-06 ("remains visible and retryable
+ * without silent data loss").
+ */
+export const publishScheduledContent = onSchedule(
+  {
+    schedule: 'every 5 minutes',
+    timeZone: 'Asia/Kolkata',
+    retryCount: 3,
+    minBackoffSeconds: 30,
+  },
+  async () => {
+    await runScheduledPublish(getFirestore());
+  },
+);

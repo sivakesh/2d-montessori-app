@@ -12,7 +12,7 @@ Firebase infrastructure.
 | Tier | Real Firebase project? | Used for |
 |---|---|---|
 | local | No — `demo-montessori-2d` | Everyday development against emulators |
-| dev | Yes (to be created) | Shared preview/dev deployments |
+| dev | Yes — `twod-montessori-dev` (project id confirmed; deployment prep complete as of Phase 1 CMS Core — see "Bringing up Dev" below; not yet deployed) | Shared preview/dev deployments |
 | staging | Yes (to be created) | Production-equivalent rehearsal (PRD §17) |
 | prod | Yes (to be created) | Production |
 
@@ -42,10 +42,17 @@ first real project, below.
 1. Create the Firebase project in the console (or `firebase projects:create`).
 2. Enable Authentication (email/password), Firestore, Storage, Functions,
    Hosting and App Check for it.
-3. Copy `.firebaserc.template` to `.firebaserc` and replace the
+3. Create two Firebase Hosting **sites** within the project (Build →
+   Hosting → Add another site) — one for the public site, one for the
+   admin portal. A single project's default Hosting site is not reused
+   for either app deliberately, so the two can have independent domains/
+   access patterns later.
+4. Copy `.firebaserc.template` to `.firebaserc` and replace any remaining
    `REPLACE_WITH_*` placeholders with the real project ID(s) and Hosting
-   site IDs.
-4. Generate its Flutter options:
+   site IDs — `dev`'s values are already filled in (see below).
+5. Generate each app's Flutter options — **run this twice**, once per
+   app, creating a **distinct Firebase Web App registration** each time
+   (same project id, different `appId`/`apiKey`):
    ```bash
    flutterfire configure --project=<project-id> \
      --out=apps/public_web/lib/firebase_options_<env>.dart --platforms=web
@@ -53,10 +60,43 @@ first real project, below.
      --out=apps/admin_web/lib/firebase_options_<env>.dart --platforms=web
    ```
    Both generated files are gitignored (see `/.gitignore`) — they hold
-   project-specific, non-secret web config, not credentials.
-5. Add a `main_<env>.dart` entrypoint that imports the generated options
-   file and calls `bootstrapFirebase(options: ..., useEmulators: false)`.
-6. Deploy: `firebase deploy --project <env> --only firestore:rules,storage:rules,functions,hosting`.
+   project-specific, non-secret web config, not credentials. See
+   `apps/*/lib/firebase_options_<env>.dart.template` for the exact shape
+   each generated file will have.
+6. Add a `main_<env>.dart` entrypoint (not committed until the generated
+   options file it imports actually exists, so it never breaks
+   `flutter analyze`/CI for anyone who hasn't run step 5 yet) that calls
+   `bootstrapFirebase(options: ..., useEmulators: false)`.
+7. Deploy in the staged sequence documented in the milestone's deployment-
+   readiness report (rules/indexes first, then Functions, then Hosting) —
+   never everything in one unreviewed command.
+8. Bootstrap the first Super Admin with
+   `functions/scripts/bootstrap-real-super-admin.js` (see its own doc
+   comment) — never `scripts/seed-super-admin.js`, which is hardcoded to
+   the emulator-only `demo-montessori-2d` project and refuses (by
+   construction — it takes no `--project` flag) to target anything else.
+
+## Bringing up Dev specifically
+
+As of Phase 1 CMS Core deployment prep, the Dev project id and both
+Hosting site ids are confirmed and already filled in to
+`.firebaserc.template` and `firebase.json`:
+
+| Value | Confirmed as |
+|---|---|
+| Firebase project id | `twod-montessori-dev` |
+| Public Hosting site id | `twod-montessori-dev` |
+| Admin Hosting site id | `twod-montessori-admin-dev` |
+| Cloud Functions region | `us-central1` (default — explicitly confirmed, not left unconfigured) |
+| Scheduled-publish timezone | `Asia/Kolkata` (`functions/src/scheduling/publishScheduledContent.ts`) |
+
+What remains before Dev can actually be deployed to is entirely actions
+that require an authenticated Firebase/Google Cloud CLI session on your
+machine — `firebase login`, `flutterfire configure` against the real
+project, the actual `firebase deploy` commands, and running the Super
+Admin bootstrap script — none of which this repository preparation work
+performs. See the milestone's deployment-readiness report for the exact,
+staged command sequence.
 
 ## Secrets
 
