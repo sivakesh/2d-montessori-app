@@ -54,7 +54,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions web = FirebaseOptions(
     apiKey: 'AIzaSyCWOTSlSPNC0J9Tav8XkxOpFi5V3Wj7hTo',
-    appId: '1:504174226034:web:23060aaa9280b1bab030eb',
+    appId: '1:504174226034:web:970027a069bbe24ab030eb',
     messagingSenderId: '504174226034',
     projectId: 'twod-montessori-dev',
     authDomain: 'twod-montessori-dev.firebaseapp.com',
