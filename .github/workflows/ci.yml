@@ -70,6 +70,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Verify deploy package (entry point survives Firebase's deploy-ignore rules)
+        run: npm run verify:deploy-package
+
       - name: Test
         run: npm test
 
