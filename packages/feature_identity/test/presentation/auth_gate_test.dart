@@ -41,18 +41,44 @@ void main() {
     await userAdminRepository.dispose();
   });
 
-  Future<void> pumpGate(WidgetTester tester) async {
+  Future<void> pumpGate(
+    WidgetTester tester, {
+    List<AdminNavEntry> Function(AuthSession)? adminSections,
+  }) async {
     await tester.pumpWidget(
       MaterialApp(
         home: IdentityScope(
           controller: controller,
           authRepository: authRepository,
           userAdminRepository: userAdminRepository,
-          child: const AuthGate(),
+          child: AuthGate(adminSections: adminSections),
         ),
       ),
     );
   }
+
+  /// The same "Users" entry `apps/admin_web/lib/main.dart` builds — used
+  /// by the role-gated navigation tests below so they exercise the real
+  /// composition-root pattern (`AdminShell` itself no longer hardcodes
+  /// any section beyond Home; see `AdminNavEntry`'s doc comment).
+  List<AdminNavEntry> usersOnlySections(AuthSession session) => [
+    AdminNavEntry(
+      icon: Icons.people_outline,
+      label: 'Users',
+      visible: RolePermissionMatrix.hasFull(
+        session.role,
+        Capability.manageUsersAndRoles,
+      ),
+      builder: (_) => RoleGuardedSection(
+        role: session.role,
+        capability: Capability.manageUsersAndRoles,
+        builder: (_) => UserManagementScreen(
+          currentUid: session.uid,
+          actingRole: session.role,
+        ),
+      ),
+    ),
+  ];
 
   testWidgets('AuthStateUnknown shows a loading indicator', (tester) async {
     await pumpGate(tester);
@@ -147,7 +173,7 @@ void main() {
     testWidgets('Editor does not see the Users nav entry at all', (
       tester,
     ) async {
-      await pumpGate(tester);
+      await pumpGate(tester, adminSections: usersOnlySections);
       authRepository.emit(AuthStateSignedIn(_activeEditorSession));
       await tester.pump();
 
@@ -163,7 +189,7 @@ void main() {
     testWidgets(
       'Super Admin sees the Users nav entry and can open User Management (not Access Denied)',
       (tester) async {
-        await pumpGate(tester);
+        await pumpGate(tester, adminSections: usersOnlySections);
         authRepository.emit(AuthStateSignedIn(_activeSuperAdminSession));
         await tester.pump();
 
@@ -184,8 +210,12 @@ void main() {
         await tester.pump();
         await tester.pump();
 
+        // AdminShell's AppBar title is now the selected AdminNavEntry's
+        // own label ("Users") rather than a separately hardcoded string —
+        // see AdminNavEntry's doc comment for why AdminShell no longer
+        // hardcodes per-section titles at all.
         expect(find.text('Access denied'), findsNothing);
-        expect(find.widgetWithText(AppBar, 'User management'), findsOneWidget);
+        expect(find.widgetWithText(AppBar, 'Users'), findsOneWidget);
       },
     );
   });

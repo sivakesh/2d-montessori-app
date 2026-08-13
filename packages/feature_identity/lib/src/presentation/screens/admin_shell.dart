@@ -1,42 +1,55 @@
-import 'package:core_contracts/core_contracts.dart';
 import 'package:flutter/material.dart';
 
 import '../../domain/auth_session.dart';
 import '../identity_scope.dart';
-import '../widgets/role_guarded_section.dart';
-import 'user_management_screen.dart';
+import '../widgets/admin_nav_entry.dart';
 
-enum _AdminSection { home, users }
-
-/// The authenticated admin app shell. Phase 1 Foundation scope only:
-/// a Home placeholder and User Management — the rest of the CMS (pages,
-/// media, publishing, ...) is later phases, per the milestone boundary
-/// ("do not implement later CMS modules beyond the minimum interfaces or
-/// contracts needed for the identity and security foundation").
+/// The authenticated admin app shell — a Home placeholder plus whatever
+/// [additionalSections] the composition root (`apps/admin_web/lib/
+/// main.dart`) supplies (Users, Pages, ...). This widget is deliberately
+/// feature-agnostic: it renders a drawer + selected section body and
+/// nothing else, so adding a new admin section never requires editing
+/// `feature_identity` again — see `AdminNavEntry`'s doc comment for why.
 class AdminShell extends StatefulWidget {
-  const AdminShell({super.key, required this.session});
+  const AdminShell({
+    super.key,
+    required this.session,
+    this.additionalSections = const [],
+  });
 
   final AuthSession session;
+  final List<AdminNavEntry> additionalSections;
 
   @override
   State<AdminShell> createState() => _AdminShellState();
 }
 
 class _AdminShellState extends State<AdminShell> {
-  _AdminSection _section = _AdminSection.home;
+  /// Selection is tracked by label, not by [AdminNavEntry] object
+  /// identity — the composition root typically rebuilds a fresh list of
+  /// entries on every `AdminShell` rebuild, so comparing instances would
+  /// silently lose the selection on any unrelated rebuild. `null` means
+  /// Home. Labels are assumed unique across one shell's entries.
+  String? _selectedLabel;
 
   @override
   Widget build(BuildContext context) {
     final scope = IdentityScope.of(context);
     final session = widget.session;
-    final canManageUsers = RolePermissionMatrix.hasFull(
-      session.role,
-      Capability.manageUsersAndRoles,
-    );
+    final visibleSections = widget.additionalSections
+        .where((s) => s.visible)
+        .toList();
+    AdminNavEntry? selectedEntry;
+    for (final entry in visibleSections) {
+      if (entry.label == _selectedLabel) {
+        selectedEntry = entry;
+        break;
+      }
+    }
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_titleFor(_section)),
+        title: Text(selectedEntry?.label ?? '2D Montessori Admin'),
         actions: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -60,48 +73,30 @@ class _AdminShellState extends State<AdminShell> {
             ListTile(
               leading: const Icon(Icons.home_outlined),
               title: const Text('Home'),
-              selected: _section == _AdminSection.home,
+              selected: _selectedLabel == null,
               onTap: () {
-                setState(() => _section = _AdminSection.home);
+                setState(() => _selectedLabel = null);
                 Navigator.of(context).pop();
               },
             ),
-            // Hidden (not just disabled) for roles that can't use it — SRS
-            // §3 gives Editor/Publisher no user-management capability at
-            // all, so showing a permanently-disabled entry would be noise,
-            // not a real affordance. RoleGuardedSection below still
-            // re-checks this if the section is ever reachable another way.
-            if (canManageUsers)
+            for (final entry in visibleSections)
               ListTile(
-                leading: const Icon(Icons.people_outline),
-                title: const Text('Users'),
-                selected: _section == _AdminSection.users,
+                leading: Icon(entry.icon),
+                title: Text(entry.label),
+                selected: entry.label == _selectedLabel,
                 onTap: () {
-                  setState(() => _section = _AdminSection.users);
+                  setState(() => _selectedLabel = entry.label);
                   Navigator.of(context).pop();
                 },
               ),
           ],
         ),
       ),
-      body: switch (_section) {
-        _AdminSection.home => _HomePlaceholder(session: session),
-        _AdminSection.users => RoleGuardedSection(
-          role: session.role,
-          capability: Capability.manageUsersAndRoles,
-          builder: (_) => UserManagementScreen(
-            currentUid: session.uid,
-            actingRole: session.role,
-          ),
-        ),
-      },
+      body: selectedEntry == null
+          ? _HomePlaceholder(session: session)
+          : Builder(builder: selectedEntry.builder),
     );
   }
-
-  String _titleFor(_AdminSection section) => switch (section) {
-    _AdminSection.home => '2D Montessori Admin',
-    _AdminSection.users => 'User management',
-  };
 }
 
 class _HomePlaceholder extends StatelessWidget {
@@ -115,8 +110,7 @@ class _HomePlaceholder extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Text(
-          'Signed in as ${session.email} (${session.role.claimValue}).\n'
-          'Content modules (Pages, Media, Publishing, ...) land in Phase 2.',
+          'Signed in as ${session.email} (${session.role.claimValue}).',
           textAlign: TextAlign.center,
         ),
       ),

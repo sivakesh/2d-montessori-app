@@ -1,11 +1,17 @@
 rules_version = '2';
 
-// Deny-by-default (SRS NFR-05, PRD §13). Two rule groups are live:
+// Deny-by-default (SRS NFR-05, PRD §13). Three rule groups are live:
 //   1. Sanitized `published*`/`public*` read models — public read only.
-//   2. `users/{uid}` (Phase 1 Foundation, this milestone) — narrow,
-//      role-based read; NO client writes at all.
-// Everything else (pages, programs, enquiries, auditLogs, ...) stays
-// fully denied until the milestone that implements it — see
+//   2. `users/{uid}` (Phase 1 Foundation) — narrow, role-based read; NO
+//      client writes at all.
+//   3. `content/{contentId}` (Phase 1 CMS Core) — the shared publishing-
+//      workflow collection `feature_publishing`/`feature_pages` both
+//      write through; owner-or-active-Publisher/SuperAdmin read, NO
+//      client writes at all. Pages live here (`contentType == 'page'`),
+//      not in a separate `pages` collection — see
+//      docs/architecture/decisions.md "Pages storage" for why.
+// Everything else (programs, enquiries, auditLogs, ...) stays fully
+// denied until the milestone that implements it — see
 // docs/architecture/firestore-model.md for the target shape and
 // docs/architecture/decisions.md for what's deliberately still closed.
 //
@@ -95,8 +101,10 @@ service cloud.firestore {
     }
 
     // ---- content/{contentId}: SRS CMS-02, CMS-03 (Phase 1 — CMS Core) ----
-    // The publishing-workflow envelope feature_pages/feature_programs/etc.
-    // will extend — see docs/architecture/firestore-model.md. The owner
+    // The publishing-workflow envelope feature_pages now writes real
+    // Pages into (contentType == 'page'); feature_programs/etc. extend it
+    // the same way in later milestones — see
+    // docs/architecture/firestore-model.md. The owner
     // may always read their own draft (SRS §3 "Create/edit own drafts:
     // full" for every role); an active Publisher/Super Admin may read any
     // content item (SRS §3 "Edit all content: full"). Editor reading
@@ -116,6 +124,18 @@ service cloud.firestore {
       // transitions stay in history"). Same read access as the parent
       // content doc; no client writes.
       match /transitions/{transitionId} {
+        allow read: if request.auth != null
+          && (get(/databases/$(database)/documents/content/$(contentId)).data.ownerId == request.auth.uid
+            || isActivePublisherOrAbove());
+        allow write: if false;
+      }
+
+      // Content revision history (SRS CMS-06 "persist meaningful
+      // revisions... without erasing the audit trail" — Phase 1 CMS
+      // Core / feature_pages). Same read access and no-client-writes
+      // policy as `transitions/` above; every revision is written by
+      // functions/src/pages/{updatePageContent,restorePageRevision}.ts.
+      match /revisions/{revisionId} {
         allow read: if request.auth != null
           && (get(/databases/$(database)/documents/content/$(contentId)).data.ownerId == request.auth.uid
             || isActivePublisherOrAbove());

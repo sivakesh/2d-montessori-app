@@ -161,3 +161,54 @@ describe('content/{contentId}/transitions — immutable history', () => {
     );
   });
 });
+
+describe('content/{contentId}/revisions — Phase 1 CMS Core / feature_pages content history (SRS CMS-06)', () => {
+  it('allows the owner to read their page’s revision history', async () => {
+    await seedContentDoc('c1', { contentType: 'page', title: 'About', status: 'draft', ownerId: 'editor1' });
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, 'content', 'c1', 'revisions', 'r1'), { title: 'About', slug: 'about', actorId: 'editor1' });
+    });
+    const owner = testEnv.authenticatedContext('editor1', ACTIVE_EDITOR);
+    const db = owner.firestore();
+    await assertSucceeds(getDocs(collection(db, 'content', 'c1', 'revisions')));
+  });
+
+  it('allows an active Publisher to read revision history for a page they do not own', async () => {
+    await seedContentDoc('c1', { contentType: 'page', title: 'About', status: 'draft', ownerId: 'editor1' });
+    await seedUserDoc('pub1', { email: 'pub1@example.test', role: 'publisher', status: 'active' });
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'content', 'c1', 'revisions', 'r1'), { title: 'About', slug: 'about', actorId: 'editor1' });
+    });
+    const publisher = testEnv.authenticatedContext('pub1', ACTIVE_PUBLISHER);
+    await assertSucceeds(getDocs(collection(publisher.firestore(), 'content', 'c1', 'revisions')));
+  });
+
+  it('denies a non-owner Editor reading the revision history', async () => {
+    await seedContentDoc('c1', { contentType: 'page', title: 'About', status: 'draft', ownerId: 'editor1' });
+    const other = testEnv.authenticatedContext('editor2', { role: 'editor', status: 'active' });
+    await assertFails(getDocs(collection(other.firestore(), 'content', 'c1', 'revisions')));
+  });
+
+  it('denies a Publisher whose cached token is stale (token says active, Firestore says suspended)', async () => {
+    await seedContentDoc('c1', { contentType: 'page', title: 'About', status: 'draft', ownerId: 'editor1' });
+    await seedUserDoc('pub1', { email: 'pub1@example.test', role: 'publisher', status: 'suspended' });
+    const stalePublisher = testEnv.authenticatedContext('pub1', ACTIVE_PUBLISHER);
+    await assertFails(getDocs(collection(stalePublisher.firestore(), 'content', 'c1', 'revisions')));
+  });
+
+  it('denies any client write to the revision history, even from the owner', async () => {
+    await seedContentDoc('c1', { contentType: 'page', title: 'About', status: 'draft', ownerId: 'editor1' });
+    const owner = testEnv.authenticatedContext('editor1', ACTIVE_EDITOR);
+    await assertFails(setDoc(doc(owner.firestore(), 'content', 'c1', 'revisions', 'fake'), { title: 'Hacked' }));
+  });
+
+  it('denies an unauthenticated read of the revision history', async () => {
+    await seedContentDoc('c1', { contentType: 'page', title: 'About', status: 'draft', ownerId: 'editor1' });
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'content', 'c1', 'revisions', 'r1'), { title: 'About' });
+    });
+    const anon = testEnv.unauthenticatedContext();
+    await assertFails(getDocs(collection(anon.firestore(), 'content', 'c1', 'revisions')));
+  });
+});

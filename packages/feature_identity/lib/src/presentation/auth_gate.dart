@@ -8,6 +8,7 @@ import 'screens/forced_password_change_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/suspended_account_screen.dart';
 import 'screens/unprovisioned_account_screen.dart';
+import 'widgets/admin_nav_entry.dart';
 
 /// The admin app's single route-protection point (see the milestone
 /// requirement "Route protection for the Admin portal"). Every
@@ -15,7 +16,15 @@ import 'screens/unprovisioned_account_screen.dart';
 /// arm here — a new state added to `AuthState` without a matching arm is
 /// a compile error, not a silently-unprotected screen.
 class AuthGate extends StatelessWidget {
-  const AuthGate({super.key});
+  const AuthGate({super.key, this.adminSections});
+
+  /// Builds the admin shell's non-Home nav entries for a signed-in
+  /// [AuthSession] — supplied by the composition root
+  /// (`apps/admin_web/lib/main.dart`) so `feature_identity` never has to
+  /// import another feature package to construct them. `null` (the
+  /// default) yields a Home-only shell, which keeps every existing
+  /// caller/test that doesn't pass this parameter unaffected.
+  final List<AdminNavEntry> Function(AuthSession session)? adminSections;
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +49,10 @@ class AuthGate extends StatelessWidget {
     if (session.mustChangePassword) {
       return const ForcedPasswordChangeScreen();
     }
-    return AdminShell(session: session);
+    return AdminShell(
+      session: session,
+      additionalSections: adminSections?.call(session) ?? const [],
+    );
   }
 }
 

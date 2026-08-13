@@ -2,11 +2,12 @@
 # shell, authentication gates).
 #
 # feature_identity was wired in at the Phase 1 Foundation milestone (auth,
-# custom claims, role matrix, user management). The remaining feature_*
-# packages (feature_pages, feature_media, feature_publishing,
-# feature_audit, feature_settings, feature_enquiries, plus every content-
-# collection feature) get added here as Phase 2 (CMS Core) implements
-# each admin screen.
+# custom claims, role matrix, user management). feature_pages and
+# feature_publishing were wired in at Phase 1 CMS Core / feature_pages
+# (Pages editor + workflow actions). The remaining feature_* packages
+# (feature_media, feature_audit, feature_settings, feature_enquiries,
+# plus every other content-collection feature) get added here as later
+# Phase 2 milestones implement each admin screen.
 name: admin_web
 description: "2D Montessori admin/CMS portal"
 publish_to: none
@@ -28,6 +29,10 @@ dependencies:
     path: ../../packages/firebase_adapters
   feature_identity:
     path: ../../packages/feature_identity
+  feature_publishing:
+    path: ../../packages/feature_publishing
+  feature_pages:
+    path: ../../packages/feature_pages
 
 dev_dependencies:
   flutter_test:

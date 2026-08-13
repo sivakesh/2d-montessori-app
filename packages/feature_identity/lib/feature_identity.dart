@@ -35,3 +35,6 @@ export 'src/presentation/auth_controller.dart';
 export 'src/presentation/auth_gate.dart';
 export 'src/presentation/identity_scope.dart';
 export 'src/presentation/screens/reset_password_screen.dart';
+export 'src/presentation/screens/user_management_screen.dart';
+export 'src/presentation/widgets/admin_nav_entry.dart';
+export 'src/presentation/widgets/role_guarded_section.dart';

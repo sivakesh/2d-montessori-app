@@ -1,16 +1,26 @@
 /**
  * Capability: scheduling
  *
- * Idempotent scheduled-publish execution and retry/failure-state handling for publishJobs.
+ * Idempotent scheduled-publish execution and retry/failure-state
+ * handling for `content` docs in status `scheduled` (SRS CMS-05).
+ * `publishJobs`-style per-job records are not needed for this: idempotency
+ * and retry both fall directly out of re-checking each content
+ * document's own status inside its own transaction — see
+ * `publishScheduledContent.ts`'s doc comment for the full reasoning.
  *
- * Traceability: SRS CMS-05; PRD Section 9 ("trusted scheduled function with idempotency and retry")
+ * Traceability: SRS CMS-05; PRD Section 9 ("trusted scheduled function
+ * with idempotency and retry")
  *
- * Phase 0 scaffold only — no callable/trigger functions are exported yet.
- * Real implementations land per the milestone that owns this capability
- * (see /README.md "Implementation milestones"). Every exported function
- * added here must go through the shared audit helper in ../lib/audit.ts
- * and must never trust client-supplied role/permission claims without
- * re-verifying them server-side (SRS NFR-05).
+ * `publishScheduledContent` (Phase 1 — CMS Core / feature_pages) is the
+ * only real export so far. It targets `content` generically (any
+ * `status == 'scheduled'` document, not Pages specifically), so it
+ * benefits every future content type without changes. Every write here
+ * goes through the same audit helper (`../lib/audit.ts`) as every other
+ * module, using a fixed `system` actor identity rather than any
+ * client-supplied claim, consistent with SRS NFR-05/NFR-07.
  */
 
 export const capability = 'scheduling' as const;
+
+export { publishScheduledContent, runScheduledPublish } from './publishScheduledContent';
+export type { ScheduledPublishResult } from './publishScheduledContent';

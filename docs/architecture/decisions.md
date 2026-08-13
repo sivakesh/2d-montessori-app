@@ -483,6 +483,317 @@ existed. **Re-verified by CI run
 [`31614601637`](https://github.com/sivakesh/2d-montessori-app/actions/runs/31614601637)**
 — all three jobs green, including both previously-failing files.
 
+## Phase 1 — CMS Core: `feature_pages` (first CMS content type)
+
+Traceability: SRS WEB-01..WEB-03, CMS-01..CMS-15; PRD §4 (CMS Page
+Builder), §5.1/5.2 (Page/SEO models), §9 (Editorial Workflow). Builds
+and verifies the first complete CMS content type end to end — creation,
+review, approval, publishing, scheduling and public rendering — on top
+of the `feature_publishing` engine verified in the previous milestone.
+Does not begin `feature_media`, `feature_settings`, or any other CMS Core
+component.
+
+### Pages storage: `content` collection, not a separate `pages` collection
+
+`PublishingRecord`'s doc comment (written in the `feature_publishing`
+milestone) explicitly allowed two designs: a content type stores its own
+fields "alongside these same envelope fields in their own collection, or
+compose with this one." This milestone chose the latter: every `CmsPage`
+is a `content/{contentId}` document with `contentType == 'page'`,
+carrying the full `feature_publishing` envelope (status, owner,
+submitted/reviewed/published/archived timestamps and actors) plus
+Pages-specific fields (slug, summary, sections, SEO, ...) side by side in
+the same document. `docs/architecture/firestore-model.md`'s earlier
+`pages/{pageId}` row (drafted before `feature_publishing` existed) is
+retired in favor of this.
+
+Rationale: this requires zero changes to `applyTransition.ts`,
+`transitionContent.ts`, or `FirestorePublishingRepository` — the
+workflow engine already operates on `content/{contentId}` and needs no
+awareness that a document happens to be a page. A separate `pages`
+collection would have meant either duplicating the transition engine to
+target it, or building a cross-collection abstraction the engine doesn't
+have today. The downside — different content types commingled in one
+collection, distinguished by `contentType` — is a normal, deliberately
+accepted tradeoff at this scale, not a compromise made under time
+pressure (CMS-10 "Lists and filters" already implies filtering by type
+as an ordinary operation).
+
+### Reused unmodified: `PagesAsPublishingRepository`
+
+`feature_pages` does not duplicate the workflow engine. Its own
+`PagesRepository` interface (`createPage`, `updateContent`, `get`,
+`list`, `listRevisions`, `restoreRevision`, `transition`) is Pages-
+specific and richer than `PublishingRepository`, but
+`PagesAsPublishingRepository` adapts it to `feature_publishing`'s
+`PublishingRepository` interface, mapping `CmsPage` ↔ `PublishingRecord`
+via `CmsPage.toPublishingRecord()`. This lets the admin editor construct
+`feature_publishing`'s nine named use cases
+(`SubmitForReviewUseCase`, `ApproveContentUseCase`, ...) completely
+unmodified — see `PageEditorController` — so every transition's
+capability checks, comment/schedule requirements, and edge validation
+are the exact same code already tested in the `feature_publishing`
+milestone, not a re-implementation. Server-side, `functions/src/pages/
+transitionPage.ts` follows the identical pattern: it adds the SRS CMS-08
+completeness gate (below) as a pre-flight check, then delegates,
+unmodified, to `functions/src/publishing/applyTransition.ts`.
+
+### SRS CMS-08 completeness gate
+
+"Publishing checks required fields, alt text, ... SEO metadata, unique
+slug, ... Errors block." Implemented in three layers, in order of trust:
+
+1. **Client** (`PageCompletenessValidator`, Dart) — checked before
+   Submit for Review/Publish/Schedule buttons are enabled; UX only.
+2. **Server** (`pageCompletenessViolations`, TypeScript,
+   `functions/src/pages/completeness.ts`) — re-implements the identical
+   rules (hand-synced, not code-shared, the established convention for
+   every Dart/TypeScript pair in this codebase), called by
+   `transitionPage.ts` only for the three actions that move content
+   toward or into public visibility (`submitForReview`, `publish`,
+   `schedule`) — `reject`/`archive`/`unschedule`/`restore` are ungated,
+   since they only ever need the transition engine's own edge/capability
+   checks. This is the actual authority; a client bypassing step 1
+   cannot bypass step 2.
+3. **Slug uniqueness** specifically is server-only (`assertSlugAvailable`
+   in `functions/src/pages/slug.ts`) — it requires a live Firestore query
+   only the server can authoritatively answer at submission time, so it
+   is deliberately not attempted client-side.
+
+### Editing content: Draft-only, no parallel "live draft copy"
+
+The PRD's editorial-workflow model (§9) describes editing published
+content as creating a new draft copy while the published snapshot stays
+publicly live — a materially more complex model (parallel versions of
+one logical page) than the simpler, SRS-aligned single-document lifecycle
+`feature_publishing` already implements and this milestone was
+instructed to reuse unmodified. This milestone therefore does **not**
+build that PRD model. Instead: `updatePageContent`/`restorePageRevision`
+both reject with `PageNotEditableFailure` unless the page's status is
+exactly `draft`. To edit a page that is currently Published, an
+authorised user calls `unpublish` (Published → Archived) then `restore`
+(Archived → Draft) — both transitions `feature_publishing` already
+provides — edits it, and republishes. This is a deliberate, documented
+scope reduction relative to the PRD, not an oversight: it costs an extra
+two clicks for the "edit a live page" flow in exchange for zero changes
+to the verified workflow engine.
+
+### SRS CMS-06 revision history
+
+Every successful `updatePageContent`/`restorePageRevision` call appends
+a full content-field snapshot to `content/{contentId}/revisions/`, in
+the same Firestore transaction as the content write itself (so a
+revision can never be recorded without the corresponding change landing,
+or vice versa). Revisions are never deleted or overwritten — "restore"
+copies a prior revision's fields onto the *current* draft and then
+itself appends a new revision entry, so restoring is visible in the
+history the same way any other edit is, satisfying CMS-06's "without
+erasing the audit trail" literally: nothing is ever erased.
+
+### Public rendering: `publishedPages` is a materialized view, not a filtered `content` read
+
+`apps/public_web` never reads `content` — Firestore Rules deny it
+unconditionally to unauthenticated callers, and even if they didn't,
+`content` carries fields (`ownerId`, workflow timestamps/actors, revision
+history) that must never reach a public response. Instead,
+`functions/src/pages/syncPublishedPage.ts` (a Firestore
+`onDocumentWritten` trigger on `content/{contentId}`) maintains
+`publishedPages/{slug}` as a denormalized, public-safe projection:
+present with a fixed field set whenever a page's `status == 'published'`,
+absent otherwise. `PublicPageView` (the Dart read model
+`FirestorePublicPagesRepository` returns) has no field capable of
+carrying `ownerId`/`status`/actor identities even if the document
+somehow contained them — the type itself is the enforcement mechanism
+for "do not expose administrative fields," not a runtime filter that
+could be forgotten.
+
+Chosen as a *trigger* (reactive, decoupled from `transitionPage.ts`)
+rather than folded into that callable directly, so (a) `applyTransition.ts`
+stays generic and untouched, and (b) Cloud Functions triggers get
+automatic retry-on-failure semantics for what is fundamentally a
+materialized-view sync, not the workflow transition itself (which
+already committed and was already audited by the time this runs).
+Editing is Draft-only (see above), so a page's `slug` cannot change while
+`published` — this sync therefore never has to reconcile "published under
+slug A, now published under slug B" in a single write.
+
+**Related-content resolution — a documented staleness limitation.**
+`RelatedContentSection.relatedPageIds` are manual selections (SRS 2.2/
+CMS-12 both exclude automatic recommendations); at sync time, each
+referenced page is resolved to a display summary *only if it is
+currently published*, and the result is cached on the referencing page's
+`publishedPages` document as `resolvedRelatedPages`. If a related page is
+later unpublished, pages that already reference it keep their cached
+(now stale) summary until they are themselves next republished — true
+real-time reactivity would require a reverse index recomputing every
+referencing page whenever any page's status changes, which is out of
+scope for this milestone. Not silently accepted: flagged here as a real,
+known limitation.
+
+### Section-type catalogue: narrower than the PRD's, on purpose
+
+The PRD §4.2 catalogue lists 14 section templates (`hero`, `rich_text`,
+`image_text`, `feature_grid`, `card_collection`, `stats`, `quote`,
+`testimonial_carousel`, `media_gallery`, `video`, `cta_banner`, `faq`,
+`spacer_divider`, `contact_block`). This milestone's explicit instruction
+enumerated exactly nine approved types, which is what
+`packages/feature_pages/lib/src/domain/page_section.dart`'s `sealed
+PageSection` implements: rich text, image, image+text, CTA, highlights
+(cards), FAQ, gallery, testimonial, related-content. The remaining PRD
+templates (`hero`, `stats`, `quote`, `video`, `spacer_divider`,
+`contact_block`) are deferred, not silently dropped — a future milestone
+can add a new `PageSection` subtype the same way each of these nine was
+added, with the sealed hierarchy's exhaustiveness checking forcing every
+renderer/validator to handle it.
+
+**FAQ and Testimonial sections store entries inline**, not as references
+into a central collection — SRS WEB-09's FAQ module and WEB-10's
+Testimonials module (`feature_faqs`/`feature_testimonials`) don't exist
+yet, so a reference would point at nothing. Migrating to references once
+those modules ship is additive (an optional `faqId`/`testimonialId`
+alongside the inline fields), not a redesign.
+
+**Related-content selection is Pages-only** for the same reason: Programs,
+Experiences, Events, articles and FAQs (the PRD's full related-content
+target set) don't exist as buildable content types yet.
+
+**Rich text is plain, paragraph-separated text, not a structured block
+model.** The PRD's "validated structured blocks" rich-text model
+(inline bold/italic, lists, etc.) is a meaningfully sized sub-feature on
+its own; this milestone's `RichTextSection.body` is a plain `String`
+with blank-line paragraph breaks and *no markup of any kind* — which
+trivially satisfies "do not store arbitrary executable HTML or scripts"
+(there is no markup vocabulary to exploit) while keeping scope bounded.
+A richer inline-formatting model is a defensible, scoped-out follow-up.
+
+### Media boundary: `MediaReference`, not `feature_media`
+
+Per explicit instruction, `feature_media` (upload pipeline, processing
+status, derivatives, consent workflow) is not built this milestone.
+`MediaReference` (`url`, `altText`, optional `storagePath`/`caption`) is
+the entire surface `feature_pages` needs — editors paste/enter an
+already-hosted URL today; there is no upload UI, no processing-status
+gating (SRS MED-05's "Ready before publishing" has nothing to gate on
+without a pipeline), and no child-image-consent workflow (SRS MED-06) —
+another explicit, documented gap, not an oversight. Wiring a real upload
+flow into these same fields once `feature_media` exists is additive.
+
+### `AdminShell`/`AdminNavEntry`: fixing a latent architecture violation
+
+Adding a "Pages" admin nav entry the way "Users" already existed would
+have required `feature_identity`'s `AdminShell` to import `feature_pages`
+directly — a feature-to-feature dependency this codebase's own stated
+rule ("features communicate only through `core_contracts`, never by
+importing each other") forbids. Rather than accept the violation,
+`AdminShell` was generalized to accept `List<AdminNavEntry>` from
+whichever caller builds it, and `AuthGate` gained an optional
+`adminSections` callback threading them through. `apps/admin_web/lib/
+main.dart` — the one place allowed to depend on every feature — now
+builds both the "Users" and "Pages" entries; `feature_identity` no longer
+hardcodes either. See `docs/architecture/repository-structure.md`'s new
+"Cross-cutting UI infrastructure: `AdminNavEntry`" section. A side effect:
+`AdminShell`'s app-bar title is now the selected entry's own `label`
+rather than a separately hardcoded string per section — a deliberate
+simplification, covered by the updated `auth_gate_test.dart`.
+
+### SEO on Flutter Web — the exact limitation, not silently assumed away
+
+Per explicit instruction, this is stated precisely rather than claimed
+as full crawler compatibility. `apps/public_web` is client-side rendered
+— this milestone does not build server-side rendering or prerendering
+(the SRS's Technical Architecture section allows for it; building it is
+a separate, sizeable undertaking out of scope here). `SeoHead` (in
+`apps/public_web/lib/src/seo_head_web.dart`) updates `document.title`,
+`<meta name="description">`, `<link rel="canonical">`, `<meta
+name="robots">` and Open Graph tags on every route change, via
+`package:web`'s DOM bindings:
+
+- **Works** for user agents that execute JavaScript before reading
+  `<head>` — modern Googlebot renders pages before indexing, so per-page
+  search-indexing metadata is expected to work correctly.
+- **Does not work** for user agents that only read the static HTML from
+  the first response and never execute JavaScript — this includes most
+  social-preview/link-unfurling crawlers (Facebook, X/Twitter, WhatsApp,
+  LinkedIn, Slack). Those only ever see `web/index.html`'s site-wide
+  defaults, never a specific page's Open Graph title/description/image,
+  until prerendering or SSR is added. This is a real, currently-open gap
+  — not fixed in this milestone, tracked here as a named follow-up.
+
+**A real Flutter platform-targeting issue found and fixed along the
+way**: `package:web` (and `flutter_web_plugins`, which
+`usePathUrlStrategy()` needs) only compile for JS/Wasm targets —
+`flutter test` runs on the Dart VM, where `dart:js_interop`'s conversion
+extensions and `dart:ui_web` don't exist, so importing either
+unconditionally from any file `main.dart` pulls in broke `flutter test`
+entirely (not a test failure — a compile error, since Dart resolves
+every top-level `import` for a library regardless of whether the
+imported symbols are actually called). Fixed with the standard
+conditional-export stub pattern: `seo_head.dart`/`url_strategy.dart` each
+`export` a no-op stub by default, switching to the real `package:web`/
+`flutter_web_plugins` implementation only via `if
+(dart.library.js_interop)` — true only under web compilation, never
+under the VM. `apps/public_web`'s widget tests now pass without ever
+touching real browser DOM APIs.
+
+### Scheduled publishing: the executor now exists — deployment is the remaining gap
+
+`feature_publishing`'s milestone validated and stored a schedule but
+nothing made scheduled content actually go live at `scheduledAt` —
+flagged there explicitly as a blocker. `functions/src/scheduling/
+publishScheduledContent.ts` is that executor: `runScheduledPublish(db,
+now)` queries `content` where `status == 'scheduled' && scheduledAt <=
+now`, and for each candidate re-checks its status *inside its own
+transaction* immediately before writing — idempotent by construction,
+since a document already published by a human or a previous/overlapping
+run is silently skipped, never double-published or double-audited (see
+its own doc comment and the emulator concurrency test proving two
+racing runs never both publish the same page). A per-document failure
+is logged and the document is left exactly as `'scheduled'`, so the next
+run retries it automatically — satisfying NFR-06 ("remains visible and
+retryable without silent data loss") with no separate job-record
+bookkeeping.
+
+**What this does and does not prove.** The executor's *logic* is
+implemented, idempotent, audited, and tested — directly, by calling
+`runScheduledPublish` the same way every callable in this codebase is
+tested via `.run(request)` rather than through the real trigger
+mechanism (Cloud Scheduler cannot be exercised without a real
+deployment). The `onSchedule('every 5 minutes', ...)` trigger only
+becomes an active cron job once deployed to a real Firebase project.
+**As of this commit, nothing has been deployed anywhere** — per this
+milestone's explicit deployment boundary (see below) — so no process is
+currently publishing scheduled content in any environment. This is
+stated plainly so "scheduled publishing" is never reported as fully
+working when only the code that would make it work is: it is complete
+and verified; it is not yet running.
+
+### Test execution status (feature_pages)
+
+| Suite | Run in this environment? | Result |
+|---|---|---|
+| Dart domain/use-case/widget tests (`packages/feature_pages/test/`) | Yes (local) | 54/54 passing |
+| `apps/admin_web`, `apps/public_web` widget tests | Yes (local) | Passing (admin_web 1/1, public_web 2/2) |
+| `feature_identity` (`AdminShell`/`AuthGate` regression from the `AdminNavEntry` refactor) | Yes (local) | 47/47 passing |
+| Cloud Functions unit tests (`functions/test/pages.*.test.ts`) | Yes (local) | Included in the 160/160 total (was 107; +53 for Pages) |
+| Firestore rules tests — `content`/`revisions` (`firebase/test/content.rules.test.ts`) | **No — needs CI** | Authored, type-checked clean; not executed locally |
+| Cloud Functions integration tests — Pages callables (`functions/test/emulator/pages.functions.test.ts`) | **No — needs CI** | Authored, type-checked clean (strict compiler options matching `tsconfig.json`); not executed locally |
+| Cloud Functions integration tests — scheduling executor (`functions/test/emulator/scheduling.functions.test.ts`) | **No — needs CI** | Authored, type-checked clean; not executed locally |
+
+Every emulator-dependent row above is authored and statically verified
+only, per this environment's JDK constraint (JDK 21 not installed, per
+standing instruction) — do not treat that as equivalent to a passing
+test; see the milestone report for whether a CI run against them has
+since landed.
+
+### Deployment boundary
+
+Per explicit instruction, this milestone does not deploy anywhere —
+Dev, Staging, or Production. The full sequence (implement, run local
+validation, commit as its own milestone, push, run CI, fix real CI
+failures, confirm every job including emulator-backed ones is green,
+report) is completed before any deployment is attempted, and deployment
+itself requires separate, explicit confirmation.
+
 ## Traceability
 
 Every implementation story must reference an SRS requirement ID (e.g.

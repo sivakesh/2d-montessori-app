@@ -13,10 +13,12 @@ packages/design_system/      Tokens + accessible responsive primitives — Flutt
 packages/firebase_adapters/  Firebase SDK adapters + environment/emulator bootstrap
 
 packages/feature_identity/       Auth session, profile, claims, authorization gates
-packages/feature_pages/          Managed pages, section-template registry, previews
-packages/feature_publishing/     Shared workflow engine (domain/data live as of Phase 1 CMS
-                                  Core; no presentation layer yet — see below): states,
-                                  transitions, role enforcement, scheduling foundation
+packages/feature_pages/          Managed pages, approved section-type registry, editor,
+                                  preview, public rendering (Phase 1 CMS Core — live)
+packages/feature_publishing/     Shared workflow engine (domain/data; no presentation layer
+                                  of its own — driven through feature_pages' screens via the
+                                  adapter documented below): states, transitions, role
+                                  enforcement, scheduling foundation
 packages/feature_media/          Media library, uploads, derivatives, consent
 packages/feature_programs/       Program collection/detail
 packages/feature_experiences/    Experience collection/detail
@@ -65,19 +67,38 @@ milestone that actually implements its screens, so every dependency
 addition is traceable to real work rather than speculative wiring:
 
 - `apps/admin_web` depends on `core_contracts`, `design_system`,
-  `firebase_adapters` **and, as of Phase 1 Foundation, `feature_identity`**
-  (auth, custom claims, role matrix, user management). `feature_publishing`
-  is **not yet** an `apps/admin_web` dependency even though its domain/data
-  layers are implemented and tested as of Phase 1 CMS Core — it has no
-  `presentation/` layer yet, since no screen exercises it directly until a
-  content feature (e.g. `feature_pages`) is built on top of it. The
-  remaining feature packages land here as Phase 2/3 build their admin
-  screens.
-- `apps/public_web` still depends only on `core_contracts`,
-  `design_system` and `firebase_adapters` — no feature is wired in yet,
-  and `feature_identity` in particular is deliberately never a dependency
-  of the public site, since public visitors never authenticate (see
+  `firebase_adapters`, `feature_identity` (Phase 1 Foundation: auth,
+  custom claims, role matrix, user management) **and, as of Phase 1 CMS
+  Core, `feature_publishing` and `feature_pages`**. `feature_publishing`
+  is a direct dependency even though `feature_pages` re-exposes its
+  workflow use cases through `PageEditorController`, because
+  `admin_web/lib/main.dart` also needs `feature_publishing`'s
+  `PublishingStatus`/`PublishingAction` types directly when composing
+  that controller. The remaining feature packages land here as later
+  milestones build their admin screens.
+- `apps/public_web` depends on `core_contracts`, `design_system`,
+  `firebase_adapters` **and, as of Phase 1 CMS Core, `feature_pages`**
+  (slug resolution, section rendering) plus the SDK-provided
+  `flutter_web_plugins` and `web` packages (real `/slug` URLs and SEO
+  `<head>` updates — see `decisions.md`'s SEO-limitation section).
+  `feature_identity` is still deliberately never a dependency of the
+  public site, since public visitors never authenticate (see
   `apps/public_web/lib/main.dart`'s doc comment).
+
+## Cross-cutting UI infrastructure: `AdminNavEntry`
+
+`feature_identity`'s `AdminShell` (the authenticated admin app's Home-
+plus-drawer shell) does not hardcode which non-Home sections exist. It
+accepts a `List<AdminNavEntry>` from whichever caller builds it —
+`AuthGate`'s optional `adminSections` callback threads them through from
+`apps/admin_web/lib/main.dart`, the one place allowed to depend on every
+feature package. This is what lets `feature_pages`' "Pages" nav entry
+exist without `feature_identity` ever importing `feature_pages` (which
+the "no feature-to-feature imports" rule above would otherwise forbid) —
+see `AdminNavEntry`'s own doc comment for the full reasoning. Any future
+feature adding an admin screen follows the same pattern: build an
+`AdminNavEntry` in `admin_web/lib/main.dart`, not inside
+`feature_identity`.
 
 See the root README's "Implementation milestones" section.
 
