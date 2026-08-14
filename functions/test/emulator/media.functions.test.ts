@@ -53,10 +53,12 @@ async function cleanupUser(uid: string): Promise<void> {
 }
 
 async function cleanupMedia(mediaId: string): Promise<void> {
+  const auditSnapshot = await db.collection('auditLogs').where('entityId', '==', mediaId).get();
   await Promise.allSettled([
     db.collection('media').doc(mediaId).delete(),
     bucket.deleteFiles({ prefix: `private/media/${mediaId}/`, force: true }),
     bucket.deleteFiles({ prefix: `public/media/${mediaId}/`, force: true }),
+    ...auditSnapshot.docs.map((d) => d.ref.delete()),
   ]);
 }
 
@@ -69,11 +71,18 @@ async function expectHttpsErrorCode(promise: Promise<unknown>, code: string): Pr
   await expect(promise).rejects.toMatchObject({ code });
 }
 
-/** Uploads a real, decodable PNG to the Storage emulator and fires the processing pipeline against it directly. */
+const EXTENSION_FOR_CONTENT_TYPE: Record<string, string> = {
+  'image/png': 'png',
+  'application/x-msdownload': 'exe',
+  'application/pdf': 'pdf',
+};
+
+/** Uploads real bytes to the Storage emulator and fires the processing pipeline against it directly. */
 async function uploadAndProcess(params: { mediaId: string; uploaderUid: string; contentType?: string; bytes?: Buffer; title?: string; altText?: string }): Promise<void> {
   const { mediaId, uploaderUid, contentType = 'image/png', title = 'Test asset', altText = 'A description' } = params;
   const bytes = params.bytes ?? (await sharp({ create: { width: 100, height: 50, channels: 3, background: { r: 200, g: 20, b: 20 } } }).png().toBuffer());
-  const objectPath = `private/media/${mediaId}/original.png`;
+  const extension = EXTENSION_FOR_CONTENT_TYPE[contentType] ?? 'bin';
+  const objectPath = `private/media/${mediaId}/original.${extension}`;
   await bucket.file(objectPath).save(bytes, {
     metadata: { contentType, metadata: { title, altText, uploadedBy: uploaderUid } },
   });

@@ -28,7 +28,10 @@ async function setArchived(request: import('firebase-functions/v2/https').Callab
   const mediaId = validateMediaId(request.data.mediaId);
   const mediaRef = db.collection('media').doc(mediaId);
 
-  await db.runTransaction(async (transaction) => {
+  // Only audit a real state change — calling this twice in a row (the
+  // idempotent-no-op path below) must not produce a second, misleading
+  // "archived"/"restored" audit entry for nothing actually changing.
+  const didChange = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(mediaRef);
     const current = snapshot.data();
     if (!snapshot.exists || !current) {
@@ -38,7 +41,7 @@ async function setArchived(request: import('firebase-functions/v2/https').Callab
       throw new HttpsError('permission-denied', 'You do not have permission to modify this asset.');
     }
     if (current.archived === archived) {
-      return; // Idempotent no-op.
+      return false; // Idempotent no-op.
     }
     transaction.update(mediaRef, {
       archived,
@@ -47,18 +50,21 @@ async function setArchived(request: import('firebase-functions/v2/https').Callab
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: caller.uid,
     });
+    return true;
   });
 
-  await writeAuditEvent({
-    eventType: archived ? 'archive' : 'restore',
-    entityType: 'media',
-    entityId: mediaId,
-    actorId: caller.uid,
-    actorRole: caller.role,
-    changeSummary: archived ? 'Archived media asset' : 'Restored media asset',
-    requestId: resolveRequestId(request, mediaId),
-    source: 'function',
-  });
+  if (didChange) {
+    await writeAuditEvent({
+      eventType: archived ? 'archive' : 'restore',
+      entityType: 'media',
+      entityId: mediaId,
+      actorId: caller.uid,
+      actorRole: caller.role,
+      changeSummary: archived ? 'Archived media asset' : 'Restored media asset',
+      requestId: resolveRequestId(request, mediaId),
+      source: 'function',
+    });
+  }
 
   return { mediaId };
 }
