@@ -29,6 +29,18 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
   MediaMimeCategory? _categoryFilter;
   bool _showArchived = false;
 
+  /// Set when [FilePicker.platform.pickFiles] itself throws (a real
+  /// platform/browser-level failure — permission denied, an
+  /// unregistered/misconfigured web implementation, an unsupported
+  /// browser, etc.) or returns a file with no readable bytes. Rendered
+  /// as a [MaterialBanner] the same way [MediaLibraryController]'s own
+  /// [MediaLibraryController.lastErrorMessage] already is — deliberately
+  /// NOT a [SnackBar]: this screen has no ancestor [Scaffold] of its own
+  /// (see the class doc comment), and a banner stays visible until
+  /// dismissed rather than auto-disappearing, which matters for an error
+  /// an administrator needs time to read and act on.
+  String? _pickerErrorMessage;
+
   @override
   void initState() {
     super.initState();
@@ -54,9 +66,35 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
   }
 
   Future<void> _pickAndUpload() async {
-    final result = await FilePicker.platform.pickFiles(withData: true);
-    final file = result?.files.singleOrNull;
-    if (file == null || file.bytes == null || !mounted) return;
+    setState(() => _pickerErrorMessage = null);
+
+    final FilePickerResult? result;
+    try {
+      // Called as the very first statement of this handler (nothing
+      // awaited before it) so the platform file-input is triggered
+      // synchronously within the button's click — required on Web,
+      // where some browsers refuse to open a file picker that wasn't
+      // triggered directly by a user gesture.
+      result = await FilePicker.platform.pickFiles(withData: true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _pickerErrorMessage = 'Could not open the file picker: $error',
+      );
+      return;
+    }
+
+    if (result == null) return; // User cancelled — not an error.
+    final file = result.files.singleOrNull;
+    if (file == null || file.bytes == null) {
+      if (!mounted) return;
+      setState(
+        () => _pickerErrorMessage =
+            'The selected file could not be read. Please try again.',
+      );
+      return;
+    }
+    if (!mounted) return;
 
     final mimeType = _guessMimeType(file.extension);
     final metadata = await showDialog<MediaMetadataDialogResult>(
@@ -241,6 +279,16 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
                 actions: [
                   TextButton(
                     onPressed: () => setState(() {}),
+                    child: const Text('Dismiss'),
+                  ),
+                ],
+              ),
+            if (_pickerErrorMessage != null)
+              MaterialBanner(
+                content: Text(_pickerErrorMessage!),
+                actions: [
+                  TextButton(
+                    onPressed: () => setState(() => _pickerErrorMessage = null),
                     child: const Text('Dismiss'),
                   ),
                 ],

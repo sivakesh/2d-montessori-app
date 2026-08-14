@@ -923,6 +923,75 @@ last test fails against the pre-fix implementation and passes against
 the fix, which is what actually demonstrates this is the real
 mechanism, not merely a plausible one.
 
+## Post-deployment fixes: Dev Media UAT (Defect 1 — Upload button, Defect 2 — missing index)
+
+### Defect 1: Upload button silently failed on the deployed Admin site
+
+**Symptom, found in real Dev UAT:** clicking Upload on the deployed
+`twod-montessori-admin-dev.web.app` Media screen did nothing observable —
+no file picker, no metadata dialog, no application error — with an
+uncaught exception visible only in the browser console from the compiled
+bundle.
+
+**Investigated:** `MediaLibraryScreen._pickAndUpload()` genuinely calls
+`FilePicker.platform.pickFiles(withData: true)` synchronously from the
+button's `onPressed`, with no mobile/desktop-only API involved —
+confirmed by reading the call site directly, and now also by
+`media_library_screen_test.dart`'s "tapping Upload calls
+`FilePicker.platform.pickFiles` synchronously from the click" test.
+`file_picker`'s web implementation (`FilePickerWeb`) is a normal
+federated-plugin `web:` entry in `packages/feature_media/pubspec.yaml`
+and (transitively) `apps/admin_web/pubspec.yaml`; Flutter's build
+tooling is responsible for generating a `web_plugin_registrant.dart`
+that calls `FilePickerWeb.registerWith(registrar)`.
+
+**Most likely root cause, with direct local evidence though not provable
+against the exact deployed artifact:** `FilePicker.platform` is a
+`static late FilePicker _instance` field with no default value and a
+public setter — the standard `PlatformInterface` pattern. If the web
+registrant that runs at app startup never calls
+`FilePickerWeb.registerWith`, the first access to `FilePicker.platform`
+throws `LateInitializationError` — an uncaught exception matching the
+reported symptom exactly. The generated registrant is cached per
+build-configuration hash under `.dart_tool/flutter_build/<hash>/`; in
+this environment, two different cached registrants were found to exist
+simultaneously for `apps/admin_web`, one correctly including
+`FilePickerWeb.registerWith` and one (older, predating `file_picker`
+being added to `feature_media`'s `pubspec.yaml`) not including it. A
+fully clean rebuild (`flutter clean && flutter pub get && flutter build
+web --release`) produced a registrant that correctly includes it in both
+locations. This strongly suggests the deployed site was built from a
+stale local `.dart_tool` cache or a checkout predating the dependency
+addition, rather than a defect in the dependency declaration itself —
+but this cannot be proven with certainty without access to the exact
+build that was deployed, which is why the code-level defensive fix below
+was implemented regardless of the precise cause.
+
+**Fix (defense-in-depth, independent of the exact cause):**
+`_pickAndUpload()` now wraps `FilePicker.platform.pickFiles(...)` in a
+try/catch, surfacing any exception (including a future recurrence of
+this exact failure mode, or a real user-facing picker error) as a
+visible, dismissible `MaterialBanner` reading "Could not open the file
+picker: ..." instead of failing silently. A picked file with no readable
+bytes (`file.bytes == null`) is handled the same way rather than
+proceeding into `MediaUploadRequest` with a null payload. Cancellation
+(`result == null`) is treated as a normal, silent no-op — not an error.
+
+**Regression coverage added**
+(`packages/feature_media/test/presentation/media_library_screen_test.dart`,
+6 tests, via a `FakeFilePicker extends FilePicker` — the standard
+`PlatformInterface` testing pattern `FilePicker.platform`'s public
+setter exists for): click invokes `pickFiles(withData: true)`
+synchronously; a successful selection opens the metadata dialog
+pre-filled with the file name; cancellation produces no dialog and no
+banner; a thrown picker exception produces a visible banner and no
+dialog; an empty-bytes selection produces a visible banner; the banner
+is dismissible. This proves the Dart-level wiring and error handling are
+correct; it cannot prove the *deployed* web plugin registration is
+correct, since `flutter test` never runs a real build's generated
+registrant — that half was verified separately, by the clean-rebuild
+evidence above, not by an automated test.
+
 ## Traceability
 
 Every implementation story must reference an SRS requirement ID (e.g.
