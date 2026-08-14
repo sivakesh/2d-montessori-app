@@ -11,6 +11,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 
 import { writeAuditEvent } from '../lib/audit';
 import { resolveRequestId } from '../lib/requestId';
+import { collectPageMediaUsage, reconcilePageMediaUsage } from '../media/usageTracking';
 import { assertActiveCaller } from '../publishing/guards';
 import { canEditAllContent } from './permissions';
 import { validatePageId } from './validators';
@@ -64,6 +65,15 @@ export const restorePageRevision = onCall<RestorePageRevisionRequestData, Promis
 
     transaction.update(contentRef, { ...restoredFields, updatedAt: now, updatedBy: caller.uid });
     transaction.set(contentRef.collection('revisions').doc(), { ...restoredFields, actorId: caller.uid, createdAt: now });
+
+    reconcilePageMediaUsage({
+      db,
+      transaction,
+      contentId: pageId,
+      contentTitle: (restoredFields.title as string) || (page.title as string) || pageId,
+      before: collectPageMediaUsage(page),
+      after: collectPageMediaUsage(restoredFields),
+    });
   });
 
   await writeAuditEvent({

@@ -12,6 +12,7 @@ enum Capability {
   approveRejectPublish,
   schedulePublishing,
   manageRedirectsSeo,
+  manageMediaLibrary,
   manageUsersAndRoles,
   deleteEnquiriesPermanently,
   exportEnquiriesContent,
@@ -63,6 +64,19 @@ abstract final class RolePermissionMatrix {
     },
     Capability.manageRedirectsSeo: {
       UserRole.editor: CapabilityLevel.limited, // Limited content fields only
+      UserRole.publisher: CapabilityLevel.full,
+      UserRole.superAdmin: CapabilityLevel.full,
+    },
+    // Not an original SRS §3 matrix row — the matrix was written before
+    // feature_media existed and has no dedicated media cell. Modeled on
+    // editAllContent's own/all shape (Editor: own uploads only; Publisher/
+    // SuperAdmin: the whole library, including archiving and permanently
+    // deleting any editor's uploads) since media is content, and every
+    // other capability the media module needs (upload, edit metadata,
+    // archive/restore, permanent delete once unused) is naturally one
+    // capability rather than several — see docs/architecture/decisions.md.
+    Capability.manageMediaLibrary: {
+      UserRole.editor: CapabilityLevel.limited, // Own uploads only
       UserRole.publisher: CapabilityLevel.full,
       UserRole.superAdmin: CapabilityLevel.full,
     },

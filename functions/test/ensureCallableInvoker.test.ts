@@ -4,9 +4,9 @@
  * `onCall` function, and nothing else. This is the same structural
  * "is this callable?" check (`__endpoint.callableTrigger`) the script
  * itself uses against the compiled deploy artifact — see that file's
- * doc comment for the real-project incident (all 11 callables came up
- * with an empty Cloud Run IAM policy after a successful deploy) this
- * guards against regressing. If a future capability adds or removes an
+ * doc comment for the real-project incident (all callables — 11 at the
+ * time — came up with an empty Cloud Run IAM policy after a successful
+ * deploy) this guards against regressing. If a future capability adds or removes an
  * `onCall` function, this test's expected list must be updated
  * deliberately — that's the point: nothing should silently drop out of
  * (or newly enter) the public-invoker set.
@@ -27,7 +27,7 @@ describeIfBuilt('scripts/ensure-callable-invoker.js: discoverCallableServices', 
     discoverCallableServices: () => Array<{ functionName: string; serviceName: string; region: string }>;
   };
 
-  it('targets exactly the 11 onCall functions, matching the real project (Cloud Run service names)', () => {
+  it('targets exactly the 15 onCall functions, matching the real project plus feature_media (Cloud Run service names)', () => {
     const serviceNames = discoverCallableServices()
       .map((s) => s.serviceName)
       .sort();
@@ -39,6 +39,10 @@ describeIfBuilt('scripts/ensure-callable-invoker.js: discoverCallableServices', 
         'authfns-resetuserpassword',
         'authfns-setuserrole',
         'authfns-setuserstatus',
+        'mediafns-archivemedia',
+        'mediafns-deletemedia',
+        'mediafns-restoremedia',
+        'mediafns-updatemediametadata',
         'pagesfns-createpage',
         'pagesfns-restorepagerevision',
         'pagesfns-transitionpage',
@@ -49,10 +53,11 @@ describeIfBuilt('scripts/ensure-callable-invoker.js: discoverCallableServices', 
     );
   });
 
-  it('never includes the Cloud Scheduler trigger or the Firestore trigger', () => {
+  it('never includes the Cloud Scheduler trigger, the Firestore trigger, or the Storage trigger', () => {
     const serviceNames = discoverCallableServices().map((s) => s.serviceName);
     expect(serviceNames).not.toContain('schedulingfns-publishscheduledcontent');
     expect(serviceNames).not.toContain('pagesfns-syncpublishedpage');
+    expect(serviceNames).not.toContain('mediafns-onmediauploaded');
   });
 
   it('defaults every discovered callable to us-central1 (none carry an explicit region override)', () => {

@@ -1,23 +1,34 @@
+import 'package:feature_media/feature_media.dart' show MediaRepository;
 import 'package:flutter/material.dart';
 
 import '../domain/call_to_action.dart';
 import '../domain/media_reference.dart';
 import '../domain/page_section.dart';
+import 'media_reference_picker_field.dart';
 
 /// Edits one [PageSection] in place. Every field maps 1:1 to a typed
 /// section property — there is no free-text/HTML field anywhere in this
 /// dialog, which is what makes "no unrestricted drag-and-drop/free-form
 /// builder" true at the editing surface, not just in storage.
 class SectionEditorDialog extends StatefulWidget {
-  const SectionEditorDialog({super.key, required this.section});
+  const SectionEditorDialog({
+    super.key,
+    required this.section,
+    required this.mediaRepository,
+  });
 
   final PageSection section;
+  final MediaRepository mediaRepository;
 
-  static Future<PageSection?> show(BuildContext context, PageSection section) =>
-      showDialog<PageSection>(
-        context: context,
-        builder: (_) => SectionEditorDialog(section: section),
-      );
+  static Future<PageSection?> show(
+    BuildContext context,
+    PageSection section, {
+    required MediaRepository mediaRepository,
+  }) => showDialog<PageSection>(
+    context: context,
+    builder: (_) =>
+        SectionEditorDialog(section: section, mediaRepository: mediaRepository),
+  );
 
   @override
   State<SectionEditorDialog> createState() => _SectionEditorDialogState();
@@ -103,29 +114,16 @@ class _SectionEditorDialogState extends State<SectionEditorDialog> {
   Widget _image(ImageSection s) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      TextFormField(
-        initialValue: s.image.url,
-        decoration: const InputDecoration(labelText: 'Image URL'),
-        onChanged: (v) => _update(
+      MediaReferencePickerField(
+        label: 'Image',
+        value: s.image,
+        mediaRepository: widget.mediaRepository,
+        onChanged: (image) => _update(
           () => ImageSection(
             id: s.id,
             sortOrder: s.sortOrder,
             isVisible: s.isVisible,
-            image: s.image.copyWith(url: v),
-          ),
-        ),
-      ),
-      TextFormField(
-        initialValue: s.image.altText,
-        decoration: const InputDecoration(
-          labelText: 'Alternative text (required)',
-        ),
-        onChanged: (v) => _update(
-          () => ImageSection(
-            id: s.id,
-            sortOrder: s.sortOrder,
-            isVisible: s.isVisible,
-            image: s.image.copyWith(altText: v),
+            image: image ?? s.image,
           ),
         ),
       ),
@@ -166,34 +164,18 @@ class _SectionEditorDialogState extends State<SectionEditorDialog> {
           ),
         ),
       ),
-      TextFormField(
-        initialValue: s.image.url,
-        decoration: const InputDecoration(labelText: 'Image URL'),
-        onChanged: (v) => _update(
+      MediaReferencePickerField(
+        label: 'Image',
+        value: s.image,
+        mediaRepository: widget.mediaRepository,
+        onChanged: (image) => _update(
           () => ImageTextSection(
             id: s.id,
             sortOrder: s.sortOrder,
             isVisible: s.isVisible,
             heading: s.heading,
             body: s.body,
-            image: s.image.copyWith(url: v),
-            imageSide: s.imageSide,
-          ),
-        ),
-      ),
-      TextFormField(
-        initialValue: s.image.altText,
-        decoration: const InputDecoration(
-          labelText: 'Alternative text (required)',
-        ),
-        onChanged: (v) => _update(
-          () => ImageTextSection(
-            id: s.id,
-            sortOrder: s.sortOrder,
-            isVisible: s.isVisible,
-            heading: s.heading,
-            body: s.body,
-            image: s.image.copyWith(altText: v),
+            image: image ?? s.image,
             imageSide: s.imageSide,
           ),
         ),
@@ -520,29 +502,13 @@ class _SectionEditorDialogState extends State<SectionEditorDialog> {
             padding: const EdgeInsets.all(8),
             child: Column(
               children: [
-                TextFormField(
-                  initialValue: s.items[i].url,
-                  decoration: const InputDecoration(labelText: 'Image URL'),
-                  onChanged: (v) => _update(() {
+                MediaReferencePickerField(
+                  label: 'Image',
+                  value: s.items[i],
+                  mediaRepository: widget.mediaRepository,
+                  onChanged: (image) => _update(() {
                     final items = [...s.items];
-                    items[i] = items[i].copyWith(url: v);
-                    return GallerySection(
-                      id: s.id,
-                      sortOrder: s.sortOrder,
-                      isVisible: s.isVisible,
-                      heading: s.heading,
-                      items: items,
-                    );
-                  }),
-                ),
-                TextFormField(
-                  initialValue: s.items[i].altText,
-                  decoration: const InputDecoration(
-                    labelText: 'Alternative text (required)',
-                  ),
-                  onChanged: (v) => _update(() {
-                    final items = [...s.items];
-                    items[i] = items[i].copyWith(altText: v);
+                    items[i] = image ?? items[i];
                     return GallerySection(
                       id: s.id,
                       sortOrder: s.sortOrder,

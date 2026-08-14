@@ -17,6 +17,7 @@ export 'package:cloud_firestore/cloud_firestore.dart';
 export 'package:cloud_functions/cloud_functions.dart' hide Result;
 export 'package:firebase_auth/firebase_auth.dart';
 export 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
+export 'package:firebase_storage/firebase_storage.dart';
 
 export 'src/app_environment.dart';
 export 'src/demo_firebase_options.dart';

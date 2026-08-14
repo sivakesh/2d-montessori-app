@@ -65,6 +65,33 @@ void main() {
       );
     });
 
+    test(
+      'Editor media library access is limited to their own uploads; Publisher/Super Admin have full access',
+      () {
+        expect(
+          RolePermissionMatrix.levelFor(
+            UserRole.editor,
+            Capability.manageMediaLibrary,
+          ),
+          CapabilityLevel.limited,
+        );
+        expect(
+          RolePermissionMatrix.hasFull(
+            UserRole.publisher,
+            Capability.manageMediaLibrary,
+          ),
+          isTrue,
+        );
+        expect(
+          RolePermissionMatrix.hasFull(
+            UserRole.superAdmin,
+            Capability.manageMediaLibrary,
+          ),
+          isTrue,
+        );
+      },
+    );
+
     test('Publisher has full publishing capability but no user management', () {
       expect(
         RolePermissionMatrix.hasFull(

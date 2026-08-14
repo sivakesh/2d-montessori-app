@@ -1,11 +1,11 @@
 {
   "name": "montessori-cms-security-rules-tests",
-  "description": "Emulator-only positive/negative tests for firestore.rules (users, content/transitions, published*), storage.rules and Auth account-status behavior (disabled/suspended users). See ../README.md and the repository root README's 'Testing' section — these need the Firebase Emulator Suite (JDK 21+) and are not run by any Dart/Node unit test command.",
+  "description": "Emulator-only positive/negative tests for firestore.rules (users, content/transitions, published*, media, mediaUsages), storage.rules (including feature_media's private/media/** upload rules) and Auth account-status behavior (disabled/suspended users). See ../README.md and the repository root README's 'Testing' section — these need the Firebase Emulator Suite (JDK 21+) and are not run by any Dart/Node unit test command.",
   "private": true,
   "version": "0.1.0",
   "scripts": {
     "test": "jest",
-    "test:sequential": "jest --runTestsByPath firestore.rules.test.ts && jest --runTestsByPath content.rules.test.ts && jest --runTestsByPath storage.rules.test.ts && jest --runTestsByPath auth.account-status.test.ts",
+    "test:sequential": "jest --runTestsByPath firestore.rules.test.ts && jest --runTestsByPath content.rules.test.ts && jest --runTestsByPath media.rules.test.ts && jest --runTestsByPath storage.rules.test.ts && jest --runTestsByPath auth.account-status.test.ts",
     "test:against-emulators": "firebase emulators:exec --project demo-montessori-2d --only auth,firestore,storage \"npm run test:sequential\""
   },
   "devDependencies": {

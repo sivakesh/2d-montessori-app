@@ -1,5 +1,6 @@
 import 'package:core_contracts/core_contracts.dart';
 import 'package:feature_identity/feature_identity.dart';
+import 'package:feature_media/feature_media.dart';
 import 'package:feature_pages/feature_pages.dart';
 import 'package:firebase_adapters/firebase_adapters.dart';
 import 'package:flutter/material.dart';
@@ -46,6 +47,11 @@ Future<void> bootstrapAndRunAdminWebApp({
     firestore: FirebaseFirestore.instance,
     functions: FirebaseFunctions.instance,
   );
+  final mediaRepository = FirestoreMediaRepository(
+    firestore: FirebaseFirestore.instance,
+    functions: FirebaseFunctions.instance,
+    storage: FirebaseStorage.instance,
+  );
   final authController = AuthController(authRepository);
 
   runApp(
@@ -54,6 +60,7 @@ Future<void> bootstrapAndRunAdminWebApp({
       authRepository: authRepository,
       userAdminRepository: userAdminRepository,
       pagesRepository: pagesRepository,
+      mediaRepository: mediaRepository,
     ),
   );
 }
@@ -65,12 +72,14 @@ class AdminWebApp extends StatelessWidget {
     required this.authRepository,
     required this.userAdminRepository,
     required this.pagesRepository,
+    required this.mediaRepository,
   });
 
   final AuthController authController;
   final AuthRepository authRepository;
   final UserAdminRepository userAdminRepository;
   final PagesRepository pagesRepository;
+  final MediaRepository mediaRepository;
 
   /// The standard Firebase password-reset action link is
   /// `?mode=resetPassword&oobCode=...`. Detected here (once, at startup)
@@ -114,8 +123,26 @@ class AdminWebApp extends StatelessWidget {
       visible: true,
       builder: (_) => PagesSection(
         repository: pagesRepository,
+        mediaRepository: mediaRepository,
         actingRole: session.role,
         actorId: session.uid,
+      ),
+    ),
+    AdminNavEntry(
+      icon: Icons.perm_media_outlined,
+      label: 'Media',
+      // SRS §3: every role has at least limited (own uploads) access to
+      // the media library, so — like Pages — every signed-in CMS user
+      // sees this entry; capability-gating within it (who can archive/
+      // delete someone else's upload) is handled asset-by-asset inside
+      // feature_media itself, not at the nav level.
+      visible: true,
+      builder: (_) => MediaLibraryScreen(
+        controller: MediaLibraryController(
+          repository: mediaRepository,
+          actingRole: session.role,
+          actorId: session.uid,
+        ),
       ),
     ),
   ];

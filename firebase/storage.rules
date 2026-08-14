@@ -5,16 +5,84 @@ rules_version = '2';
 // trusted Cloud Functions to /public/** and are read-only for clients
 // (PRD §7 "Original media is private by default").
 //
-// Reviewed at the Phase 1 Foundation milestone (identity & security) and
-// left unchanged: this milestone adds no Storage usage (no profile-photo
-// upload, no media library yet), so there is nothing to open beyond the
-// Phase 0 baseline. Upload/write rules requiring authenticated role
-// checks are added alongside feature_media (Phase 2 — CMS Core).
+// feature_media (Phase 1 — CMS Core, SRS MED-01..MED-06) opens the first
+// authenticated client write path: originals upload directly from the
+// browser to /private/media/{mediaId}/{fileName}, gated below by a live
+// Firestore read of the caller's role/status (cross-service Security
+// Rules — https://firebase.google.com/docs/storage/security/rules-conditions
+// — the same "trust custom claims but re-verify live status" pattern
+// firestore.rules already uses, not duplicated logic). No signed URLs and
+// no upload-brokering Cloud Function are used deliberately: Storage
+// Rules already give exactly the authorization boundary needed
+// (authenticated, active, sufficient role, approved type/size, required
+// accessibility metadata), so there's no reason to add a second moving
+// part (and its own IAM-permission surface — see
+// docs/architecture/environments.md's "Cloud Functions callable invoker
+// policy" for a real incident this project already hit from an
+// unnecessary extra IAM dependency).
+//
+// Once an original finishes uploading, a Storage-triggered Cloud
+// Function (functions/src/media/onMediaUploaded.ts) is the ONLY writer
+// of /public/media/** derivatives — clients never write there directly,
+// so "approved for public access" is enforced by what that trusted
+// function chooses to generate, not by a client-controlled path.
 service firebase.storage {
   match /b/{bucket}/o {
     match /public/{allPaths=**} {
       allow read: if true;
       allow write: if false;
+    }
+
+    // SRS MED-01..MED-06. `mediaId` is client-generated (a UUID) purely
+    // as a correlation id between this path and the `media/{mediaId}`
+    // Firestore doc the upload trigger creates — Storage Rules cannot
+    // themselves guarantee uniqueness, but a UUID collision is not a
+    // security concern (worst case: two callers targeting the same
+    // mediaId still each individually pass every check below).
+    match /private/media/{mediaId}/{fileName} {
+      // Originals are never client-readable, including by their own
+      // uploader — only the Storage trigger (Admin SDK, bypasses these
+      // rules) and Cloud Functions read /private/**. This is what keeps
+      // "Do not expose unpublished/private media through public URLs" true
+      // structurally: nothing under /private/** ever has a client-read path.
+      allow read: if false;
+      allow write: if isActiveMediaUploader()
+        && isApprovedMediaUpload()
+        && hasRequiredAccessibilityMetadata()
+        && request.resource.metadata.uploadedBy == request.auth.uid;
+      // Deletion of an original is server-side only (the permanent-delete
+      // callable, using the Admin SDK) — never a direct client write.
+      allow delete: if false;
+    }
+
+    function isActiveMediaUploader() {
+      return request.auth != null
+        && (request.auth.token.role == 'editor' || request.auth.token.role == 'publisher' || request.auth.token.role == 'superAdmin')
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.status == 'active';
+    }
+
+    // Approved file types and size limits (SRS "approved file-type and
+    // size limits") — mirrored server-side in
+    // functions/src/media/validators.ts as the authoritative,
+    // non-spoofable re-check once the object actually exists (a Storage
+    // Rule can only see the client-declared contentType/size at request
+    // time, not the real file bytes).
+    function isApprovedMediaUpload() {
+      return
+        (request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+          && request.resource.size < 10 * 1024 * 1024) ||
+        (request.resource.contentType in ['video/mp4', 'video/webm']
+          && request.resource.size < 200 * 1024 * 1024) ||
+        (request.resource.contentType == 'application/pdf'
+          && request.resource.size < 25 * 1024 * 1024);
+    }
+
+    // SRS "accessible alt text" — required at upload time, not added
+    // later, so nothing can ever exist in the library without it.
+    function hasRequiredAccessibilityMetadata() {
+      return request.resource.metadata != null
+        && request.resource.metadata.title is string && request.resource.metadata.title.size() > 0
+        && request.resource.metadata.altText is string && request.resource.metadata.altText.size() > 0;
     }
 
     match /{allPaths=**} {

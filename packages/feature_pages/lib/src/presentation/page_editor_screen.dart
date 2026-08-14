@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:feature_media/feature_media.dart' show MediaRepository;
 import 'package:feature_publishing/feature_publishing.dart';
 import 'package:flutter/material.dart';
 
@@ -9,6 +10,7 @@ import '../domain/page_content_update.dart';
 import '../domain/page_section.dart';
 import '../domain/page_type.dart';
 import '../domain/seo_metadata.dart';
+import 'media_reference_picker_field.dart';
 import 'page_editor_controller.dart';
 import 'page_preview_screen.dart';
 import 'section_editor_dialog.dart';
@@ -27,10 +29,12 @@ class PageEditorScreen extends StatefulWidget {
   const PageEditorScreen({
     super.key,
     required this.controller,
+    required this.mediaRepository,
     required this.onClose,
   });
 
   final PageEditorController controller;
+  final MediaRepository mediaRepository;
   final VoidCallback onClose;
 
   @override
@@ -50,12 +54,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
   late bool _showInNavigation = widget.controller.page.showInNavigation;
   late List<PageSection> _sections = List.of(widget.controller.page.sections);
 
-  late final _featuredImageUrl = TextEditingController(
-    text: widget.controller.page.featuredImage?.url ?? '',
-  );
-  late final _featuredImageAlt = TextEditingController(
-    text: widget.controller.page.featuredImage?.altText ?? '',
-  );
+  late MediaReference? _featuredImage = widget.controller.page.featuredImage;
 
   late final _seoTitle = TextEditingController(
     text: widget.controller.page.seo.title ?? '',
@@ -73,9 +72,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
   late final _socialDescription = TextEditingController(
     text: widget.controller.page.seo.social.description ?? '',
   );
-  late final _socialImageUrl = TextEditingController(
-    text: widget.controller.page.seo.social.image?.url ?? '',
-  );
+  late MediaReference? _socialImage = widget.controller.page.seo.social.image;
 
   Timer? _autosaveTimer;
   List<String> _lastViolations = const [];
@@ -89,14 +86,11 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
       _slug,
       _summary,
       _navigationLabel,
-      _featuredImageUrl,
-      _featuredImageAlt,
       _seoTitle,
       _seoDescription,
       _canonicalUrl,
       _socialTitle,
       _socialDescription,
-      _socialImageUrl,
     ]) {
       controller.addListener(_scheduleAutosave);
     }
@@ -111,14 +105,11 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
       _slug,
       _summary,
       _navigationLabel,
-      _featuredImageUrl,
-      _featuredImageAlt,
       _seoTitle,
       _seoDescription,
       _canonicalUrl,
       _socialTitle,
       _socialDescription,
-      _socialImageUrl,
     ]) {
       controller.dispose();
     }
@@ -144,12 +135,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
     summary: _summary.text,
     pageType: _pageType,
     sections: _sections,
-    featuredImage: _featuredImageUrl.text.trim().isEmpty
-        ? null
-        : MediaReference(
-            url: _featuredImageUrl.text.trim(),
-            altText: _featuredImageAlt.text.trim(),
-          ),
+    featuredImage: _featuredImage,
     seo: SeoMetadata(
       title: _seoTitle.text.trim().isEmpty ? null : _seoTitle.text.trim(),
       metaDescription: _seoDescription.text.trim().isEmpty
@@ -166,12 +152,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
         description: _socialDescription.text.trim().isEmpty
             ? null
             : _socialDescription.text.trim(),
-        image: _socialImageUrl.text.trim().isEmpty
-            ? null
-            : MediaReference(
-                url: _socialImageUrl.text.trim(),
-                altText: _socialTitle.text.trim(),
-              ),
+        image: _socialImage,
       ),
     ),
     navigationLabel: _navigationLabel.text.trim().isEmpty
@@ -241,14 +222,22 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
         relatedPageIds: const [],
       ),
     };
-    final edited = await SectionEditorDialog.show(context, draft);
+    final edited = await SectionEditorDialog.show(
+      context,
+      draft,
+      mediaRepository: widget.mediaRepository,
+    );
     if (edited == null) return;
     setState(() => _sections = [..._sections, edited]);
     _scheduleAutosave();
   }
 
   Future<void> _editSection(int index) async {
-    final edited = await SectionEditorDialog.show(context, _sections[index]);
+    final edited = await SectionEditorDialog.show(
+      context,
+      _sections[index],
+      mediaRepository: widget.mediaRepository,
+    );
     if (edited == null) return;
     setState(() => _sections[index] = edited);
     _scheduleAutosave();
@@ -507,17 +496,14 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                         _scheduleAutosave();
                       },
                     ),
-                    TextField(
-                      controller: _featuredImageUrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Featured image URL (optional)',
-                      ),
-                    ),
-                    TextField(
-                      controller: _featuredImageAlt,
-                      decoration: const InputDecoration(
-                        labelText: 'Featured image alt text',
-                      ),
+                    MediaReferencePickerField(
+                      label: 'Featured image (optional)',
+                      value: _featuredImage,
+                      mediaRepository: widget.mediaRepository,
+                      onChanged: (image) {
+                        setState(() => _featuredImage = image);
+                        _scheduleAutosave();
+                      },
                     ),
                     ExpansionTile(
                       title: const Text('SEO & social sharing'),
@@ -571,11 +557,14 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                             labelText: 'Social share description (optional)',
                           ),
                         ),
-                        TextField(
-                          controller: _socialImageUrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Social share image URL (optional)',
-                          ),
+                        MediaReferencePickerField(
+                          label: 'Social share image (optional)',
+                          value: _socialImage,
+                          mediaRepository: widget.mediaRepository,
+                          onChanged: (image) {
+                            setState(() => _socialImage = image);
+                            _scheduleAutosave();
+                          },
                         ),
                       ],
                     ),

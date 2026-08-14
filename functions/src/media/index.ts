@@ -1,16 +1,19 @@
 /**
- * Capability: media
+ * Media Library — Cloud Functions.
  *
- * Upload validation (MIME/signature/size/dimensions), derivative generation, EXIF/GPS stripping, consent gating before publish.
+ * Traceability: SRS MED-01..MED-06; PRD Section 7 (Media Library)
  *
- * Traceability: SRS MED-01..MED-06
- *
- * Phase 0 scaffold only — no callable/trigger functions are exported yet.
- * Real implementations land per the milestone that owns this capability
- * (see /README.md "Implementation milestones"). Every exported function
- * added here must go through the shared audit helper in ../lib/audit.ts
- * and must never trust client-supplied role/permission claims without
- * re-verifying them server-side (SRS NFR-05).
+ * Uploads go directly from the client to Cloud Storage
+ * (`private/media/{mediaId}/original.<ext>`), authorized by
+ * `firebase/storage.rules` — no upload-brokering callable exists here.
+ * `onMediaUploaded` (a Storage trigger, not a callable) is the pipeline
+ * that turns a landed original into a processed, publicly-servable
+ * `media/{mediaId}` document; every other export here is an ordinary
+ * callable for library management once an asset exists.
  */
-
 export const capability = 'media' as const;
+
+export { onMediaUploaded } from './onMediaUploaded';
+export { updateMediaMetadata } from './updateMediaMetadata';
+export { archiveMedia, restoreMedia } from './archiveMedia';
+export { deleteMedia } from './deleteMedia';

@@ -1,6 +1,7 @@
 import 'package:admin_web/main.dart';
 import 'package:core_contracts/core_contracts.dart';
 import 'package:feature_identity/feature_identity.dart';
+import 'package:feature_media/feature_media.dart';
 import 'package:feature_pages/feature_pages.dart';
 import 'package:feature_publishing/feature_publishing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -118,6 +119,57 @@ class _FakePagesRepository implements PagesRepository {
   }) async => const Result.failure(ContentNotFoundFailure());
 }
 
+class _FakeMediaRepository implements MediaRepository {
+  @override
+  Stream<MediaUploadEvent> upload(
+    MediaUploadRequest request, {
+    required String actorId,
+  }) => Stream.value(
+    const MediaUploadFinished(
+      Result.failure(MediaUploadFailure('not used in this test')),
+    ),
+  );
+
+  @override
+  Future<Result<MediaAsset>> get(String mediaId) async =>
+      const Result.failure(MediaNotFoundFailure());
+
+  @override
+  Stream<Result<MediaAsset>> observe(String mediaId) =>
+      Stream.value(const Result.failure(MediaNotFoundFailure()));
+
+  @override
+  Future<Result<Page<MediaAsset>>> list({
+    MediaFilter query = const MediaFilter(),
+    PageRequest request = const PageRequest(),
+  }) async =>
+      const Result.ok(Page(items: [], nextCursor: null, hasMore: false));
+
+  @override
+  Future<Result<MediaAsset>> updateMetadata({
+    required String mediaId,
+    required String title,
+    required String altText,
+    String description = '',
+  }) async => const Result.failure(MediaNotFoundFailure());
+
+  @override
+  Future<Result<void>> archive(String mediaId) async =>
+      const Result.failure(MediaNotFoundFailure());
+
+  @override
+  Future<Result<void>> restore(String mediaId) async =>
+      const Result.failure(MediaNotFoundFailure());
+
+  @override
+  Future<Result<void>> delete(String mediaId) async =>
+      const Result.failure(MediaNotFoundFailure());
+
+  @override
+  Future<Result<List<MediaUsageReference>>> listUsages(String mediaId) async =>
+      const Result.ok([]);
+}
+
 void main() {
   testWidgets('AdminWebApp shows the sign-in screen when signed out', (
     WidgetTester tester,
@@ -136,6 +188,7 @@ void main() {
         authRepository: authRepository,
         userAdminRepository: _FakeUserAdminRepository(),
         pagesRepository: _FakePagesRepository(),
+        mediaRepository: _FakeMediaRepository(),
       ),
     );
     await tester.pump();

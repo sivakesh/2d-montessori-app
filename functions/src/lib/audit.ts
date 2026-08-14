@@ -24,6 +24,7 @@ export type AuditEventType =
   | 'unpublish'
   | 'archive'
   | 'restore'
+  | 'delete'
   | 'login'
   | 'roleChange'
   | 'statusChange'

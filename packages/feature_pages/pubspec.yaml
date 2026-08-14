@@ -23,6 +23,8 @@ dependencies:
     path: ../firebase_adapters
   feature_publishing:
     path: ../feature_publishing
+  feature_media:
+    path: ../feature_media
 
 dev_dependencies:
   flutter_lints: ^5.0.0

@@ -14,6 +14,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 
 import { writeAuditEvent } from '../lib/audit';
 import { resolveRequestId } from '../lib/requestId';
+import { collectPageMediaUsage, reconcilePageMediaUsage } from '../media/usageTracking';
 import { assertActiveCaller } from '../publishing/guards';
 import { canEditAllContent } from './permissions';
 import { assertSlugAvailable } from './slug';
@@ -73,6 +74,15 @@ export const updatePageContent = onCall<Record<string, unknown>, Promise<UpdateP
       showInNavigation: content.showInNavigation,
       actorId: caller.uid,
       createdAt: now,
+    });
+
+    reconcilePageMediaUsage({
+      db,
+      transaction,
+      contentId: pageId,
+      contentTitle: content.title,
+      before: collectPageMediaUsage(current),
+      after: collectPageMediaUsage(content),
     });
   });
 

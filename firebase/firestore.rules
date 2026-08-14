@@ -143,6 +143,38 @@ service cloud.firestore {
       }
     }
 
+    // SRS §3 "Create/edit own drafts: full" for every role, extended here
+    // to media library *read* access — every role may browse/select
+    // assets (media is a shared library, not per-editor draft content,
+    // unlike content/ above which is owner-scoped).
+    function isActiveCmsUser() {
+      return request.auth != null
+        && (request.auth.token.role == 'editor' || request.auth.token.role == 'publisher' || request.auth.token.role == 'superAdmin')
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active';
+    }
+
+    // ---- media/{mediaId}: SRS MED-01..MED-06 (Phase 1 — CMS Core / feature_media) ----
+    // Every active CMS user (any role) may read the library to browse/
+    // select assets for use in Pages — not owner-scoped, since media is a
+    // shared library. No client writes: uploads are validated by Storage
+    // Rules (see storage.rules); every Firestore write (status
+    // transitions, metadata edits, archive/restore, permanent delete)
+    // goes through functions/src/media using the Admin SDK.
+    match /media/{mediaId} {
+      allow read: if isActiveCmsUser();
+      allow write: if false;
+    }
+
+    // Denormalized usage-reference index ("usage references showing where
+    // an asset is used" / "protection against deleting media currently in
+    // use") — same read/write policy as media/ above; maintained
+    // transactionally by functions/src/pages/updatePageContent.ts
+    // alongside the content write it accompanies.
+    match /mediaUsages/{usageId} {
+      allow read: if isActiveCmsUser();
+      allow write: if false;
+    }
+
     // ---- Everything else: deny by default until its owning milestone ----
     match /{document=**} {
       allow read, write: if false;
