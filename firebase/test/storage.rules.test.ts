@@ -21,10 +21,23 @@ const REQUIRED_METADATA = { title: 'Test asset', altText: 'A description of the 
 
 beforeAll(async () => {
   testEnv = await initializeTestEnvironment({
-    // Distinct project ID per test file — see firestore.rules.test.ts's
-    // comment on the same line for why (a real "already started" failure
-    // caught by CI when two files shared one project ID).
-    projectId: 'demo-montessori-2d-storage-rules',
+    // NOT a distinct-per-file project id (unlike every other rules-test
+    // file) — deliberately matches the ambient project
+    // `firebase emulators:exec --project demo-montessori-2d` starts.
+    // storage.rules' firestore.get() cross-service call resolves
+    // against the emulator hub's ambient project, not
+    // initializeTestEnvironment's own ProjectId, a documented
+    // @firebase/rules-unit-testing limitation (see
+    // https://github.com/firebase/firebase-js-sdk/issues/6803) —
+    // confirmed for real here: with a distinct project id, every
+    // firestore.get() call inside storage.rules threw "Null value
+    // error" because the seeded users/{uid} doc lived in a Firestore
+    // project the cross-service call never actually queried. Safe from
+    // the "already started"/data-collision issue distinct-per-file ids
+    // exist to avoid, since firebase/test/package.json's
+    // test:sequential always runs this file in its own separate jest
+    // process, never concurrently with another file.
+    projectId: 'demo-montessori-2d',
     // The real ruleset, not a stub — firestore.get() calls from
     // storage.rules are admin-level cross-service reads that bypass
     // Firestore's own rules regardless, but loading the real file avoids
