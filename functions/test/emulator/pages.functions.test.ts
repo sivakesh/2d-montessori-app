@@ -24,6 +24,7 @@ import type { CallableRequest } from 'firebase-functions/v2/https';
 import { createPage } from '../../src/pages/createPage';
 import { restorePageRevision } from '../../src/pages/restorePageRevision';
 import { syncPublishedPageForChange } from '../../src/pages/syncPublishedPage';
+import { runScheduledPublish } from '../../src/scheduling/publishScheduledContent';
 import { transitionPage } from '../../src/pages/transitionPage';
 import { updatePageContent } from '../../src/pages/updatePageContent';
 
@@ -322,6 +323,170 @@ describe('transitionPage — completeness gate and full workflow', () => {
     expect(restoredDoc.data()?.restoredAt).toBeTruthy();
 
     await cleanupPublishedPage(slug);
+  });
+});
+
+/**
+ * Reproduces (against the old implementation, before this file's fix)
+ * and guards against a real Dev UAT defect: a page scheduled minutes in
+ * the future was publicly readable immediately. Root cause: Cloud
+ * Firestore's `onDocumentWritten` trigger delivers events *at least
+ * once* and with **no ordering guarantee** (documented Google Cloud
+ * behavior) — `syncPublishedPageForChange` used to trust whichever
+ * event's `after` payload it was currently processing, so a page
+ * quickly published then unpublished/rescheduled (routine during
+ * authoring/UAT) could have its "became Published" event processed
+ * *after* its later "no longer Published" event, resurrecting a stale
+ * `publishedPages` document for content that is not currently
+ * Published. The fix makes every invocation re-read the *live*
+ * `content/{contentId}` document and reconcile from that, regardless of
+ * which event (or how many, or in what order) triggered the run — see
+ * `functions/src/pages/syncPublishedPage.ts`'s doc comment.
+ */
+describe('syncPublishedPageForChange — scheduling, restaleness and delivery-order safety', () => {
+  const editorUid = 'pages-sched-editor';
+  const publisherUid = 'pages-sched-publisher';
+  let pageId: string;
+
+  beforeAll(() => Promise.all([seedUser(editorUid, 'editor'), seedUser(publisherUid, 'publisher')]));
+  afterAll(() => Promise.all([cleanupUser(editorUid), cleanupUser(publisherUid)]));
+
+  async function createApprovedPage(overrides: Record<string, unknown> = {}): Promise<string> {
+    const response = await createPage.run(requestAs(editorUid, 'editor', { title: 'Scheduling test page' }));
+    await updatePageContent.run(requestAs(editorUid, 'editor', { pageId: response.pageId, ...fullPageContent(overrides) }));
+    await transitionPage.run(requestAs(editorUid, 'editor', { contentId: response.pageId, action: 'submitForReview' }));
+    await transitionPage.run(requestAs(publisherUid, 'publisher', { contentId: response.pageId, action: 'approve' }));
+    return response.pageId;
+  }
+
+  async function currentDoc(id: string): Promise<FirebaseFirestore.DocumentData | undefined> {
+    return (await db.collection('content').doc(id).get()).data();
+  }
+
+  afterEach(() => cleanupContent(pageId));
+
+  it('Approved -> Scheduled is never materialized into publishedPages', async () => {
+    pageId = await createApprovedPage();
+    const beforeSchedule = await currentDoc(pageId);
+    await transitionPage.run(
+      requestAs(publisherUid, 'publisher', { contentId: pageId, action: 'schedule', scheduledAt: new Date(Date.now() + 10 * 60_000).toISOString() }),
+    );
+    const afterSchedule = await currentDoc(pageId);
+    const slug = afterSchedule?.slug as string;
+
+    await syncPublishedPageForChange(db, pageId, beforeSchedule, afterSchedule);
+
+    expect((await db.collection('publishedPages').doc(slug).get()).exists).toBe(false);
+  });
+
+  it('a Scheduled page before its due time is never published by the executor and stays non-public', async () => {
+    pageId = await createApprovedPage();
+    const future = new Date(Date.now() + 10 * 60_000);
+    await transitionPage.run(requestAs(publisherUid, 'publisher', { contentId: pageId, action: 'schedule', scheduledAt: future.toISOString() }));
+    const scheduledDoc = await currentDoc(pageId);
+    const slug = scheduledDoc?.slug as string;
+
+    const result = await runScheduledPublish(db, new Date());
+    expect(result.publishedContentIds).not.toContain(pageId);
+
+    const stillScheduled = await currentDoc(pageId);
+    expect(stillScheduled?.status).toBe('scheduled');
+
+    await syncPublishedPageForChange(db, pageId, scheduledDoc, stillScheduled);
+    expect((await db.collection('publishedPages').doc(slug).get()).exists).toBe(false);
+  });
+
+  it('a Scheduled page becomes public once the executor runs at/after its due time', async () => {
+    pageId = await createApprovedPage();
+    const dueSoon = new Date(Date.now() + 60_000);
+    await transitionPage.run(requestAs(publisherUid, 'publisher', { contentId: pageId, action: 'schedule', scheduledAt: dueSoon.toISOString() }));
+    const scheduledDoc = await currentDoc(pageId);
+    const slug = scheduledDoc?.slug as string;
+
+    // The executor never runs "early" relative to a real clock in this
+    // test — it is given a `now` at/after `dueSoon`, the same as Cloud
+    // Scheduler would supply on the next real 5-minute tick at or after
+    // scheduledAt (never before, per publishScheduledContent.ts's own
+    // query filter).
+    const result = await runScheduledPublish(db, new Date(dueSoon.getTime() + 1000));
+    expect(result.publishedContentIds).toContain(pageId);
+
+    const publishedDoc = await currentDoc(pageId);
+    expect(publishedDoc?.status).toBe('published');
+
+    await syncPublishedPageForChange(db, pageId, scheduledDoc, publishedDoc);
+    const materialized = await db.collection('publishedPages').doc(slug).get();
+    expect(materialized.exists).toBe(true);
+    expect(materialized.data()).toMatchObject({ pageId, slug });
+
+    await cleanupPublishedPage(slug);
+  });
+
+  it('removes the old slug document when a previously-published, restored page is republished under a changed slug', async () => {
+    pageId = await createApprovedPage();
+    await transitionPage.run(requestAs(publisherUid, 'publisher', { contentId: pageId, action: 'publish' }));
+    const publishedDoc = await currentDoc(pageId);
+    const oldSlug = publishedDoc?.slug as string;
+    await syncPublishedPageForChange(db, pageId, { status: 'approved' }, publishedDoc);
+    expect((await db.collection('publishedPages').doc(oldSlug).get()).exists).toBe(true);
+
+    await transitionPage.run(requestAs(publisherUid, 'publisher', { contentId: pageId, action: 'unpublish' }));
+    const archivedDoc = await currentDoc(pageId);
+    await syncPublishedPageForChange(db, pageId, publishedDoc, archivedDoc);
+    expect((await db.collection('publishedPages').doc(oldSlug).get()).exists).toBe(false);
+
+    await transitionPage.run(requestAs(publisherUid, 'publisher', { contentId: pageId, action: 'restore' }));
+    const newSlug = `changed-slug-${Date.now()}`;
+    await updatePageContent.run(requestAs(editorUid, 'editor', { pageId, ...fullPageContent({ slug: newSlug }) }));
+    await transitionPage.run(requestAs(editorUid, 'editor', { contentId: pageId, action: 'submitForReview' }));
+    await transitionPage.run(requestAs(publisherUid, 'publisher', { contentId: pageId, action: 'approve' }));
+    const beforeRepublish = await currentDoc(pageId);
+    await transitionPage.run(requestAs(publisherUid, 'publisher', { contentId: pageId, action: 'publish' }));
+    const republishedDoc = await currentDoc(pageId);
+
+    await syncPublishedPageForChange(db, pageId, beforeRepublish, republishedDoc);
+
+    expect((await db.collection('publishedPages').doc(oldSlug).get()).exists).toBe(false);
+    const newDoc = await db.collection('publishedPages').doc(newSlug).get();
+    expect(newDoc.exists).toBe(true);
+    expect(newDoc.data()).toMatchObject({ pageId, slug: newSlug });
+
+    await cleanupPublishedPage(newSlug);
+  });
+
+  it('a stale, out-of-order-delivered publish event cannot resurrect publishedPages once the page has moved on — the actual reproduction of the Dev UAT defect', async () => {
+    pageId = await createApprovedPage();
+    await transitionPage.run(requestAs(publisherUid, 'publisher', { contentId: pageId, action: 'publish' }));
+    const publishedDoc = await currentDoc(pageId);
+    const slug = publishedDoc?.slug as string;
+    await syncPublishedPageForChange(db, pageId, { status: 'approved' }, publishedDoc);
+    expect((await db.collection('publishedPages').doc(slug).get()).exists).toBe(true);
+
+    await transitionPage.run(requestAs(publisherUid, 'publisher', { contentId: pageId, action: 'unpublish' }));
+    const archivedDoc = await currentDoc(pageId);
+    await syncPublishedPageForChange(db, pageId, publishedDoc, archivedDoc);
+    expect((await db.collection('publishedPages').doc(slug).get()).exists).toBe(false);
+
+    await transitionPage.run(requestAs(publisherUid, 'publisher', { contentId: pageId, action: 'restore' }));
+    await transitionPage.run(requestAs(editorUid, 'editor', { contentId: pageId, action: 'submitForReview' }));
+    await transitionPage.run(requestAs(publisherUid, 'publisher', { contentId: pageId, action: 'approve' }));
+    await transitionPage.run(
+      requestAs(publisherUid, 'publisher', { contentId: pageId, action: 'schedule', scheduledAt: new Date(Date.now() + 10 * 60_000).toISOString() }),
+    );
+    const rescheduledDoc = await currentDoc(pageId);
+    expect(rescheduledDoc?.status).toBe('scheduled');
+
+    // Simulate the ORIGINAL "publish" trigger invocation being
+    // (re)delivered late, after everything above has already happened —
+    // exactly the out-of-order delivery Cloud Firestore triggers do not
+    // rule out. Firing this with the stale `publishedDoc` payload is
+    // precisely what the old, event-trusting implementation would have
+    // used to wrongly recreate a public document for a page that is now
+    // merely Scheduled.
+    await syncPublishedPageForChange(db, pageId, archivedDoc, publishedDoc);
+
+    expect((await db.collection('publishedPages').doc(slug).get()).exists).toBe(false);
+    expect((await currentDoc(pageId))?.status).toBe('scheduled');
   });
 });
 

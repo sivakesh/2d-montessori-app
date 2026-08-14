@@ -869,6 +869,60 @@ failures, confirm every job including emulator-backed ones is green,
 report) is completed before any deployment is attempted, and deployment
 itself requires separate, explicit confirmation.
 
+## Post-deployment fix: stale `publishedPages` materialization (Dev UAT)
+
+**Symptom, found in real Dev UAT:** a page scheduled roughly 10 minutes
+in the future was publicly readable immediately.
+
+**Investigated and ruled out:** the scheduled executor
+(`runScheduledPublish`) itself — it correctly filters `status ==
+'scheduled' && scheduledAt <= now` both in its query and again inside
+each document's own transaction immediately before writing, so it
+cannot publish anything early. Every other content-mutating path
+(`createPage`, `updatePageContent`, `restorePageRevision`,
+`applyTransition`) was also reviewed and found to gate correctly on the
+real publishing state machine.
+
+**Actual root cause:** `pages/syncPublishedPage.ts`'s
+`syncPublishedPageForChange` trusted whichever event's `before`/`after`
+payload it happened to be processing to decide whether to
+materialize/delete `publishedPages/{slug}`. Cloud Firestore's
+`onDocumentWritten` trigger delivers events **at least once** and
+**without an ordering guarantee** — documented Google Cloud behavior,
+not specific to this codebase. A page published and then quickly
+unpublished or rescheduled (routine while authoring or during UAT
+itself) can have its two trigger invocations processed out of order: an
+older "became Published" event redelivered *after* a newer "no longer
+Published" event resurrects a stale `publishedPages` document for
+content that is not currently Published. The scheduling symptom
+observed was this exact mechanism, not a scheduling-specific bug — the
+public document was left over from earlier publish/unpublish activity
+on the same page, unrelated to the schedule action itself.
+
+**Fix:** every invocation now re-reads the *live* `content/{contentId}`
+document and reconciles `publishedPages` to match that live truth,
+instead of trusting the triggering event's payload — see the file's own
+doc comment for the full mechanism, including why `before.slug` is
+still consulted (only as a hint for cleaning up a slug the document has
+since moved away from; a live read alone cannot recover a slug a
+document no longer has). This makes the sync convergent and idempotent
+regardless of delivery order, delivery count, or which event triggered
+a given run.
+
+**Regression coverage added**
+(`functions/test/emulator/pages.functions.test.ts`, describe block
+`syncPublishedPageForChange — scheduling, restaleness and delivery-order
+safety`): Approved→Scheduled never materializes; a Scheduled page before
+its due time is never published by the executor; a Scheduled page
+becomes public once the executor runs at/after its due time; a
+previously-published, restored, slug-changed page's old slug is removed
+on republish; and — the direct reproduction of the real defect — a
+stale, out-of-order-delivered "publish" event cannot resurrect
+`publishedPages` once the page has since moved on to Scheduled. That
+last test fails against the pre-fix implementation and passes against
+the fix, which is what actually demonstrates this is the real
+mechanism, not merely a plausible one.
+
 ## Traceability
 
 Every implementation story must reference an SRS requirement ID (e.g.

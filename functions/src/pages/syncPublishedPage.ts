@@ -14,8 +14,7 @@
  *
  * Editing a page's content is only ever allowed while it is a Draft (see
  * `updatePageContent.ts`), so a page's `slug` cannot change while it is
- * Published — this sync therefore never has to reconcile "published
- * under slug A, now published under slug B" in one write.
+ * Published.
  *
  * The sync logic is exported as `syncPublishedPageForChange`, taking
  * plain `before`/`after` document data rather than a Firestore
@@ -25,6 +24,30 @@
  * constructing a realistic 2nd-gen `FirestoreEvent` in a test is
  * impractical (unlike `onCall`'s `CallableRequest`, which this
  * codebase's other tests construct directly).
+ *
+ * Deliberately does NOT trust `after` (or `before`) for the actual
+ * publish/unpublish decision or for the fields it writes — Cloud
+ * Firestore 2nd-gen triggers are delivered *at least once* and are
+ * explicitly **not** ordering-guaranteed (see Google's own Cloud
+ * Functions/Eventarc docs). A page rapidly published then unpublished
+ * or rescheduled (routine during authoring/UAT) can have its two
+ * trigger invocations processed out of order: if the older "became
+ * Published" event is (re)delivered *after* the newer "no longer
+ * Published" event has already run, blindly trusting that stale
+ * event's `after` payload would resurrect (or leave stale) a
+ * `publishedPages/{slug}` document for a page that is not currently
+ * Published — a real defect found in Dev UAT (a page scheduled minutes
+ * in the future was publicly readable immediately; root-caused to
+ * exactly this — a stale `publishedPages` document left over from
+ * earlier publish/unpublish testing on the same page, not anything
+ * about scheduling itself). Every invocation instead re-reads the
+ * *live* `content/{contentId}` document and reconciles `publishedPages`
+ * to match that live truth, making this convergent and idempotent
+ * regardless of delivery order, delivery count, or which specific
+ * event triggered this run. `before.slug` is still used, but only as a
+ * hint for cleaning up a slug this specific write moved *away* from —
+ * a live read alone can never recover a slug the document no longer
+ * has.
  */
 import { getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
@@ -67,7 +90,15 @@ export async function resolveRelatedPages(db: Firestore, sections: unknown): Pro
   return result;
 }
 
-/** The testable core: given a content document's before/after state, brings `publishedPages` in line. */
+/**
+ * The testable core. `before`/`after` are the triggering event's own
+ * payload — used only as a cheap early-exit filter (is this write even
+ * page-related?) and as a hint for which slug this write may have moved
+ * away from. The actual publish/unpublish decision, and every field
+ * written, always comes from a fresh read of `content/{contentId}` — see
+ * this file's doc comment for why trusting the event payload directly
+ * is not safe.
+ */
 export async function syncPublishedPageForChange(
   db: Firestore,
   contentId: string,
@@ -76,36 +107,41 @@ export async function syncPublishedPageForChange(
 ): Promise<void> {
   if (!isPage(before) && !isPage(after)) return;
 
-  const wasPublished = before?.status === 'published';
-  const isPublished = after?.status === 'published';
+  const liveSnapshot = await db.collection('content').doc(contentId).get();
+  const live = liveSnapshot.exists ? liveSnapshot.data() : undefined;
+  const shouldBePublished = isPage(live) && live?.status === 'published';
+  const liveSlug = shouldBePublished ? (live?.slug as string) : undefined;
 
-  if (isPublished && after) {
-    const resolvedRelatedPages = await resolveRelatedPages(db, after.sections);
-    await db
-      .collection('publishedPages')
-      .doc(after.slug as string)
-      .set({
-        pageId: contentId,
-        slug: after.slug,
-        title: after.title,
-        summary: after.summary,
-        pageType: after.pageType,
-        sections: after.sections ?? [],
-        featuredImage: after.featuredImage ?? null,
-        seo: after.seo ?? null,
-        navigationLabel: after.navigationLabel ?? null,
-        showInNavigation: after.showInNavigation === true,
-        publishedAt: after.publishedAt ?? null,
-        resolvedRelatedPages,
-      });
-    return;
+  // A slug this write moved away from (including "was published under
+  // this slug, no longer is") can only be recovered from the event
+  // itself — a live read has no memory of a slug the document no
+  // longer has. Guarded by `!== liveSlug` so a stale/reordered event
+  // can never delete a slug that a *later* write has since republished
+  // under (the same content id or otherwise).
+  const staleSlug = before?.slug as string | undefined;
+  if (staleSlug && staleSlug !== liveSlug) {
+    await db.collection('publishedPages').doc(staleSlug).delete();
   }
 
-  if (wasPublished && before) {
+  if (shouldBePublished && live && liveSlug) {
+    const resolvedRelatedPages = await resolveRelatedPages(db, live.sections);
     await db
       .collection('publishedPages')
-      .doc(before.slug as string)
-      .delete();
+      .doc(liveSlug)
+      .set({
+        pageId: contentId,
+        slug: live.slug,
+        title: live.title,
+        summary: live.summary,
+        pageType: live.pageType,
+        sections: live.sections ?? [],
+        featuredImage: live.featuredImage ?? null,
+        seo: live.seo ?? null,
+        navigationLabel: live.navigationLabel ?? null,
+        showInNavigation: live.showInNavigation === true,
+        publishedAt: live.publishedAt ?? null,
+        resolvedRelatedPages,
+      });
   }
 }
 
