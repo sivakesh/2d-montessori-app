@@ -661,12 +661,27 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                   'Saved ${controller.lastSavedAt!.toLocal().toString().split('.').first}',
                 ),
               for (final rule in availableActions)
-                OutlinedButton(
-                  onPressed: controller.isBusy
-                      ? null
-                      : () => _runAction(rule.action),
-                  child: Text(rule.action.storageValue),
-                ),
+                if (rule.action == PublishingAction.schedule)
+                  Tooltip(
+                    message:
+                        'Scheduled publishing is temporarily unavailable '
+                        'while a known issue is being fixed (it does not '
+                        'reliably go live at the scheduled time). Use '
+                        'Publish for an immediate release instead.',
+                    child: OutlinedButton(
+                      onPressed: null,
+                      child: Text(
+                        '${rule.action.storageValue} (unavailable)',
+                      ),
+                    ),
+                  )
+                else
+                  OutlinedButton(
+                    onPressed: controller.isBusy
+                        ? null
+                        : () => _runAction(rule.action),
+                    child: Text(rule.action.storageValue),
+                  ),
               if (controller.isBusy)
                 const SizedBox(
                   width: 16,
