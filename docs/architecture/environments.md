@@ -90,6 +90,24 @@ Hosting site ids are confirmed and already filled in to
 | Cloud Functions region | `us-central1` for `onCall`/`onSchedule`; `asia-south1` for the one Firestore trigger — see "Cloud Functions region policy" below |
 | Firestore database location | `asia-south1` (confirmed via `gcloud firestore databases describe --database="(default)" --project=twod-montessori-dev`) |
 | Scheduled-publish timezone | `Asia/Kolkata` (`functions/src/scheduling/publishScheduledContent.ts`) |
+| Cloud Functions Node.js runtime | `22` (`functions/package.json`'s `engines.node`; upgraded from `20` — see "Cloud Functions runtime & dependency versions" below) |
+
+### Cloud Functions runtime & dependency versions
+
+Upgraded off Node.js 20 ahead of its Cloud Functions deprecation (deprecated 30 Apr 2026, decommissioned 30 Oct 2026, per the warnings Firebase's own deploy output surfaced after the first successful Dev deployment) to Node.js 22, both GA-supported Cloud Functions runtimes as of this upgrade. Alongside the runtime bump, `functions/package.json`'s Firebase SDK dependencies were upgraded deliberately, not blindly pinned to `latest`:
+
+| Package | Before | After | Why this target, not `latest` |
+|---|---|---|---|
+| `firebase-functions` | `^6.1.0` (6.6.0 installed) | `^7.3.2` | v7's breaking changes (`functions.config()` removed, v1 `Event` renamed to `LegacyEvent`, Node `>=18` required) don't apply here — confirmed by grep: this codebase has no `functions.config()` call, no `firebase-functions/v1` import, and no `onRequest` handler. Safe to take the true latest. |
+| `firebase-admin` | `^12.7.0` | `^13.10.0` (latest **13.x**, deliberately *not* 14.x) | `firebase-admin@14.0.0` requires Node `>=22` (satisfied) but also removes the legacy `admin.firestore()`/`admin.auth()` namespace outright and drops the deprecated Instance ID/FCM types. More importantly: `firebase-functions-test@3.5.0`'s own `peerDependencies` only declare `firebase-admin` support up to `^13.0.0` — it does not yet declare v14 compatibility. Installing admin v14 today would mean the test harness itself is running against an Admin SDK major version it doesn't claim to support. v13's own breaking changes (deprecated FCM API removal, Remote Config hashing change, Node `>=18`) don't apply to this codebase either. **v14 is deferred** until `firebase-functions-test` declares v14 support — track this and revisit, don't force it. |
+| `firebase-functions-test` | `^3.4.0` (3.5.0 installed) | unchanged | Already resolves to the latest 3.x release; no forcing change needed. |
+| `@types/node` | `^22.10.2` | `^22.20.1` | Patch-level currency within the already-correct major (22.x, matching the runtime) — not a functional change. |
+
+One source change was needed to keep the door open for a future v14 upgrade even though this milestone stays on v13: `functions/src/lib/audit.ts` was migrated from the legacy `admin.firestore()`/`admin.firestore.FieldValue` namespace calls to the modular `getFirestore()`/`FieldValue` imports from `firebase-admin/firestore` — the same pattern every other module in this codebase already used. This was the only legacy-namespace usage found (confirmed by grep across `functions/src`); it doesn't change behavior on v13 (the legacy namespace still works there), it just means nothing in this codebase depends on the v14-removed API, so upgrading the dependency later needs no further source change.
+
+`eslint` (`^8.57.1`), `@typescript-eslint/*` (`^8.18.1`), `typescript` (`^5.7.2`), and `jest`/`ts-jest` (`^29.x`) were deliberately left untouched — their available `latest` versions (`eslint@10`, `typescript@7`, `jest@30`) are major-version jumps unrelated to the Node runtime or Firebase SDKs, each with its own independent breaking-change surface that deserves its own reviewed milestone rather than being bundled into a runtime upgrade.
+
+Local validation for this milestone was run under a real Node.js 22.23.2 installation (via `nvm install 22`), not merely assumed compatible from version numbers — `npm install`, `npm run lint`, `npm run verify:deploy-package` (clean build + deploy-packaging check), and `npm test` (162/162) all ran and passed directly on Node 22. The JDK-21-dependent emulator suite (`npm run test:emulator`, which also exercises `writeAuditEvent` through every privileged callable) is, as with every other milestone in this repository's history, verified via CI rather than this environment — see the milestone's CI run reference.
 
 ### Cloud Functions region policy
 

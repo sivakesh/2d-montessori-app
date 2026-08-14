@@ -6,8 +6,14 @@
  * NFR-07. `auditLogs` has no client read/write access at all (see
  * firebase/firestore.rules) — only the Admin SDK, which this module uses,
  * can write here.
+ *
+ * Uses the modular `firebase-admin/firestore` API, not the legacy
+ * `admin.firestore()` namespace (removed outright in firebase-admin
+ * v14 — see docs/architecture/environments.md's "Cloud Functions
+ * runtime & dependency versions"), so a future v14 upgrade needs no
+ * source change here.
  */
-import * as admin from 'firebase-admin';
+import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 export type AuditEventType =
   | 'create'
@@ -36,8 +42,10 @@ export interface AuditEventInput {
 }
 
 export async function writeAuditEvent(input: AuditEventInput): Promise<void> {
-  await admin.firestore().collection('auditLogs').add({
-    ...input,
-    timestamp: admin.firestore.FieldValue.serverTimestamp(),
-  });
+  await getFirestore()
+    .collection('auditLogs')
+    .add({
+      ...input,
+      timestamp: FieldValue.serverTimestamp(),
+    });
 }

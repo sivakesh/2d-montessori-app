@@ -1,7 +1,7 @@
 /**
  * Authorization guards shared by every privileged callable in this
  * module. `db` is always passed in explicitly (never read from
- * `admin.firestore()` internally) so these are unit-testable with a
+ * `getFirestore()` internally) so these are unit-testable with a
  * hand-written fake Firestore/Transaction instead of the emulator — see
  * functions/test/auth.guards.test.ts.
  */
