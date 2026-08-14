@@ -87,8 +87,9 @@ Hosting site ids are confirmed and already filled in to
 | Firebase project id | `twod-montessori-dev` |
 | Public Hosting site id | `twod-montessori-dev` |
 | Admin Hosting site id | `twod-montessori-admin-dev` |
-| Cloud Functions region | `us-central1` for `onCall`/`onSchedule`; `asia-south1` for the one Firestore trigger — see "Cloud Functions region policy" below |
+| Cloud Functions region | Three-way split: `us-central1` for `onCall`/`onSchedule`; `asia-south1` for the Firestore trigger; `us-east1` for the Storage trigger — see "Cloud Functions region policy" below |
 | Firestore database location | `asia-south1` (confirmed via `gcloud firestore databases describe --database="(default)" --project=twod-montessori-dev`) |
+| Storage bucket location | `us-east1` (confirmed via `gcloud storage buckets describe gs://twod-montessori-dev.firebasestorage.app --format='value(location)'`) |
 | Scheduled-publish timezone | `Asia/Kolkata` (`functions/src/scheduling/publishScheduledContent.ts`) |
 | Cloud Functions Node.js runtime | `22` (`functions/package.json`'s `engines.node`; upgraded from `20` — see "Cloud Functions runtime & dependency versions" below) |
 
@@ -111,12 +112,13 @@ Local validation for this milestone was run under a real Node.js 22.23.2 install
 
 ### Cloud Functions region policy
 
-Region assignment is intentionally split by trigger type, not uniform:
+Region assignment is intentionally split three ways by trigger type, not uniform:
 
-- **`onCall`/`onSchedule` Functions** (everything except `pagesFns-syncPublishedPage`) have no explicit `region` option set anywhere in `functions/src`. These trigger types have no co-location constraint with any other GCP resource, so the Firebase SDK's own default — `us-central1` — applies and is left implicit rather than redundantly pinned in every file.
+- **`onCall`/`onSchedule` Functions** (every Function except `pagesFns-syncPublishedPage` and `mediaFns-onMediaUploaded`) have no explicit `region` option set anywhere in `functions/src`. These trigger types have no co-location constraint with any other GCP resource, so the Firebase SDK's own default — `us-central1` — applies and is left implicit rather than redundantly pinned in every file.
 - **`pagesFns-syncPublishedPage`** (`functions/src/pages/syncPublishedPage.ts`) is the one `onDocumentWritten` Firestore trigger in this codebase, and is explicitly pinned to `region: 'asia-south1'` in code. Firestore triggers use Eventarc, which requires the trigger's region to match the region of the Firestore database it watches — `twod-montessori-dev`'s Firestore database is confirmed to be in `asia-south1`, not `us-central1`. Leaving this one unset would have let Firebase's deploy tooling continue to infer it implicitly (which is what produced the original `asia-south1`/`us-central1` split observed in the first failed deployment); pinning it explicitly instead makes the region an intentional, reviewable part of the source rather than an inferred side effect that could silently change.
+- **`mediaFns-onMediaUploaded`** (`functions/src/media/onMediaUploaded.ts`) is the one Cloud Storage `onObjectFinalized` trigger, explicitly pinned to `region: 'us-east1'` — Storage triggers use the same Eventarc bucket-co-location constraint Firestore triggers do, but against the *bucket's* location, not the Firestore database's. `twod-montessori-dev.firebasestorage.app`'s confirmed location is `us-east1`, independently of Firestore's `asia-south1` — the two happening to differ is expected (each Google Cloud resource has its own location chosen independently at creation), not an inconsistency to unify. `bucket` itself is left unset (not hardcoded) — see that file's own doc comment for why relying on the project's default-bucket resolution is correct here, unlike region, which Eventarc requires be explicit and correct.
 
-This means a real deploy targets two regions, not one. That is expected and correct for this project, not a misconfiguration to unify — do not "fix" the split by forcing every Function to the same region.
+This means a real deploy targets **three** regions, not one. That is expected and correct for this project — do not "fix" the split by forcing every Function to the same region, and do not infer a Storage trigger's region from the Firestore trigger's region (they can differ, and here they do). `functions/test/media.onMediaUploaded.region.test.ts` locks in all three simultaneously so this can't silently drift.
 
 ### Cloud Functions callable invoker policy
 

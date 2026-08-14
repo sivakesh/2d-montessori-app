@@ -9,14 +9,30 @@
  * access" a property of what this trusted function chose to generate,
  * not of anything a client controls.
  *
- * Region deliberately left unset — see
+ * Region explicitly pinned to `us-east1` — confirmed as the real
+ * `twod-montessori-dev.firebasestorage.app` bucket's location
+ * (`gcloud storage buckets describe gs://twod-montessori-dev.firebasestorage.app
+ * --format='value(location)'`), the same Eventarc bucket-co-location
+ * constraint that required pinning `pagesFns-syncPublishedPage`'s
+ * region to Firestore's location. Do not remove this option or "fix"
+ * it to match another Function's region — see
  * docs/architecture/environments.md's "Cloud Functions region policy"
- * for why a Storage trigger's region must match its *bucket's* location
- * (an Eventarc co-location constraint, the same class of constraint that
- * required pinning `pagesFns-syncPublishedPage`'s region explicitly) and
- * why that must be confirmed against the real project before being
- * pinned, not guessed — this is a required pre-deploy verification step,
- * not an oversight.
+ * for the full three-way region split (Firestore trigger:
+ * `asia-south1`, this Storage trigger: `us-east1`, every callable/
+ * scheduled Function: `us-central1`) and why each is independently
+ * correct rather than an inconsistency to unify.
+ *
+ * `bucket` is left unset deliberately, not hardcoded: with no explicit
+ * `bucket` option, this trigger listens on the project's *default*
+ * Cloud Storage bucket, which for `twod-montessori-dev` already *is*
+ * `twod-montessori-dev.firebasestorage.app` (Firebase's own default-
+ * bucket naming convention) — the same bucket just confirmed above.
+ * Hardcoding the bucket name here would only reintroduce the kind of
+ * environment-specific coupling `syncPublishedPage.ts` and every other
+ * trigger in this codebase deliberately avoid (no project id is ever
+ * hardcoded), for no benefit: the default-bucket behavior already
+ * targets the correct bucket for every environment (dev/staging/prod)
+ * without code changes between them.
  */
 import type { Bucket } from '@google-cloud/storage';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
@@ -210,6 +226,6 @@ export async function handleMediaUploaded(event: StorageEvent): Promise<void> {
   }
 }
 
-export const onMediaUploaded = onObjectFinalized(async (event) => {
+export const onMediaUploaded = onObjectFinalized({ region: 'us-east1' }, async (event) => {
   await handleMediaUploaded(event);
 });
