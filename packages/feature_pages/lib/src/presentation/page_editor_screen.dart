@@ -670,9 +670,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                         'Publish for an immediate release instead.',
                     child: OutlinedButton(
                       onPressed: null,
-                      child: Text(
-                        '${rule.action.storageValue} (unavailable)',
-                      ),
+                      child: Text('${rule.action.storageValue} (unavailable)'),
                     ),
                   )
                 else
