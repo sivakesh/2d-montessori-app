@@ -992,6 +992,71 @@ correct, since `flutter test` never runs a real build's generated
 registrant — that half was verified separately, by the clean-rebuild
 evidence above, not by an automated test.
 
+### Defect 2: missing composite index for the `document` media filter
+
+**Symptom, found in real Dev UAT:** selecting the `document` filter on
+the Media screen produced `The query requires an index`.
+
+**Root cause:** `FirestoreMediaRepository.list()` was filtering
+`archived` client-side, after fetching a page of results — a real
+pagination-correctness bug independent of the index error (a fetched
+page could show zero matching items despite more existing beyond the
+cursor). Once corrected to a real Firestore `.where('archived',
+isEqualTo: ...)` clause combined with the existing `.where('mimeCategory',
+...)` clause and `.orderBy('uploadedAt', descending: true)`, the query
+became a genuine two-equality-field-plus-orderBy composite query, which
+Firestore requires an explicit index for — the exact error the
+production console showed, correctly, for a query shape that had no
+matching index committed anywhere.
+
+**Fix:** two composite indexes added to the source-controlled
+`firebase/firestore.indexes.json`: `(archived ASC, uploadedAt DESC)` for
+the "all types" list, and `(mimeCategory ASC, archived ASC, uploadedAt
+DESC)` for a type-filtered list. One index with more equality fields
+serves every value of those fields, so the second index alone covers
+every `mimeCategory` × `archived` combination the UI can request
+(active-by-type, archived/recycle-bin-by-type) — it is not one index per
+type. No owner-scoped query exists or is needed: Firestore rules already
+grant `media` collection read access to any active CMS user
+(`isActiveCmsUser()`, not owner-scoped); Editor role restrictions apply
+only to *mutation* actions (`canManageMediaAsset`), never to what an
+Editor can list or browse, so there is no third query shape to index for
+Editor-scoped listing.
+
+**Regression coverage added**
+(`firebase/test/media.rules.test.ts`, describe block `media/{mediaId} —
+list query shape (Defect 2 coverage)`): the exact three query shapes
+`FirestoreMediaRepository.list()` issues, run against the real Firestore
+emulator, asserting correct filtered/sorted results. **Stated caveat,
+not overclaimed:** the Firestore emulator does not enforce composite
+index requirements (confirmed via research; a documented, long-standing
+emulator limitation) — it runs any structurally valid query whether or
+not a matching index exists. These tests prove the query *logic* is
+correct; they cannot prove the two indexes above are *sufficient*
+against the real service. Only a real `firebase deploy --only
+firestore:indexes` deployment, followed by exercising the deployed app,
+can prove that half — which is why this fix is the source-controlled
+index file itself, not just these tests.
+
+### Additional observation: `twod-montessori-admin-dev.web.app` not an authorized OAuth domain
+
+The browser warning about this Hosting domain not being an authorized
+OAuth domain is real but unrelated to Defect 1 — Phase 1 authentication
+is email/password only (`AUTH-02`, see the MFA row above), which does
+not consult Firebase Authentication's authorized-domains list at all;
+that list only gates redirect-based OAuth/social sign-in flows, none of
+which exist in this codebase. **Recommendation: add the domain anyway**
+for clean Dev configuration and to avoid the warning being mistaken for
+a real problem during future UAT — Firebase Authentication's authorized
+domains are a low-risk allowlist (they only permit a domain to complete
+an OAuth redirect; they do not, by themselves, enable or expose any
+provider), so adding the Hosting domain does not weaken security or
+introduce social/OAuth sign-in, and no OAuth/social provider should be
+added or enabled as part of doing so. This is a Firebase Console
+configuration change on the real Dev project, so per standing
+instruction it is left for the user to apply, not performed from this
+environment.
+
 ## Traceability
 
 Every implementation story must reference an SRS requirement ID (e.g.

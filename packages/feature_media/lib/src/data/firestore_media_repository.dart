@@ -161,9 +161,17 @@ class FirestoreMediaRepository implements MediaRepository {
     core.PageRequest request = const core.PageRequest(),
   }) async {
     try {
-      Query<Map<String, dynamic>> firestoreQuery = _firestore.collection(
-        'media',
-      );
+      // `archived` is a real Firestore equality filter, not a client-side
+      // pass — filtering an already-fetched page client-side would make
+      // `hasMore`/pagination wrong whenever a page's results were mostly
+      // the *other* archived state (e.g. a page of 20 could yield zero
+      // matching items despite more existing beyond the cursor). See
+      // firebase/firestoreIndexes.json for the composite indexes this
+      // requires: (mimeCategory, archived, uploadedAt) for a type-
+      // filtered list, (archived, uploadedAt) for "all types".
+      Query<Map<String, dynamic>> firestoreQuery = _firestore
+          .collection('media')
+          .where('archived', isEqualTo: query.includeArchived);
       if (query.category != null) {
         firestoreQuery = firestoreQuery.where(
           'mimeCategory',
@@ -187,15 +195,10 @@ class FirestoreMediaRepository implements MediaRepository {
       final snapshot = await firestoreQuery.get();
       var assets = snapshot.docs.map(MediaAssetMapper.fromSnapshot).toList();
 
-      // includeArchived / searchText are applied client-side (small
-      // per-page result sets, same pragmatic approach
-      // FirestorePagesRepository already uses for title search) rather
-      // than compound Firestore indexes for a Phase 1 library.
-      if (!query.includeArchived) {
-        assets = assets.where((a) => !a.archived).toList();
-      } else {
-        assets = assets.where((a) => a.archived).toList();
-      }
+      // searchText remains a client-side substring match on this one
+      // page's results — the same pragmatic approach
+      // FirestorePagesRepository already uses for title search; a real
+      // full-text index is out of scope for a Phase 1 library.
       final search = query.searchText?.trim().toLowerCase();
       if (search != null && search.isNotEmpty) {
         assets = assets
