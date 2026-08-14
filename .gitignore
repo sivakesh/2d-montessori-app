@@ -75,6 +75,10 @@ config/env/*.json
 apps/*/firebase.json
 .firebaserc
 !.firebaserc.template
+# Firebase CLI's local per-machine deploy cache (e.g. Hosting's
+# incremental-upload file-hash cache) — created by real `firebase
+# deploy` runs, never meant to be committed.
+.firebase/
 firebase-debug.log
 firebase-export-*/
 ui-debug.log
