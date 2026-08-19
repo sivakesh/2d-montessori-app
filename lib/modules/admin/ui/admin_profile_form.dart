@@ -1,10 +1,8 @@
-import 'dart:html' as html;
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../core/services/profile_image_picker.dart';
 import '../data/admin_profile_service.dart';
 import '../models/admin_profile_model.dart';
 
@@ -29,7 +27,7 @@ class _AdminProfileFormState extends State<AdminProfileForm>
   bool _initialLoadDone = false;
   final _formKey = GlobalKey<FormState>();
   final _service = AdminProfileService();
-  html.File? _pickedImage;
+  PickedFileData? _pickedImage;
   bool isUploadingImage = false;
   bool isSaving = false;
   bool isLoadingProfile = true;
@@ -217,12 +215,9 @@ class _AdminProfileFormState extends State<AdminProfileForm>
   }
 
   Future<void> _pickImage() async {
-    final uploadInput = html.FileUploadInputElement();
-    uploadInput.accept = 'image/*';
-    uploadInput.click();
-
-    await uploadInput.onChange.first;
-    _pickedImage = uploadInput.files?.first;
+    final picked = await pickWebFile(accept: 'image/*');
+    if (picked == null) return;
+    _pickedImage = picked;
     if (mounted) setState(() {});
   }
 
@@ -248,11 +243,7 @@ class _AdminProfileFormState extends State<AdminProfileForm>
         isUploadingImage = true;
       });
 
-      final reader = html.FileReader();
-      reader.readAsArrayBuffer(_pickedImage!);
-      await reader.onLoad.first;
-
-      final data = reader.result as Uint8List;
+      final data = _pickedImage!.bytes;
       final ref = FirebaseStorage.instance.ref('profiles/$_userId/profile.jpg');
       await ref.putData(data);
       final url = await ref.getDownloadURL();
@@ -283,23 +274,13 @@ class _AdminProfileFormState extends State<AdminProfileForm>
     try {
       setStateDialog(() => _isUploadingDocument = true);
 
-      final uploadInput = html.FileUploadInputElement();
-      uploadInput.accept = '*/*';
-      uploadInput.click();
-
-      await uploadInput.onChange.first;
-
-      final file = uploadInput.files?.first;
-      if (file == null) {
+      final picked = await pickWebFile();
+      if (picked == null) {
         return;
       }
 
-      final reader = html.FileReader();
-      reader.readAsArrayBuffer(file);
-      await reader.onLoad.first;
-
-      final data = reader.result as Uint8List;
-      final fileName = file.name;
+      final data = picked.bytes;
+      final fileName = picked.name;
 
       final storageRef = FirebaseStorage.instance.ref().child(
         'profile_documents/$_userId/${DateTime.now().millisecondsSinceEpoch}_$fileName',
