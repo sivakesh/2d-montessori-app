@@ -120,12 +120,26 @@ class FinanceService {
         );
   }
 
+  // Filters server-side on 'type' only and sorts by createdAt client-side.
+  // Combining an equality filter with orderBy on a different field requires
+  // a manually-created Firestore composite index; without one deployed,
+  // this query fails silently (the stream just never emits data), which is
+  // why invoices that exist in Firestore were never showing up in the
+  // Expense/Salary tabs. Sorting client-side avoids depending on a
+  // composite index existing.
   Stream<List<FinanceInvoiceModel>> watchInvoicesByType(String type) {
-    return _invoices
-        .where('type', isEqualTo: type)
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs.map((d) => FinanceInvoiceModel.fromMap(d.id, d.data())).toList());
+    return _invoices.where('type', isEqualTo: type).snapshots().map((snap) {
+      final items = snap.docs.map((d) => FinanceInvoiceModel.fromMap(d.id, d.data())).toList();
+      items.sort((a, b) {
+        final aDate = a.createdAt;
+        final bDate = b.createdAt;
+        if (aDate == null && bDate == null) return 0;
+        if (aDate == null) return 1;
+        if (bDate == null) return -1;
+        return bDate.compareTo(aDate);
+      });
+      return items;
+    });
   }
 
   Future<String> createCategory(FinanceCategoryModel category) async {
@@ -227,13 +241,6 @@ class FinanceService {
     required String remarks,
   }) async {
     final invoiceRef = _invoices.doc(invoiceId);
-    final existing = await _ledger
-        .where('sourceModule', isEqualTo: 'invoice')
-        .where('sourceId', isEqualTo: invoiceId)
-        .limit(1)
-        .get();
-    if (existing.docs.isNotEmpty) return existing.docs.first.id;
-
     final snap = await invoiceRef.get();
     if (!snap.exists || snap.data() == null) {
       throw StateError('Invoice not found');
@@ -275,6 +282,8 @@ class FinanceService {
         'sourceModule': 'invoice',
         'sourceId': invoiceId,
         'invoiceId': invoiceId,
+        'invoiceNo': invoice.invoiceNo,
+        'invoicePaymentId': paymentRef.id,
         'invoiceType': invoice.type,
         'description': invoice.description,
       });
@@ -283,6 +292,9 @@ class FinanceService {
         'entryType': 'expense',
         'sourceModule': 'invoice',
         'sourceId': invoiceId,
+        'invoiceId': invoiceId,
+        'invoiceNo': invoice.invoiceNo,
+        'invoicePaymentId': paymentRef.id,
         'categoryId': invoice.type,
         'categoryName': invoice.type == 'salary' ? 'Salary' : 'Expense',
         'subCategoryName': '',
