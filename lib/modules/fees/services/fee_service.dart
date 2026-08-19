@@ -10,6 +10,7 @@ import '../models/fee_receipt_model.dart';
 import '../models/fee_structure_model.dart';
 import '../models/fee_transaction_model.dart';
 import '../models/student_fee_assignment_model.dart';
+import '../../finance/services/finance_service.dart';
 
 class FeeService {
   FeeService({FirebaseFirestore? firestore, FirebaseAuth? auth})
@@ -30,17 +31,34 @@ class FeeService {
 
   Future<List<FeeStructureModel>> getFeeStructures() async {
     final snap = await _structures.orderBy('createdAt', descending: true).get();
-    return snap.docs.map((d) => FeeStructureModel.fromMap(d.id, d.data())).toList();
+    return snap.docs
+        .where((d) => d.data()['isDeleted'] != true)
+        .map((d) => FeeStructureModel.fromMap(d.id, d.data()))
+        .toList();
   }
 
   Future<List<StudentFeeAssignmentModel>> getAssignments() async {
     final snap = await _assignments.orderBy('assignedAt', descending: true).get();
-    return snap.docs.map((d) => StudentFeeAssignmentModel.fromMap(d.id, d.data())).toList();
+    return snap.docs
+        .where((d) => d.data()['isDeleted'] != true)
+        .map((d) => StudentFeeAssignmentModel.fromMap(d.id, d.data()))
+        .toList();
+  }
+
+  Future<StudentFeeAssignmentModel?> getAssignmentById(String id) async {
+    final snap = await _assignments.doc(id).get();
+    if (!snap.exists || snap.data() == null) return null;
+    final data = snap.data()!;
+    if (data['isDeleted'] == true) return null;
+    return StudentFeeAssignmentModel.fromMap(snap.id, data);
   }
 
   Future<List<FeeReceiptModel>> getReceipts() async {
     final snap = await _receipts.orderBy('createdAt', descending: true).get();
-    return snap.docs.map((d) => FeeReceiptModel.fromMap(d.id, d.data())).toList();
+    return snap.docs
+        .where((d) => d.data()['isDeleted'] != true)
+        .map((d) => FeeReceiptModel.fromMap(d.id, d.data()))
+        .toList();
   }
 
   Future<FeeReceiptModel?> getReceiptById(String id) async {
@@ -109,6 +127,14 @@ class FeeService {
     await updateFeeStructure(id, {'isActive': false});
   }
 
+  Future<void> deleteFeeStructure(String id) async {
+    await _structures.doc(id).set({
+      'isDeleted': true,
+      'deletedAt': FieldValue.serverTimestamp(),
+      'deletedBy': _auth.currentUser?.uid,
+    }, SetOptions(merge: true));
+  }
+
   Future<String?> assignFee(Map<String, dynamic> data) async {
     final studentId = data['studentId']?.toString() ?? '';
     final feeStructureId = data['feeStructureId']?.toString() ?? '';
@@ -132,6 +158,46 @@ class FeeService {
       'updatedAt': FieldValue.serverTimestamp(),
     });
     return doc.id;
+  }
+
+  Future<void> deleteAssignment(String id) async {
+    await _assignments.doc(id).set({
+      'isDeleted': true,
+      'deletedAt': FieldValue.serverTimestamp(),
+      'deletedBy': _auth.currentUser?.uid,
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> deleteReceipt(String id) async {
+    final receipt = await getReceiptById(id);
+    if (receipt == null) return;
+    if (receipt.pdfPath.isNotEmpty) {
+      try {
+        await _storage.ref(receipt.pdfPath).delete();
+      } catch (_) {}
+    }
+    if (receipt.assignmentId.isNotEmpty) {
+      final assignmentRef = _assignments.doc(receipt.assignmentId);
+      final assignmentSnap = await assignmentRef.get();
+      if (assignmentSnap.exists && assignmentSnap.data() != null) {
+        final a = StudentFeeAssignmentModel.fromMap(assignmentSnap.id, assignmentSnap.data()!);
+        final paidAmount = (a.paidAmount - receipt.amount).clamp(0, double.infinity);
+        final balanceAmount = (a.payableAmount - paidAmount).clamp(0, double.infinity);
+        final status = balanceAmount == 0 ? 'paid' : paidAmount > 0 ? 'partial' : 'unpaid';
+        await assignmentRef.set({
+          'paidAmount': paidAmount,
+          'balanceAmount': balanceAmount,
+          'status': status,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+    }
+    await FinanceService().reverseFeeIncomeByCollectionId(receipt.id);
+    await _receipts.doc(id).set({
+      'isDeleted': true,
+      'deletedAt': FieldValue.serverTimestamp(),
+      'deletedBy': _auth.currentUser?.uid,
+    }, SetOptions(merge: true));
   }
 
   Future<Map<String, int>> syncAssignmentsForFeeStructure({
@@ -308,6 +374,35 @@ class FeeService {
     final currentUser = _auth.currentUser;
     final currentName = currentUser?.displayName ?? currentUser?.email ?? 'Admin';
     final receiptDoc = _receipts.doc();
+
+    // Post the finance income entry first. If this fails (e.g. no active
+    // finance account configured), nothing below has been written yet, so
+    // the caller can safely retry without risking a duplicate collection.
+    try {
+      await FinanceService().createFeeIncomeEntry({
+        'type': 'income',
+        'category': 'Fees',
+        'amount': amount,
+        'source': 'fees',
+        'sourceId': receiptDoc.id,
+        'feeCollectionId': receiptDoc.id,
+        'feeAssignmentId': assignmentId,
+        'feeStructureId': a.feeStructureId,
+        'studentId': a.studentId,
+        'studentName': a.studentName,
+        'admissionNo': a.admissionNo,
+        'paymentMode': paymentMode,
+        'referenceNo': referenceNo,
+        'remarks': remarks,
+        'description': 'Fee collected from ${a.studentName} - ${a.feeStructureName}',
+        'date': paymentDate,
+        'createdAt': FieldValue.serverTimestamp(),
+        'createdBy': currentUser?.uid ?? currentName,
+      });
+    } catch (e) {
+      throw StateError('Finance entry creation failed: $e');
+    }
+
     final batch = _firestore.batch();
     batch.set(txRef, {
       'assignmentId': assignmentId,
@@ -335,6 +430,8 @@ class FeeService {
       'admissionNo': a.admissionNo,
       'className': a.className,
       'feeStructureName': a.feeStructureName,
+      'feeStructureId': a.feeStructureId,
+      'feeCollectionId': receiptDoc.id,
       'amount': amount,
       'paymentMode': paymentMode,
       'paymentDate': paymentDate,
@@ -372,10 +469,11 @@ class FeeService {
       'pdfPath': '',
       'pdfGeneratedAt': null,
     });
-    final generated = await generateAndUploadReceiptPdf(receipt);
-    if (!generated) {
-      throw StateError('PDF generation failed');
-    }
+    // PDF generation is best-effort: the collection and finance entry are
+    // already recorded above, and the Receipts UI offers a "Generate PDF"
+    // retry, so a failure here must not surface as a failed collection
+    // (that would invite a retry that double-collects the fee).
+    await generateAndUploadReceiptPdf(receipt);
     return receipt;
   }
 

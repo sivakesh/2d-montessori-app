@@ -23,6 +23,7 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
   final _service = FeeService();
   int _tab = 0;
   bool _loading = true;
+  String? _deletingId;
   Map<String, dynamic> _summary = const {};
   List<FeeStructureModel> _structures = [];
   List<StudentFeeAssignmentModel> _assignments = [];
@@ -69,6 +70,94 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 
+  Future<bool> _confirmDelete() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete item?'),
+        content: const Text('This action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
+  Future<void> _deleteStructure(FeeStructureModel structure) async {
+    if (!await _confirmDelete()) return;
+    setState(() => _deletingId = structure.id);
+    try {
+      await _service.deleteFeeStructure(structure.id);
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Structure deleted')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete structure: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deletingId = null);
+    }
+  }
+
+  Future<void> _deleteAssignment(StudentFeeAssignmentModel assignment) async {
+    if (!await _confirmDelete()) return;
+    setState(() => _deletingId = assignment.id);
+    try {
+      await _service.deleteAssignment(assignment.id);
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Assignment deleted')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete assignment: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deletingId = null);
+    }
+  }
+
+  Future<void> _deleteReceipt(FeeReceiptModel receipt) async {
+    if (!await _confirmDelete()) return;
+    setState(() => _deletingId = receipt.id);
+    try {
+      await _service.deleteReceipt(receipt.id);
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Receipt deleted')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete receipt: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deletingId = null);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return AdminLayout(
@@ -98,7 +187,7 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
                       : constraints.maxWidth >= 800
                           ? (constraints.maxWidth - 16) / 2
                           : constraints.maxWidth;
-                  return SingleChildScrollView(
+              return SingleChildScrollView(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -167,18 +256,38 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
         physics: const NeverScrollableScrollPhysics(),
         itemCount: _structures.length,
         itemBuilder: (context, i) {
-          final s = _structures[i];
-          final frequencySummary = s.components.isEmpty
-              ? 'No components'
-              : s.components.map((c) => c.frequency).toSet().join(', ');
-          return Card(
-            child: ListTile(
-              title: Text(s.name),
-              subtitle: Text('${s.academicYear} • ${s.components.length} components • $frequencySummary'),
-              trailing: Wrap(children: [IconButton(icon: const Icon(Icons.edit), onPressed: () => _openStructure(structure: s))]),
-            ),
-          );
-        },
+                          final s = _structures[i];
+                          final frequencySummary = s.components.isEmpty
+                              ? 'No components'
+                              : s.components.map((c) => c.frequency).toSet().join(', ');
+                          return Card(
+                            child: ListTile(
+                              title: Text(s.name),
+                              subtitle: Text('${s.academicYear} • ${s.components.length} components • $frequencySummary'),
+                              trailing: Wrap(
+                                spacing: 4,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.edit),
+                                    onPressed: () => _openStructure(structure: s),
+                                  ),
+                                  IconButton(
+                                    icon: _deletingId == s.id
+                                        ? const SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: CircularProgressIndicator(strokeWidth: 2),
+                                          )
+                                        : const Icon(Icons.delete, color: Colors.red),
+                                    onPressed: _deletingId == s.id
+                                        ? null
+                                        : () => _deleteStructure(s),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
       );
 
   Widget _buildAssignments() => ListView.builder(
@@ -191,7 +300,21 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
             child: ListTile(
               title: Text(a.studentName),
               subtitle: Text('${a.className} • ${a.feeStructureName}\nBalance: ${a.balanceAmount.toStringAsFixed(0)}'),
-              trailing: ElevatedButton(onPressed: () => _openCollection(a), child: const Text('Collect')),
+              trailing: Wrap(
+                spacing: 4,
+                children: [
+                  IconButton(
+                    icon: _deletingId == a.id
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.delete, color: Colors.red),
+                    onPressed: _deletingId == a.id ? null : () => _deleteAssignment(a),
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -208,9 +331,24 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
             child: ListTile(
               title: Text(a.studentName),
               subtitle: Text('${a.admissionNo} • ${a.className}\n${a.feeStructureName}\nPayable: ${a.payableAmount.toStringAsFixed(0)} • Paid: ${a.paidAmount.toStringAsFixed(0)} • Balance: ${a.balanceAmount.toStringAsFixed(0)}'),
-              trailing: TextButton(
-                onPressed: () => _openCollection(a),
-                child: const Text('Collect'),
+              trailing: Wrap(
+                spacing: 4,
+                children: [
+                  TextButton(
+                    onPressed: () => _openCollection(a),
+                    child: const Text('Collect'),
+                  ),
+                  IconButton(
+                    icon: _deletingId == a.id
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.delete, color: Colors.red),
+                    onPressed: _deletingId == a.id ? null : () => _deleteAssignment(a),
+                  ),
+                ],
               ),
             ),
           );
@@ -242,6 +380,16 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
                     onPressed: r.pdfUrl.isEmpty ? () => showDialog(context: context, builder: (_) => FeeReceiptViewDialog(receipt: r)) : null,
                     child: const Text('Generate PDF'),
                   ),
+                  IconButton(
+                    icon: _deletingId == r.id
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.delete, color: Colors.red),
+                    onPressed: _deletingId == r.id ? null : () => _deleteReceipt(r),
+                  ),
                 ],
               ),
             ),
@@ -261,7 +409,22 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
             child: ListTile(
               title: Text(a.studentName),
               subtitle: Text('${a.admissionNo} • ${a.className}\nDue: ${a.balanceAmount.toStringAsFixed(0)}'),
-              trailing: TextButton(onPressed: () {}, child: const Text('Send Reminder')),
+              trailing: Wrap(
+                spacing: 4,
+                children: [
+                  TextButton(onPressed: () {}, child: const Text('Send Reminder')),
+                  IconButton(
+                    icon: _deletingId == a.id
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.delete, color: Colors.red),
+                    onPressed: _deletingId == a.id ? null : () => _deleteAssignment(a),
+                  ),
+                ],
+              ),
             ),
           );
         },

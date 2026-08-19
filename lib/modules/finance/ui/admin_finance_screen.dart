@@ -5,10 +5,9 @@ import '../../admin/ui/admin_layout.dart';
 import '../models/finance_account_model.dart';
 import '../models/finance_category_model.dart';
 import '../models/finance_dashboard_summary_model.dart';
-import '../models/finance_expense_model.dart';
+import '../models/finance_invoice_model.dart';
 import '../models/finance_income_model.dart';
 import '../models/finance_ledger_entry_model.dart';
-import '../models/staff_salary_payment_model.dart';
 import '../models/vendor_model.dart';
 import '../services/finance_service.dart';
 import '../widgets/finance_summary_card.dart';
@@ -40,6 +39,19 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
   Future<void> _launch(String url) async {
     if (url.isEmpty) return;
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _showPayInvoice(FinanceInvoiceModel invoice) async {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _PayInvoiceDialog(invoice: invoice, service: _service),
+    );
+    if (result == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Invoice payment saved')),
+      );
+    }
   }
 
   @override
@@ -128,9 +140,9 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
       case 1:
         return _IncomeTab(service: _service, launchUrlFn: _launch);
       case 2:
-        return _ExpenseTab(service: _service, launchUrlFn: _launch);
+        return _ExpenseTab(service: _service, onPay: _showPayInvoice);
       case 3:
-        return _SalaryTab(service: _service);
+        return _SalaryTab(service: _service, onPay: _showPayInvoice);
       case 4:
         return _VendorTab(service: _service);
       case 5:
@@ -154,13 +166,19 @@ class _DashboardTab extends StatelessWidget {
         builder: (context, snap) {
           final items = snap.data ?? [];
           if (items.isEmpty) return const Padding(padding: EdgeInsets.all(24), child: Text('No finance transactions yet.'));
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Recent Transactions', style: TextStyle(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 8),
-              ...items.take(5).map((e) => LedgerEntryCard(entry: e)),
-            ],
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 96),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Recent Transactions', style: TextStyle(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                ...items.take(5).map((e) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: LedgerEntryCard(entry: e),
+                    )),
+              ],
+            ),
           );
         },
       );
@@ -196,16 +214,16 @@ class _IncomeTab extends StatelessWidget {
 }
 
 class _ExpenseTab extends StatelessWidget {
-  const _ExpenseTab({required this.service, required this.launchUrlFn});
+  const _ExpenseTab({required this.service, required this.onPay});
   final FinanceService service;
-  final Future<void> Function(String) launchUrlFn;
+  final Future<void> Function(FinanceInvoiceModel invoice) onPay;
   @override
-  Widget build(BuildContext context) => StreamBuilder<List<FinanceExpenseModel>>(
-        stream: service.watchExpenses(),
+  Widget build(BuildContext context) => StreamBuilder<List<FinanceInvoiceModel>>(
+        stream: service.watchInvoicesByType('expense'),
         builder: (context, snap) {
           final items = snap.data ?? [];
           return items.isEmpty
-              ? const Padding(padding: EdgeInsets.all(24), child: Text('No expense records.'))
+              ? const Padding(padding: EdgeInsets.all(24), child: Text('No expense invoices.'))
               : ListView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
@@ -214,8 +232,14 @@ class _ExpenseTab extends StatelessWidget {
                     final i = items[index];
                     return Card(
                       child: ListTile(
-                        title: Text(i.title),
-                        subtitle: Text('${i.categoryName} • ₹${i.amount.toStringAsFixed(0)} • ${i.paymentMode}'),
+                        title: Text('${i.invoiceNo} • ${i.partyName}'),
+                        subtitle: Text('${i.categoryName} • ₹${i.totalAmount.toStringAsFixed(0)}\nPaid: ₹${i.paidAmount.toStringAsFixed(0)} • Balance: ₹${i.balanceAmount.toStringAsFixed(0)}'),
+                        trailing: i.balanceAmount > 0
+                            ? TextButton(
+                                onPressed: () => onPay(i),
+                                child: const Text('Pay'),
+                              )
+                            : const SizedBox.shrink(),
                       ),
                     );
                   },
@@ -225,15 +249,16 @@ class _ExpenseTab extends StatelessWidget {
 }
 
 class _SalaryTab extends StatelessWidget {
-  const _SalaryTab({required this.service});
+  const _SalaryTab({required this.service, required this.onPay});
   final FinanceService service;
+  final Future<void> Function(FinanceInvoiceModel invoice) onPay;
   @override
-  Widget build(BuildContext context) => StreamBuilder<List<StaffSalaryPaymentModel>>(
-        stream: service.watchSalaryPayments(),
+  Widget build(BuildContext context) => StreamBuilder<List<FinanceInvoiceModel>>(
+        stream: service.watchInvoicesByType('salary'),
         builder: (context, snap) {
           final items = snap.data ?? [];
           return items.isEmpty
-              ? const Padding(padding: EdgeInsets.all(24), child: Text('No salary payments.'))
+              ? const Padding(padding: EdgeInsets.all(24), child: Text('No salary invoices.'))
               : ListView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
@@ -242,8 +267,14 @@ class _SalaryTab extends StatelessWidget {
                     final i = items[index];
                     return Card(
                       child: ListTile(
-                        title: Text(i.staffName),
-                        subtitle: Text('${i.salaryMonth} ${i.salaryYear} • ₹${i.netPayable.toStringAsFixed(0)}'),
+                        title: Text('${i.invoiceNo} • ${i.partyName}'),
+                        subtitle: Text('${i.categoryName} • ₹${i.totalAmount.toStringAsFixed(0)}\nPaid: ₹${i.paidAmount.toStringAsFixed(0)} • Balance: ₹${i.balanceAmount.toStringAsFixed(0)}'),
+                        trailing: i.balanceAmount > 0
+                            ? TextButton(
+                                onPressed: () => onPay(i),
+                                child: const Text('Pay'),
+                              )
+                            : const SizedBox.shrink(),
                       ),
                     );
                   },
@@ -331,4 +362,93 @@ class _ReportsTab extends StatelessWidget {
           Text('Profit / Loss Summary'),
         ],
       );
+}
+
+class _PayInvoiceDialog extends StatefulWidget {
+  const _PayInvoiceDialog({
+    required this.invoice,
+    required this.service,
+  });
+
+  final FinanceInvoiceModel invoice;
+  final FinanceService service;
+
+  @override
+  State<_PayInvoiceDialog> createState() => _PayInvoiceDialogState();
+}
+
+class _PayInvoiceDialogState extends State<_PayInvoiceDialog> {
+  final _amount = TextEditingController();
+  final _reference = TextEditingController();
+  final _remarks = TextEditingController();
+  String _paymentMode = 'cash';
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _amount.text = widget.invoice.balanceAmount.toStringAsFixed(0);
+  }
+
+  @override
+  void dispose() {
+    _amount.dispose();
+    _reference.dispose();
+    _remarks.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final amount = double.tryParse(_amount.text) ?? 0;
+    if (amount <= 0 || amount > widget.invoice.balanceAmount) return;
+    setState(() => _saving = true);
+    try {
+      await widget.service.payInvoice(
+        invoiceId: widget.invoice.id,
+        invoiceType: widget.invoice.type,
+        amount: amount,
+        paidDate: DateTime.now(),
+        paymentMode: _paymentMode,
+        referenceNo: _reference.text.trim(),
+        remarks: _remarks.text.trim(),
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to pay invoice: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Pay Invoice - ${widget.invoice.partyName}'),
+      content: SizedBox(
+        width: 520,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: _amount, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number),
+            DropdownButtonFormField<String>(
+              initialValue: _paymentMode,
+              decoration: const InputDecoration(labelText: 'Payment Mode'),
+              items: const ['cash', 'bank', 'upi'].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+              onChanged: (v) => setState(() => _paymentMode = v ?? _paymentMode),
+            ),
+            TextField(controller: _reference, decoration: const InputDecoration(labelText: 'Reference No')),
+            TextField(controller: _remarks, decoration: const InputDecoration(labelText: 'Remarks')),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: _saving ? null : () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(onPressed: _saving ? null : _save, child: _saving ? const CircularProgressIndicator() : const Text('Save')),
+      ],
+    );
+  }
 }
