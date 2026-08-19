@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/theme/app_colors.dart';
 import '../../admin/ui/admin_layout.dart';
 import '../models/finance_account_model.dart';
 import '../models/finance_category_model.dart';
@@ -60,7 +61,7 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
       selectedIndex: 7,
       title: 'Finance',
       floatingActionButton: FloatingActionButton(
-        backgroundColor: const Color(0xFF2E7D32),
+        backgroundColor: AppColors.primary,
         onPressed: () async {
           switch (_tab) {
             case 0:
@@ -88,48 +89,29 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
       ),
       body: Padding(
         padding: const EdgeInsets.all(24),
-        child: StreamBuilder<FinanceDashboardSummaryModel>(
-          stream: _service.watchDashboardSummary(),
-          builder: (context, summarySnap) {
-            final summary = summarySnap.data;
-            return SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Finance', style: Theme.of(context).textTheme.headlineSmall),
-                  const SizedBox(height: 20),
-                  Wrap(
-                    spacing: 16,
-                    runSpacing: 16,
-                    children: [
-                      FinanceSummaryCard(label: 'Total Income', value: '₹${summary?.totalIncome.toStringAsFixed(0) ?? '0'}', icon: Icons.trending_up),
-                      FinanceSummaryCard(label: 'Total Expenses', value: '₹${summary?.totalExpenses.toStringAsFixed(0) ?? '0'}', icon: Icons.trending_down, color: Colors.redAccent),
-                      FinanceSummaryCard(label: 'Net Balance', value: '₹${summary?.netBalance.toStringAsFixed(0) ?? '0'}', icon: Icons.account_balance_wallet),
-                      FinanceSummaryCard(label: 'Cash', value: '₹${summary?.cashBalance.toStringAsFixed(0) ?? '0'}', icon: Icons.payments),
-                      FinanceSummaryCard(label: 'Bank', value: '₹${summary?.bankBalance.toStringAsFixed(0) ?? '0'}', icon: Icons.account_balance),
-                      FinanceSummaryCard(label: 'UPI', value: '₹${summary?.upiBalance.toStringAsFixed(0) ?? '0'}', icon: Icons.qr_code),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: const ['Dashboard', 'Income', 'Expenses', 'Salary', 'Vendors', 'Ledger', 'Reports', 'Settings']
-                        .asMap()
-                        .entries
-                        .map((e) => ChoiceChip(
-                              label: Text(e.value),
-                              selected: _tab == e.key,
-                              onSelected: (_) => setState(() => _tab = e.key),
-                            ))
-                        .toList(),
-                  ),
-                  const SizedBox(height: 16),
-                  _buildBody(),
-                ],
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Finance', style: Theme.of(context).textTheme.headlineSmall),
+              const SizedBox(height: 20),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: const ['Dashboard', 'Income', 'Expenses', 'Salary', 'Vendors', 'Ledger', 'Reports', 'Settings']
+                    .asMap()
+                    .entries
+                    .map((e) => ChoiceChip(
+                          label: Text(e.value),
+                          selected: _tab == e.key,
+                          onSelected: (_) => setState(() => _tab = e.key),
+                        ))
+                    .toList(),
               ),
-            );
-          },
+              const SizedBox(height: 20),
+              _buildBody(),
+            ],
+          ),
         ),
       ),
     );
@@ -152,36 +134,232 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
       case 7:
         return _ReportsTab();
       default:
-        return _DashboardTab(service: _service);
+        return _DashboardTab(service: _service, onViewAllTransactions: () => setState(() => _tab = 5));
     }
   }
 }
 
+/// The Finance "Dashboard" tab: a premium at-a-glance overview built purely
+/// from FinanceService's existing streams — no new business logic, no new
+/// Firestore queries beyond the ones already used by the Expense/Salary tabs.
 class _DashboardTab extends StatelessWidget {
-  const _DashboardTab({required this.service});
+  const _DashboardTab({required this.service, required this.onViewAllTransactions});
+
   final FinanceService service;
+  final VoidCallback onViewAllTransactions;
+
   @override
-  Widget build(BuildContext context) => StreamBuilder<List<FinanceLedgerEntryModel>>(
-        stream: service.watchLedger(),
-        builder: (context, snap) {
-          final items = snap.data ?? [];
-          if (items.isEmpty) return const Padding(padding: EdgeInsets.all(24), child: Text('No finance transactions yet.'));
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 96),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Recent Transactions', style: TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                ...items.take(5).map((e) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: LedgerEntryCard(entry: e),
-                    )),
-              ],
-            ),
-          );
-        },
+  Widget build(BuildContext context) {
+    return StreamBuilder<FinanceDashboardSummaryModel>(
+      stream: service.watchDashboardSummary(),
+      builder: (context, summarySnap) {
+        final summary = summarySnap.data;
+        return StreamBuilder<List<FinanceInvoiceModel>>(
+          stream: service.watchInvoicesByType('expense'),
+          builder: (context, expenseInvoicesSnap) {
+            return StreamBuilder<List<FinanceInvoiceModel>>(
+              stream: service.watchInvoicesByType('salary'),
+              builder: (context, salaryInvoicesSnap) {
+                final outstanding = _outstandingTotal(expenseInvoicesSnap.data) + _outstandingTotal(salaryInvoicesSnap.data);
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 96),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _DashboardSectionHeader(title: 'Overview'),
+                      const SizedBox(height: 12),
+                      _ResponsiveCardGrid(
+                        desktopColumns: 4,
+                        tabletColumns: 2,
+                        children: [
+                          FinanceSummaryCard(
+                            label: 'Total Income',
+                            value: '₹${(summary?.totalIncome ?? 0).toStringAsFixed(0)}',
+                            icon: Icons.trending_up,
+                            color: AppColors.primary,
+                          ),
+                          FinanceSummaryCard(
+                            label: 'Total Expenses',
+                            value: '₹${(summary?.totalExpenses ?? 0).toStringAsFixed(0)}',
+                            icon: Icons.trending_down,
+                            color: const Color(0xFFD32F2F),
+                          ),
+                          FinanceSummaryCard(
+                            label: 'Net Balance',
+                            value: '₹${(summary?.netBalance ?? 0).toStringAsFixed(0)}',
+                            icon: Icons.account_balance_wallet_outlined,
+                            color: AppColors.secondary,
+                          ),
+                          FinanceSummaryCard(
+                            label: 'Outstanding',
+                            value: '₹${outstanding.toStringAsFixed(0)}',
+                            icon: Icons.receipt_long_outlined,
+                            color: const Color(0xFFB26A00),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 28),
+                      _DashboardSectionHeader(title: 'Account Balances'),
+                      const SizedBox(height: 12),
+                      _ResponsiveCardGrid(
+                        desktopColumns: 3,
+                        tabletColumns: 2,
+                        children: [
+                          FinanceSummaryCard(
+                            label: 'Cash',
+                            value: '₹${(summary?.cashBalance ?? 0).toStringAsFixed(0)}',
+                            icon: Icons.payments_outlined,
+                            color: AppColors.primary,
+                          ),
+                          FinanceSummaryCard(
+                            label: 'Bank',
+                            value: '₹${(summary?.bankBalance ?? 0).toStringAsFixed(0)}',
+                            icon: Icons.account_balance_outlined,
+                            color: AppColors.secondary,
+                          ),
+                          FinanceSummaryCard(
+                            label: 'UPI',
+                            value: '₹${(summary?.upiBalance ?? 0).toStringAsFixed(0)}',
+                            icon: Icons.qr_code_rounded,
+                            color: const Color(0xFF5E35B1),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 28),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _DashboardSectionHeader(title: 'Recent Transactions'),
+                          TextButton(
+                            onPressed: onViewAllTransactions,
+                            child: const Text('View all'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      StreamBuilder<List<FinanceLedgerEntryModel>>(
+                        stream: service.watchLedger(),
+                        builder: (context, ledgerSnap) {
+                          if (!ledgerSnap.hasData) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 32),
+                              child: Center(child: CircularProgressIndicator()),
+                            );
+                          }
+                          final items = ledgerSnap.data!;
+                          if (items.isEmpty) {
+                            return const _EmptyTransactions();
+                          }
+                          return Column(
+                            children: items
+                                .take(5)
+                                .map((e) => Padding(
+                                      padding: const EdgeInsets.only(bottom: 10),
+                                      child: LedgerEntryCard(entry: e),
+                                    ))
+                                .toList(),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  double _outstandingTotal(List<FinanceInvoiceModel>? invoices) {
+    if (invoices == null) return 0;
+    return invoices.fold<double>(0, (total, invoice) => total + invoice.balanceAmount);
+  }
+}
+
+class _DashboardSectionHeader extends StatelessWidget {
+  const _DashboardSectionHeader({required this.title});
+  final String title;
+
+  @override
+  Widget build(BuildContext context) => Text(
+        title,
+        style: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+          color: AppColors.textPrimary,
+        ),
       );
+}
+
+/// Lays [children] out at up to [desktopColumns] per row, stepping down to
+/// [tabletColumns] and finally a single column as width shrinks — the same
+/// LayoutBuilder + Wrap responsive pattern already used elsewhere in the app
+/// (e.g. the Fees dashboard cards).
+class _ResponsiveCardGrid extends StatelessWidget {
+  const _ResponsiveCardGrid({
+    required this.children,
+    required this.desktopColumns,
+    required this.tabletColumns,
+  });
+
+  final List<Widget> children;
+  final int desktopColumns;
+  final int tabletColumns;
+
+  static const _spacing = 16.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 1000
+            ? desktopColumns
+            : constraints.maxWidth >= 640
+                ? tabletColumns
+                : 1;
+        final cardWidth = (constraints.maxWidth - (_spacing * (columns - 1))) / columns;
+        return Wrap(
+          spacing: _spacing,
+          runSpacing: _spacing,
+          children: children.map((child) => SizedBox(width: cardWidth, child: child)).toList(),
+        );
+      },
+    );
+  }
+}
+
+class _EmptyTransactions extends StatelessWidget {
+  const _EmptyTransactions();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 40),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.receipt_long_outlined, size: 36, color: AppColors.textSecondary.withValues(alpha: 0.6)),
+          const SizedBox(height: 12),
+          const Text(
+            'No transactions yet',
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: AppColors.textPrimary),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Income and expenses will appear here once recorded.',
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _IncomeTab extends StatelessWidget {
