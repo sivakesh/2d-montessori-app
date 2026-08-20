@@ -2,6 +2,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
 import '../../../services/user_session_log_service.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -97,14 +98,18 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return snap.size;
   }
 
+  // 'attendance' documents store the day as a 'yyyy-MM-dd' string in the
+  // `date` field on every write path (Dashboard Attendance's markPresent/
+  // markAbsent and the Admin Attendance Management batch save both write
+  // it). `attendanceDate` is only written by the admin batch path in that
+  // same string format, so a DateTime range filter against it can never
+  // match — querying `date` with an equality match is what actually
+  // reflects the stored data.
   Future<int> _countTodayAttendance() async {
-    final today = DateTime.now();
-    final start = DateTime(today.year, today.month, today.day);
-    final end = start.add(const Duration(days: 1));
+    final todayKey = DateFormat('yyyy-MM-dd').format(DateTime.now().toLocal());
     final snap = await _firestore
         .collection('attendance')
-        .where('attendanceDate', isGreaterThanOrEqualTo: start)
-        .where('attendanceDate', isLessThan: end)
+        .where('date', isEqualTo: todayKey)
         .get();
     return snap.size;
   }

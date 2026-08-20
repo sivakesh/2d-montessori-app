@@ -296,6 +296,9 @@ class AttendanceService {
     }
   }
 
+  String _attendancePhotoPath(String entityType, String entityId, String date) =>
+      'attendance_photos/${entityType == 'student' ? 'students' : 'staff'}/$date/$entityId.jpg';
+
   Future<String?> captureAndUploadPhoto({
     required String entityType,
     required String entityId,
@@ -308,8 +311,7 @@ class AttendanceService {
     if (picked == null) return null;
 
     final date = _dateKey();
-    final path =
-        'attendance_photos/${entityType == 'student' ? 'students' : 'staff'}/$date/$entityId.jpg';
+    final path = _attendancePhotoPath(entityType, entityId, date);
 
     if (kIsWeb) {
       final bytes = await picked.readAsBytes();
@@ -317,6 +319,28 @@ class AttendanceService {
     } else {
       final file = File(picked.path);
       return uploadImage(image: file, path: path);
+    }
+  }
+
+  /// Best-effort delete of the deterministic attendance photo for one
+  /// entity/date. Never throws — a missing file or a Storage failure is
+  /// swallowed so callers can use this for cleanup without risking the
+  /// attendance write it follows. Only ever targets the
+  /// `attendance_photos/...` path; mood check-in photos live elsewhere and
+  /// are untouched.
+  Future<void> deleteAttendancePhoto({
+    required String entityType,
+    required String entityId,
+    required String date,
+  }) async {
+    final path = _attendancePhotoPath(entityType, entityId, date);
+    try {
+      await _storage.ref().child(path).delete();
+    } on FirebaseException catch (e) {
+      if (e.code == 'object-not-found') return;
+      debugPrint('Could not delete attendance photo ($path): $e');
+    } catch (e) {
+      debugPrint('Could not delete attendance photo ($path): $e');
     }
   }
 
@@ -422,6 +446,10 @@ class AttendanceService {
     if (email != null && email.isNotEmpty) data['email'] = email;
     await _attendance.doc(id).set(data, SetOptions(merge: true));
     debugPrint('Attendance saved successfully: docId=$id');
+    // Absent has no photo; clean up any photo left over from a prior
+    // Present mark for this same entity/date so it doesn't linger as an
+    // orphan now that the Firestore photoUrl has been cleared above.
+    await deleteAttendancePhoto(entityType: entityType, entityId: entityId, date: date);
   }
 
   Future<String> markPresent({
