@@ -48,7 +48,6 @@ class _ClassViewDialogState extends State<ClassViewDialog> {
                     children: [
                       ChoiceChip(label: const Text('Overview'), selected: _tab == 0, onSelected: (_) => setState(() => _tab = 0)),
                       ChoiceChip(label: const Text('Students'), selected: _tab == 1, onSelected: (_) => setState(() => _tab = 1)),
-                      ChoiceChip(label: const Text('Documents / Notes'), selected: _tab == 2, onSelected: (_) => setState(() => _tab = 2)),
                     ],
                   ),
                 ),
@@ -57,8 +56,7 @@ class _ClassViewDialogState extends State<ClassViewDialog> {
                     padding: const EdgeInsets.all(16),
                     child: switch (_tab) {
                       0 => _buildOverview(model),
-                      1 => _buildStudents(),
-                      _ => const Center(child: Text('No documents or notes available')),
+                      _ => _buildStudents(),
                     },
                   ),
                 ),

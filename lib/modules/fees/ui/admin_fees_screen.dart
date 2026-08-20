@@ -412,7 +412,6 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
               trailing: Wrap(
                 spacing: 4,
                 children: [
-                  TextButton(onPressed: () {}, child: const Text('Send Reminder')),
                   IconButton(
                     icon: _deletingId == a.id
                         ? const SizedBox(

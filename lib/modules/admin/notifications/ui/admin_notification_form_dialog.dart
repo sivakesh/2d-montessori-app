@@ -592,8 +592,8 @@ class _AdminNotificationFormDialogState extends State<AdminNotificationFormDialo
                 const Chip(label: Text('Admin only notification')),
               if (_attachment != null)
                 ListTile(
+                  leading: const Icon(Icons.attach_file),
                   title: Text(_attachment!.name),
-                  trailing: IconButton(icon: const Icon(Icons.open_in_new), onPressed: () {}),
                 ),
               TextButton(onPressed: _pickAttachment, child: const Text('Upload Attachment')),
             ],

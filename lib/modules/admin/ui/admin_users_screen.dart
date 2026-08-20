@@ -1,5 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+
+import '../../../core/theme/app_colors.dart';
+import '../../finance/widgets/finance_status_chip.dart';
 import 'admin_layout.dart';
 import 'admin_user_form_screen.dart';
 import 'admin_profile_screen.dart';
@@ -87,12 +90,16 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Text('Users', style: Theme.of(context).textTheme.headlineSmall),
-              ],
+            const Text(
+              'Users',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 4),
+            const Text(
+              'Manage staff, administrators, and user access.',
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 20),
             TextField(
               controller: _searchController,
               decoration: const InputDecoration(
@@ -134,7 +141,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                   }).toList();
 
                   if (docs.isEmpty) {
-                    return const Center(child: Text('No users found'));
+                    return const _UsersEmptyState();
                   }
 
                   return ListView.builder(
@@ -154,102 +161,17 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                       final isActive = data['isActive'] == true;
 
                       return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                CircleAvatar(
-                                  radius: 24,
-                                  backgroundImage: imageUrl.isNotEmpty
-                                      ? NetworkImage(imageUrl)
-                                      : null,
-                                  child: imageUrl.isEmpty
-                                      ? Text(
-                                          name.isNotEmpty
-                                              ? name[0].toUpperCase()
-                                              : '?',
-                                        )
-                                      : null,
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        name,
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.titleMedium,
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        'Role: $role',
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.bodyMedium,
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        'Phone: $phone',
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.bodyMedium,
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        'Email: $email',
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.bodyMedium,
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Wrap(
-                                        spacing: 8,
-                                        runSpacing: 8,
-                                        children: [
-                                          Chip(
-                                            label: Text(
-                                              isActive ? 'Active' : 'Inactive',
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                Column(
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.visibility),
-                                      onPressed: () {
-                                        _openUserViewDialog(context, doc.id);
-                                      },
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.person_outline),
-                                      onPressed: () => _openProfile(doc.id),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.edit),
-                                      onPressed: () => _openForm(
-                                        userId: doc.id,
-                                        initialData: data,
-                                      ),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.delete),
-                                      onPressed: () => _confirmDelete(doc.id),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _UserRow(
+                          name: name,
+                          role: role,
+                          contact: [phone, email].where((v) => v.isNotEmpty && v != '-').join(' • '),
+                          isActive: isActive,
+                          imageUrl: imageUrl,
+                          onView: () => _openUserViewDialog(context, doc.id),
+                          onProfile: () => _openProfile(doc.id),
+                          onEdit: () => _openForm(userId: doc.id, initialData: data),
+                          onDelete: () => _confirmDelete(doc.id),
                         ),
                       );
                     },
@@ -261,10 +183,162 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        backgroundColor: const Color(0xFF2E7D32),
+        backgroundColor: AppColors.primary,
         elevation: 4,
         onPressed: () => _openForm(),
         child: const Icon(Icons.add, color: Colors.white),
+      ),
+    );
+  }
+}
+
+/// Compact user row: avatar, name, role/status chips, contact line, and
+/// grouped actions — matching the card style established for Finance and
+/// Attendance. Presentation only; all callbacks are the screen's existing
+/// handlers, unchanged.
+class _UserRow extends StatelessWidget {
+  const _UserRow({
+    required this.name,
+    required this.role,
+    required this.contact,
+    required this.isActive,
+    required this.imageUrl,
+    required this.onView,
+    required this.onProfile,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final String name;
+  final String role;
+  final String contact;
+  final bool isActive;
+  final String imageUrl;
+  final VoidCallback onView;
+  final VoidCallback onProfile;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 20,
+            backgroundColor: AppColors.primary.withValues(alpha: 0.1),
+            backgroundImage: imageUrl.isNotEmpty ? NetworkImage(imageUrl) : null,
+            child: imageUrl.isEmpty
+                ? Text(
+                    name.isNotEmpty ? name[0].toUpperCase() : '?',
+                    style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.primary),
+                  )
+                : null,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.textPrimary),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    FinanceStatusChip(label: role.toUpperCase(), color: AppColors.secondary),
+                    FinanceStatusChip(label: isActive ? 'ACTIVE' : 'INACTIVE', color: isActive ? AppColors.primary : Colors.grey),
+                  ],
+                ),
+                if (contact.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    contact,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Wrap(
+            spacing: 2,
+            children: [
+              IconButton(
+                tooltip: 'View',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.visibility_outlined, size: 20),
+                onPressed: onView,
+              ),
+              IconButton(
+                tooltip: 'Profile',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.person_outline, size: 20),
+                onPressed: onProfile,
+              ),
+              IconButton(
+                tooltip: 'Edit',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.edit_outlined, size: 20),
+                onPressed: onEdit,
+              ),
+              IconButton(
+                tooltip: 'Delete',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.delete_outline, size: 20, color: Color(0xFFD32F2F)),
+                onPressed: onDelete,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _UsersEmptyState extends StatelessWidget {
+  const _UsersEmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.people_outline, size: 36, color: AppColors.textSecondary.withValues(alpha: 0.6)),
+          const SizedBox(height: 12),
+          const Text(
+            'No users found',
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: AppColors.textPrimary),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'No users match your current search or filters.',
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          ),
+        ],
       ),
     );
   }

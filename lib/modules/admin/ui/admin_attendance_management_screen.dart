@@ -2,13 +2,30 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/theme/app_colors.dart';
 import '../../attendance/providers/attendance_provider.dart';
 import '../../auth/data/user_service.dart';
 import '../../auth/models/app_user.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../classes/providers/class_provider.dart';
+import '../../finance/widgets/finance_status_chip.dart';
+import '../../finance/widgets/finance_summary_card.dart';
 import '../../students/providers/student_provider.dart';
 import 'admin_layout.dart';
+
+/// Pure summary calculation over already-loaded attendance statuses — no
+/// Firestore access. Public (not `_`-prefixed) so it can be unit tested
+/// directly.
+({int present, int absent, int notMarked, int total}) computeAttendanceSummary(
+  List<String> statuses,
+) {
+  return (
+    present: statuses.where((s) => s == 'present').length,
+    absent: statuses.where((s) => s == 'absent').length,
+    notMarked: statuses.where((s) => s == 'not_marked').length,
+    total: statuses.length,
+  );
+}
 
 class AdminAttendanceManagementScreen extends ConsumerStatefulWidget {
   const AdminAttendanceManagementScreen({super.key});
@@ -46,6 +63,17 @@ class _AdminAttendanceManagementScreenState
 
   String _recordKey(String entityType, String entityId) =>
       '${entityType}_$entityId';
+
+  // Same status-resolution rule already used per row (draft override, else
+  // the loaded attendance record, else not_marked) — extracted so the new
+  // summary section reads it from one place instead of duplicating it.
+  String _statusFor(String entityType, String entityId) {
+    return _draftStatuses[entityId] ??
+        (_attendanceMap[_recordKey(entityType, entityId)]?['status']
+                ?.toString()
+                .toLowerCase() ??
+            'not_marked');
+  }
 
   Future<void> _loadData() async {
     setState(() {
@@ -186,48 +214,6 @@ class _AdminAttendanceManagementScreenState
     await _loadData();
   }
 
-  Widget _statusButtons(String entityId) {
-    final status = _draftStatuses[entityId] ?? 'not_marked';
-    return Wrap(
-      spacing: 8,
-      children: [
-        TextButton(
-          onPressed: () => setState(() => _draftStatuses[entityId] = 'present'),
-          style: TextButton.styleFrom(
-            foregroundColor: status == 'present' ? Colors.white : Colors.green,
-            backgroundColor: status == 'present'
-                ? Colors.green
-                : Colors.green.shade50,
-          ),
-          child: const Text('Present'),
-        ),
-        TextButton(
-          onPressed: () => setState(() => _draftStatuses[entityId] = 'absent'),
-          style: TextButton.styleFrom(
-            foregroundColor: status == 'absent' ? Colors.white : Colors.red,
-            backgroundColor: status == 'absent'
-                ? Colors.red
-                : Colors.red.shade50,
-          ),
-          child: const Text('Absent'),
-        ),
-        TextButton(
-          onPressed: () =>
-              setState(() => _draftStatuses[entityId] = 'not_marked'),
-          style: TextButton.styleFrom(
-            foregroundColor: status == 'not_marked'
-                ? Colors.white
-                : Colors.grey,
-            backgroundColor: status == 'not_marked'
-                ? Colors.grey
-                : Colors.grey.shade200,
-          ),
-          child: const Text('Clear'),
-        ),
-      ],
-    );
-  }
-
   Widget _buildBody(BuildContext context) {
     final filteredStudents = _students.where((doc) {
       if (_selectedClassIds.isEmpty) return true;
@@ -238,28 +224,95 @@ class _AdminAttendanceManagementScreenState
 
     final filteredStaff = _staff;
 
+    // Summary reflects exactly the currently-displayed population (current
+    // date, current Students/Staff view, current class filter) — no new
+    // query, computed from the same _students/_staff/_attendanceMap/
+    // _draftStatuses already loaded for the list below.
+    final displayedStatuses = _selectedScope == 'student'
+        ? filteredStudents.map((doc) => _statusFor('student', doc.id)).toList()
+        : filteredStaff.map((user) => _statusFor('staff', user.id)).toList();
+    final summary = computeAttendanceSummary(displayedStatuses);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Backdated Attendance',
-          style: Theme.of(context).textTheme.headlineSmall,
+        const Text(
+          'Attendance',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
         ),
-        const SizedBox(height: 8),
-        Text(
-          'Create or edit attendance for previous dates.',
-          style: Theme.of(context).textTheme.bodyMedium,
+        const SizedBox(height: 4),
+        const Text(
+          'Manage daily attendance for students and staff.',
+          style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+        ),
+        const SizedBox(height: 20),
+        const Text(
+          'Attendance Summary',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
         ),
         const SizedBox(height: 12),
-        Align(
-          alignment: Alignment.centerRight,
-          child: FilledButton.icon(
-            onPressed: _pickDate,
-            icon: const Icon(Icons.calendar_month),
-            label: Text(_dateKey(_selectedDate)),
-          ),
+        _AttendanceSummaryGrid(
+          children: [
+            FinanceSummaryCard(
+              label: 'Present',
+              value: '${summary.present}',
+              icon: Icons.check_circle_outline,
+              color: AppColors.secondary,
+            ),
+            FinanceSummaryCard(
+              label: 'Absent',
+              value: '${summary.absent}',
+              icon: Icons.cancel_outlined,
+              color: const Color(0xFFD32F2F),
+            ),
+            FinanceSummaryCard(
+              label: 'Not Marked',
+              value: '${summary.notMarked}',
+              icon: Icons.help_outline,
+              color: const Color(0xFFB26A00),
+            ),
+            FinanceSummaryCard(
+              label: 'Total',
+              value: '${summary.total}',
+              icon: Icons.groups_outlined,
+              color: AppColors.primary,
+            ),
+          ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 24),
+        const Text(
+          'Date / View',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            OutlinedButton.icon(
+              onPressed: _pickDate,
+              icon: const Icon(Icons.calendar_month, size: 18),
+              label: Text(_dateKey(_selectedDate)),
+            ),
+            ChoiceChip(
+              label: const Text('Students'),
+              selected: _selectedScope == 'student',
+              onSelected: (_) => setState(() => _selectedScope = 'student'),
+            ),
+            ChoiceChip(
+              label: const Text('Staff'),
+              selected: _selectedScope == 'staff',
+              onSelected: (_) => setState(() => _selectedScope = 'staff'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 24),
+        const Text(
+          'Class / Group',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+        ),
+        const SizedBox(height: 12),
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -280,7 +333,7 @@ class _AdminAttendanceManagementScreenState
               ),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 24),
         if (_errorMessage != null) ...[
           Text(_errorMessage!, style: const TextStyle(color: Colors.red)),
           const SizedBox(height: 12),
@@ -288,141 +341,58 @@ class _AdminAttendanceManagementScreenState
         if (_loading)
           const Center(child: CircularProgressIndicator())
         else ...[
-          Row(
-            children: [
-              ChoiceChip(
-                label: const Text('Students'),
-                selected: _selectedScope == 'student',
-                onSelected: (_) => setState(() => _selectedScope = 'student'),
-              ),
-              const SizedBox(width: 8),
-              ChoiceChip(
-                label: const Text('Staff'),
-                selected: _selectedScope == 'staff',
-                onSelected: (_) => setState(() => _selectedScope = 'staff'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
           if (_selectedScope == 'student')
-            ListView.separated(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: filteredStudents.length,
-              separatorBuilder: (context, index) => const SizedBox(height: 12),
-              itemBuilder: (context, index) {
-                final student = filteredStudents[index];
-                final data = student.data();
-                final status =
-                    _draftStatuses[student.id] ??
-                    (_attendanceMap[_recordKey(
-                              'student',
-                              student.id,
-                            )]?['status']
-                            ?.toString()
-                            .toLowerCase() ??
-                        'not_marked');
-                return Card(
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          data['name']?.toString() ?? '',
-                          style: Theme.of(context).textTheme.titleMedium,
+            filteredStudents.isEmpty
+                ? const _AttendanceEmptyState(
+                    title: 'No students found',
+                    subtitle: 'No students match the selected class or filters.',
+                  )
+                : Column(
+                    children: filteredStudents.map((student) {
+                      final data = student.data();
+                      final status = _statusFor('student', student.id);
+                      final subtitle = [
+                        data['admissionNo']?.toString() ?? '',
+                        _classNameFor(data),
+                      ].where((v) => v.isNotEmpty && v != '-').join(' • ');
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _AttendanceRow(
+                          name: data['name']?.toString() ?? '',
+                          subtitle: subtitle,
+                          status: status,
+                          onPresent: () => setState(() => _draftStatuses[student.id] = 'present'),
+                          onAbsent: () => setState(() => _draftStatuses[student.id] = 'absent'),
+                          onClear: () => setState(() => _draftStatuses[student.id] = 'not_marked'),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Admission No: ${data['admissionNo']?.toString() ?? '-'}',
-                        ),
-                        Text('Class: ${_classNameFor(data)}'),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            const Text('Current Status: '),
-                            Text(
-                              status,
-                              style: TextStyle(
-                                color: status == 'present'
-                                    ? Colors.green
-                                    : status == 'absent'
-                                    ? Colors.red
-                                    : Colors.grey,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        _statusButtons(student.id),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            )
+                      );
+                    }).toList(),
+                  )
           else
-            ListView.separated(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: filteredStaff.length,
-              separatorBuilder: (context, index) => const SizedBox(height: 12),
-              itemBuilder: (context, index) {
-                final user = filteredStaff[index];
-                final status =
-                    _draftStatuses[user.id] ??
-                    (_attendanceMap[_recordKey('staff', user.id)]?['status']
-                            ?.toString()
-                            .toLowerCase() ??
-                        'not_marked');
-                return Card(
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          user.name ?? user.phone,
-                          style: Theme.of(context).textTheme.titleMedium,
+            filteredStaff.isEmpty
+                ? const _AttendanceEmptyState(
+                    title: 'No staff found',
+                    subtitle: 'No staff match the current view.',
+                  )
+                : Column(
+                    children: filteredStaff.map((user) {
+                      final status = _statusFor('staff', user.id);
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _AttendanceRow(
+                          name: user.name ?? user.phone,
+                          subtitle: user.phone,
+                          status: status,
+                          onPresent: () => setState(() => _draftStatuses[user.id] = 'present'),
+                          onAbsent: () => setState(() => _draftStatuses[user.id] = 'absent'),
+                          onClear: () => setState(() => _draftStatuses[user.id] = 'not_marked'),
                         ),
-                        const SizedBox(height: 4),
-                        Text('Phone: ${user.phone}'),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            const Text('Current Status: '),
-                            Text(
-                              status,
-                              style: TextStyle(
-                                color: status == 'present'
-                                    ? Colors.green
-                                    : status == 'absent'
-                                    ? Colors.red
-                                    : Colors.grey,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        _statusButtons(user.id),
-                      ],
-                    ),
+                      );
+                    }).toList(),
                   ),
-                );
-              },
-            ),
           const SizedBox(height: 20),
           FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
             onPressed: _canSave ? _saveAll : null,
             child: const Text('Save'),
           ),
@@ -439,6 +409,234 @@ class _AdminAttendanceManagementScreenState
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: SingleChildScrollView(child: _buildBody(context)),
+      ),
+    );
+  }
+}
+
+/// Lays summary cards out at up to 4 per row, stepping down to 2 then 1 as
+/// width shrinks — the same LayoutBuilder + Wrap responsive pattern used by
+/// the Finance module's summary grid (that one is private to
+/// admin_finance_screen.dart, so it isn't importable here; this replicates
+/// the same behavior rather than modifying Finance to export it).
+class _AttendanceSummaryGrid extends StatelessWidget {
+  const _AttendanceSummaryGrid({required this.children});
+
+  final List<Widget> children;
+
+  static const _spacing = 16.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 1000
+            ? 4
+            : constraints.maxWidth >= 640
+                ? 2
+                : 1;
+        final cardWidth = (constraints.maxWidth - (_spacing * (columns - 1))) / columns;
+        return Wrap(
+          spacing: _spacing,
+          runSpacing: _spacing,
+          children: children.map((child) => SizedBox(width: cardWidth, child: child)).toList(),
+        );
+      },
+    );
+  }
+}
+
+/// A compact attendance row for one student or staff member. Presentation
+/// only — the three actions call back into the existing draft-status
+/// handlers already wired in the parent; no attendance data is written
+/// here.
+class _AttendanceRow extends StatelessWidget {
+  const _AttendanceRow({
+    required this.name,
+    required this.subtitle,
+    required this.status,
+    required this.onPresent,
+    required this.onAbsent,
+    required this.onClear,
+  });
+
+  final String name;
+  final String subtitle;
+  final String status;
+  final VoidCallback onPresent;
+  final VoidCallback onAbsent;
+  final VoidCallback onClear;
+
+  static String _initialsFor(String value) {
+    final parts = value.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+    return (parts.first.substring(0, 1) + parts.last.substring(0, 1)).toUpperCase();
+  }
+
+  ({String label, Color color}) get _statusPresentation => switch (status) {
+        'present' => (label: 'PRESENT', color: AppColors.secondary),
+        'absent' => (label: 'ABSENT', color: const Color(0xFFD32F2F)),
+        _ => (label: 'NOT MARKED', color: Colors.grey),
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final statusInfo = _statusPresentation;
+
+    final avatar = Container(
+      width: 40,
+      height: 40,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.1), shape: BoxShape.circle),
+      child: Text(
+        _initialsFor(name),
+        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.primary),
+      ),
+    );
+
+    final info = Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            name.isEmpty ? '-' : name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.textPrimary),
+          ),
+          if (subtitle.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+          ],
+        ],
+      ),
+    );
+
+    final chip = FinanceStatusChip(label: statusInfo.label, color: statusInfo.color);
+
+    final actions = Wrap(
+      spacing: 6,
+      children: [
+        _AttendanceActionButton(label: 'Present', active: status == 'present', color: AppColors.secondary, onPressed: onPresent),
+        _AttendanceActionButton(label: 'Absent', active: status == 'absent', color: const Color(0xFFD32F2F), onPressed: onAbsent),
+        _AttendanceActionButton(label: 'Clear', active: status == 'not_marked', color: Colors.grey.shade700, onPressed: onClear),
+      ],
+    );
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth >= 560) {
+            return Row(
+              children: [
+                avatar,
+                const SizedBox(width: 12),
+                info,
+                const SizedBox(width: 12),
+                chip,
+                const SizedBox(width: 12),
+                actions,
+              ],
+            );
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  avatar,
+                  const SizedBox(width: 12),
+                  info,
+                  const SizedBox(width: 8),
+                  chip,
+                ],
+              ),
+              const SizedBox(height: 10),
+              actions,
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _AttendanceActionButton extends StatelessWidget {
+  const _AttendanceActionButton({
+    required this.label,
+    required this.active,
+    required this.color,
+    required this.onPressed,
+  });
+
+  final String label;
+  final bool active;
+  final Color color;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 32,
+      child: TextButton(
+        onPressed: onPressed,
+        style: TextButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          backgroundColor: active ? color : color.withValues(alpha: 0.08),
+          foregroundColor: active ? Colors.white : color,
+          textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+        child: Text(label),
+      ),
+    );
+  }
+}
+
+/// Empty-state card matching the Finance module's styling (icon + title +
+/// supporting text inside a left-flowing bordered card). Finance's own
+/// version of this is private to admin_finance_screen.dart, so it isn't
+/// importable here; this replicates the same look rather than modifying
+/// Finance to export it.
+class _AttendanceEmptyState extends StatelessWidget {
+  const _AttendanceEmptyState({required this.title, required this.subtitle});
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.groups_outlined, size: 36, color: AppColors.textSecondary.withValues(alpha: 0.6)),
+          const SizedBox(height: 12),
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: AppColors.textPrimary)),
+          const SizedBox(height: 4),
+          Text(subtitle, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+        ],
       ),
     );
   }

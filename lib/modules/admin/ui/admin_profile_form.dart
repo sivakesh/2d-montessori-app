@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../core/config/app_env.dart';
 import '../../../core/services/profile_image_picker.dart';
 import '../data/admin_profile_service.dart';
 import '../models/admin_profile_model.dart';
@@ -427,11 +428,12 @@ class _AdminProfileFormState extends State<AdminProfileForm>
       appBar: AppBar(
         title: const Text('Profile'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.auto_fix_high),
-            tooltip: 'Auto Fill Sample Data',
-            onPressed: _fillSampleData,
-          ),
+          if (currentEnvironment == AppEnvironment.dev)
+            IconButton(
+              icon: const Icon(Icons.auto_fix_high),
+              tooltip: 'Auto Fill Sample Data (dev only)',
+              onPressed: _fillSampleData,
+            ),
         ],
       ),
       body: Stack(

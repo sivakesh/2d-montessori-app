@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/config/app_env.dart';
+import '../../../core/theme/app_colors.dart';
+import '../../finance/widgets/finance_status_chip.dart';
 import '../notifications/data/admin_notification_service.dart';
 import '../notifications/models/admin_notification_model.dart';
 import '../notifications/ui/admin_notification_form_dialog.dart';
@@ -281,7 +284,7 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
       selectedIndex: 5,
       title: 'Notifications',
       floatingActionButton: FloatingActionButton(
-        backgroundColor: const Color(0xFF2E7D32),
+        backgroundColor: AppColors.primary,
         elevation: 4,
         onPressed: () => _openForm(),
         child: const Icon(Icons.add, color: Colors.white),
@@ -295,20 +298,36 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Notifications', style: Theme.of(context).textTheme.headlineSmall),
-                    const Spacer(),
-                    TextButton.icon(
-                      onPressed: () async {
-                        await _service.seedSampleNotifications();
-                        await _load();
-                      },
-                      icon: const Icon(Icons.auto_awesome),
-                      label: const Text('Seed Sample'),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Notifications',
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'Manage school announcements, circulars, and reminders.',
+                            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                          ),
+                        ],
+                      ),
                     ),
+                    if (currentEnvironment == AppEnvironment.dev)
+                      TextButton.icon(
+                        onPressed: () async {
+                          await _service.seedSampleNotifications();
+                          await _load();
+                        },
+                        icon: const Icon(Icons.auto_awesome),
+                        label: const Text('Seed Sample'),
+                      ),
                   ],
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
                 TextField(
                   controller: _searchController,
                   onChanged: (_) => setState(() {}),
@@ -317,153 +336,180 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
                     prefixIcon: Icon(Icons.search),
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  _filterSummary(),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 12),
-                if (isMobile)
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      FilterChip(
-                        label: const Text('All'),
-                        selected: _pinned == null && _requiresAck == null,
-                        onSelected: (_) => setState(() {
-                          _pinned = null;
-                          _requiresAck = null;
-                        }),
-                      ),
-                      FilterChip(
-                        label: const Text('Pinned'),
-                        selected: _pinned == true,
-                        onSelected: (_) => setState(() => _pinned = _pinned == true ? null : true),
-                      ),
-                      FilterChip(
-                        label: const Text('Ack'),
-                        selected: _requiresAck == true,
-                        onSelected: (_) => setState(() => _requiresAck = _requiresAck == true ? null : true),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: _openMoreFilters,
-                        icon: const Icon(Icons.tune),
-                        label: const Text('More Filters'),
-                      ),
-                    ],
-                  )
-                else
-                  Column(
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+                  ),
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          ('All', null),
-                          ('Pinned', true),
-                          ('Unpinned', false),
-                          ('Ack Required', true),
-                          ('No Ack', false),
-                        ].map((e) {
-                          final label = e.$1;
-                          final value = e.$2;
-                          final selected = (label == 'Pinned' || label == 'Unpinned')
-                              ? _pinned == value
-                              : (label == 'Ack Required' || label == 'No Ack')
-                                  ? _requiresAck == value
-                                  : false;
-                          return FilterChip(
-                            label: Text(label),
-                            selected: selected,
-                            onSelected: (_) {
-                              setState(() {
-                                if (label == 'Pinned' || label == 'Unpinned') _pinned = value as bool;
-                                if (label == 'Ack Required' || label == 'No Ack') _requiresAck = value as bool;
-                              });
-                            },
-                          );
-                        }).toList(),
+                          const Text(
+                            'Filters',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              _filterSummary(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _notificationTypeOptions()
-                            .map((e) => ChoiceChip(label: Text(e), selected: _type == e, onSelected: (_) => setState(() => _type = e)))
-                            .toList(),
-                      ),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _categoryOptions()
-                            .map((e) => ChoiceChip(label: Text(e), selected: _category == e, onSelected: (_) => setState(() => _category = e)))
-                            .toList(),
-                      ),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: ['All', 'Parents', 'Staff', 'Public', 'Admin Only']
-                            .map((e) => ChoiceChip(label: Text(e), selected: _audience == e, onSelected: (_) => setState(() => _audience = e)))
-                            .toList(),
-                      ),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: ['All', 'Low', 'Normal', 'High', 'Urgent']
-                            .map((e) => ChoiceChip(label: Text(e), selected: _priority == e, onSelected: (_) => setState(() => _priority = e)))
-                            .toList(),
-                      ),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: ['All', 'Draft', 'Scheduled', 'Published', 'Archived', 'Expired']
-                            .map((e) => ChoiceChip(label: Text(e), selected: _status == e, onSelected: (_) => setState(() => _status = e)))
-                            .toList(),
-                      ),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: ['All', '2026-2027']
-                            .map((e) => ChoiceChip(label: Text(e), selected: _academicYear == e, onSelected: (_) => setState(() => _academicYear = e)))
-                            .toList(),
-                      ),
+                      if (isMobile)
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            FilterChip(
+                              label: const Text('All'),
+                              selected: _pinned == null && _requiresAck == null,
+                              onSelected: (_) => setState(() {
+                                _pinned = null;
+                                _requiresAck = null;
+                              }),
+                            ),
+                            FilterChip(
+                              label: const Text('Pinned'),
+                              selected: _pinned == true,
+                              onSelected: (_) => setState(() => _pinned = _pinned == true ? null : true),
+                            ),
+                            FilterChip(
+                              label: const Text('Ack'),
+                              selected: _requiresAck == true,
+                              onSelected: (_) => setState(() => _requiresAck = _requiresAck == true ? null : true),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: _openMoreFilters,
+                              icon: const Icon(Icons.tune),
+                              label: const Text('More Filters'),
+                            ),
+                          ],
+                        )
+                      else
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _FilterGroupLabel('Acknowledgement'),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                ('All', null),
+                                ('Pinned', true),
+                                ('Unpinned', false),
+                                ('Ack Required', true),
+                                ('No Ack', false),
+                              ].map((e) {
+                                final label = e.$1;
+                                final value = e.$2;
+                                final selected = (label == 'Pinned' || label == 'Unpinned')
+                                    ? _pinned == value
+                                    : (label == 'Ack Required' || label == 'No Ack')
+                                        ? _requiresAck == value
+                                        : false;
+                                return FilterChip(
+                                  label: Text(label),
+                                  selected: selected,
+                                  onSelected: (_) {
+                                    setState(() {
+                                      if (label == 'Pinned' || label == 'Unpinned') _pinned = value as bool;
+                                      if (label == 'Ack Required' || label == 'No Ack') _requiresAck = value as bool;
+                                    });
+                                  },
+                                );
+                              }).toList(),
+                            ),
+                            const SizedBox(height: 14),
+                            _FilterGroupLabel('Type'),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: _notificationTypeOptions()
+                                  .map((e) => ChoiceChip(label: Text(e), selected: _type == e, onSelected: (_) => setState(() => _type = e)))
+                                  .toList(),
+                            ),
+                            const SizedBox(height: 14),
+                            _FilterGroupLabel('Category'),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: _categoryOptions()
+                                  .map((e) => ChoiceChip(label: Text(e), selected: _category == e, onSelected: (_) => setState(() => _category = e)))
+                                  .toList(),
+                            ),
+                            const SizedBox(height: 14),
+                            _FilterGroupLabel('Audience'),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: ['All', 'Parents', 'Staff', 'Public', 'Admin Only']
+                                  .map((e) => ChoiceChip(label: Text(e), selected: _audience == e, onSelected: (_) => setState(() => _audience = e)))
+                                  .toList(),
+                            ),
+                            const SizedBox(height: 14),
+                            _FilterGroupLabel('Priority'),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: ['All', 'Low', 'Normal', 'High', 'Urgent']
+                                  .map((e) => ChoiceChip(label: Text(e), selected: _priority == e, onSelected: (_) => setState(() => _priority = e)))
+                                  .toList(),
+                            ),
+                            const SizedBox(height: 14),
+                            _FilterGroupLabel('Status'),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: ['All', 'Draft', 'Scheduled', 'Published', 'Archived', 'Expired']
+                                  .map((e) => ChoiceChip(label: Text(e), selected: _status == e, onSelected: (_) => setState(() => _status = e)))
+                                  .toList(),
+                            ),
+                            const SizedBox(height: 14),
+                            _FilterGroupLabel('Academic Year'),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: ['All', '2026-2027']
+                                  .map((e) => ChoiceChip(label: Text(e), selected: _academicYear == e, onSelected: (_) => setState(() => _academicYear = e)))
+                                  .toList(),
+                            ),
+                          ],
+                        ),
                     ],
                   ),
-                const SizedBox(height: 16),
+                ),
+                const SizedBox(height: 20),
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.only(bottom: 96),
                     child: _loading
                         ? const Center(child: CircularProgressIndicator())
                         : filtered.isEmpty
-                            ? const Center(child: Text('No notifications found'))
+                            ? const _NotificationsEmptyState()
                             : ListView.builder(
                                 itemCount: filtered.length,
                                 itemBuilder: (context, index) {
                                   final n = filtered[index];
                                   return Padding(
-                                    padding: const EdgeInsets.only(bottom: 12),
-                                    child: Card(
-                                      child: ListTile(
-                                        leading: const CircleAvatar(child: Icon(Icons.notifications)),
-                                        title: Text(n.title),
-                                        subtitle: Text('${n.notificationType} • ${n.category}\n${n.message.length > 100 ? '${n.message.substring(0, 100)}...' : n.message}'),
-                                        isThreeLine: true,
-                                        trailing: Wrap(
-                                          spacing: 8,
-                                          children: [
-                                            IconButton(icon: const Icon(Icons.visibility), onPressed: () => showDialog(context: context, builder: (_) => AdminNotificationViewDialog(notificationId: n.id))),
-                                            IconButton(icon: const Icon(Icons.edit), onPressed: () => _openForm(model: n)),
-                                          ],
-                                        ),
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: _NotificationRow(
+                                      notification: n,
+                                      onView: () => showDialog(
+                                        context: context,
+                                        builder: (_) => AdminNotificationViewDialog(notificationId: n.id),
                                       ),
+                                      onEdit: () => _openForm(model: n),
                                     ),
                                   );
                                 },
@@ -474,6 +520,161 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Small uppercase label above each filter group's chip row — makes the
+/// filter area read as grouped filters rather than independent chip rows.
+class _FilterGroupLabel extends StatelessWidget {
+  const _FilterGroupLabel(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        label,
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+      ),
+    );
+  }
+}
+
+/// Compact notification row matching the shared card style established
+/// for Finance/Attendance/Users/Students/Classes/Documents. Only View and
+/// Edit are exposed — delete/publish/archive were deliberately left out of
+/// the prior stabilization pass and are not added here.
+class _NotificationRow extends StatelessWidget {
+  const _NotificationRow({
+    required this.notification,
+    required this.onView,
+    required this.onEdit,
+  });
+
+  final AdminNotificationModel notification;
+  final VoidCallback onView;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final metaLine = [notification.notificationType, notification.category].where((v) => v.isNotEmpty).join(' • ');
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.1), shape: BoxShape.circle),
+            child: const Icon(Icons.notifications_outlined, color: AppColors.primary, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        notification.title.isEmpty ? 'Notification' : notification.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.textPrimary),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    FinanceStatusChip(label: notification.status.toUpperCase(), color: _statusColor(notification.status)),
+                  ],
+                ),
+                if (metaLine.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(metaLine, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                ],
+                if (notification.message.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    notification.message,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Wrap(
+            spacing: 2,
+            children: [
+              IconButton(
+                tooltip: 'View',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.visibility_outlined, size: 20),
+                onPressed: onView,
+              ),
+              IconButton(
+                tooltip: 'Edit',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.edit_outlined, size: 20),
+                onPressed: onEdit,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _statusColor(String status) => switch (status) {
+        'Published' => AppColors.primary,
+        'Draft' => const Color(0xFFB26A00),
+        'Archived' => Colors.grey,
+        _ => AppColors.secondary,
+      };
+}
+
+class _NotificationsEmptyState extends StatelessWidget {
+  const _NotificationsEmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.notifications_none_outlined, size: 36, color: AppColors.textSecondary.withValues(alpha: 0.6)),
+          const SizedBox(height: 12),
+          const Text(
+            'No notifications found',
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: AppColors.textPrimary),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'No notifications match your current search or filters.',
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          ),
+        ],
       ),
     );
   }

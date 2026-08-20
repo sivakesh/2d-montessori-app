@@ -506,14 +506,6 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   String _attendanceKey(String entityType, String entityId) =>
       '${entityType}_$entityId';
 
-  void _openAddAttendanceFlow() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Use the row actions below to add attendance'),
-      ),
-    );
-  }
-
   Widget _buildTodayTab(
     BuildContext context,
     AppUser currentUser,
@@ -816,28 +808,9 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Attendance',
-                          style: Theme.of(context).textTheme.headlineSmall,
-                        ),
-                      ),
-                      Material(
-                        color: Colors.green,
-                        shape: const CircleBorder(),
-                        child: Tooltip(
-                          message: 'Add Attendance',
-                          child: IconButton(
-                            onPressed: _openAddAttendanceFlow,
-                            icon: const Icon(Icons.add),
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ],
+                  Text(
+                    'Attendance',
+                    style: Theme.of(context).textTheme.headlineSmall,
                   ),
                   const SizedBox(height: 8),
                   Text(

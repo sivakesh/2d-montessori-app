@@ -13,10 +13,10 @@ import '../models/student_fee_assignment_model.dart';
 import '../../finance/services/finance_service.dart';
 
 class FeeService {
-  FeeService({FirebaseFirestore? firestore, FirebaseAuth? auth})
+  FeeService({FirebaseFirestore? firestore, FirebaseAuth? auth, FirebaseStorage? storage})
       : _firestore = firestore ?? FirebaseFirestore.instance,
         _auth = auth ?? FirebaseAuth.instance,
-        _storage = FirebaseStorage.instance;
+        _storage = storage ?? FirebaseStorage.instance;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;

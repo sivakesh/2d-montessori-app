@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../../services/user_session_log_service.dart';
+import '../../fees/services/fee_service.dart';
 import '../../fees/ui/admin_fees_screen.dart';
 import '../../finance/ui/admin_finance_screen.dart';
 import '../students/ui/admin_students_screen.dart';
@@ -72,18 +73,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return snap.size;
   }
 
+  // "Pending Fees" = student fee assignments with an outstanding balance,
+  // matching the Fees module's own Dues/Collections tabs
+  // (student_fee_assignments.balanceAmount > 0). Reuses FeeService rather
+  // than a second fee-calculation path.
   Future<int> _countPendingFees() async {
-    const candidates = ['fees', 'fee_collections', 'student_fees'];
-    for (final collection in candidates) {
-      try {
-        final snap = await _firestore
-            .collection(collection)
-            .where('status', whereIn: ['pending', 'due', 'unpaid'])
-            .get();
-        return snap.size;
-      } catch (_) {}
-    }
-    return 0;
+    final assignments = await FeeService().getAssignments();
+    return assignments.where((a) => a.balanceAmount > 0).length;
   }
 
   Future<List<_ActivityItem>> _recentFromCollection({
@@ -115,29 +111,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     }
   }
 
+  // Recent activity is built from actual creation timestamps across the
+  // core collections — there is no audit-log subsystem in this app (no
+  // code anywhere writes an "auditLogs" document), so that was previously
+  // queried but always fell through to this same union unnoticed.
   Future<List<_ActivityItem>> _loadRecentActivity() async {
-    try {
-      final audit = await _firestore
-          .collection('auditLogs')
-          .orderBy('createdAt', descending: true)
-          .limit(5)
-          .get();
-      if (audit.docs.isNotEmpty) {
-        return audit.docs.map((doc) {
-          final data = doc.data();
-          final createdAt = _timestampValue(data['createdAt']);
-          return _ActivityItem(
-            title: data['title']?.toString() ??
-                data['action']?.toString() ??
-                'Audit entry',
-            subtitle: data['module']?.toString() ?? 'Audit log',
-            trailing: _formatTimestamp(createdAt),
-            sortKey: createdAt,
-          );
-        }).toList();
-      }
-    } catch (_) {}
-
     final combined = <_ActivityItem>[];
     combined.addAll(
       await _recentFromCollection(

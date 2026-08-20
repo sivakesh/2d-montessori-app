@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:montessori_app/modules/auth/data/user_service.dart';
 
+import '../../../core/config/app_env.dart';
+
 class AdminUserFormScreen extends StatefulWidget {
   const AdminUserFormScreen({
     super.key,
@@ -225,21 +227,23 @@ class _AdminUserFormScreenState extends State<AdminUserFormScreen> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  IconButton(
-                    tooltip: 'Auto fill sample data',
-                    onPressed: _isSaving
-                        ? null
-                        : () {
-                            _nameController.text = 'Rahul Sharma';
-                            _emailController.text = 'rahul.sharma@example.com';
-                            _phoneController.text = '9876543210';
-                            _role = 'parent';
-                            _isActive = true;
-                            setState(() {});
-                          },
-                    icon: const Icon(Icons.casino),
-                  ),
-                  const SizedBox(width: 12),
+                  if (currentEnvironment == AppEnvironment.dev) ...[
+                    IconButton(
+                      tooltip: 'Auto fill sample data (dev only)',
+                      onPressed: _isSaving
+                          ? null
+                          : () {
+                              _nameController.text = 'Rahul Sharma';
+                              _emailController.text = 'rahul.sharma@example.com';
+                              _phoneController.text = '9876543210';
+                              _role = 'parent';
+                              _isActive = true;
+                              setState(() {});
+                            },
+                      icon: const Icon(Icons.casino),
+                    ),
+                    const SizedBox(width: 12),
+                  ],
                   Expanded(
                     child: ElevatedButton(
                       onPressed: _isSaving ? null : _save,

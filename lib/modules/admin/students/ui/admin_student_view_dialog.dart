@@ -147,7 +147,30 @@ class _AdminStudentViewDialogState extends State<AdminStudentViewDialog>
     await _refresh();
   }
 
+  Future<bool> _confirmDelete() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete document?'),
+        content: const Text('This action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
   Future<void> _deleteDocument(String url) async {
+    if (!await _confirmDelete()) return;
     await _service.removeStudentDocument(
       studentId: widget.studentId,
       documentUrl: url,
