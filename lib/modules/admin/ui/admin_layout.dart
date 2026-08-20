@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/theme/app_sizes.dart';
 import 'admin_classes_screen.dart';
 import 'admin_dashboard_screen.dart';
 import 'admin_documents_screen.dart';
@@ -29,7 +30,7 @@ class AdminLayout extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isMobile = MediaQuery.of(context).size.width < 800;
+    final isMobile = MediaQuery.of(context).size.width < AppSizes.mobileBreakpoint;
     final mobileNavItems = <MobileNavItem>[
       MobileNavItem(
         label: 'Dashboard',

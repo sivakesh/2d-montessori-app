@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_sizes.dart';
+import '../../../core/widgets/responsive_dialog_shell.dart';
 import '../../finance/widgets/finance_status_chip.dart';
 import 'admin_layout.dart';
 import 'admin_user_form_screen.dart';
@@ -67,13 +69,10 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   void _openUserViewDialog(BuildContext context, String userId) {
     showDialog(
       context: context,
-      builder: (_) => Dialog(
-        insetPadding: const EdgeInsets.all(20),
-        child: SizedBox(
-          width: 700,
-          height: 600,
-          child: UserViewDialog(userId: userId),
-        ),
+      builder: (_) => ResponsiveDialogShell(
+        desktopWidth: 700,
+        desktopHeight: 600,
+        child: UserViewDialog(userId: userId),
       ),
     );
   }
@@ -81,6 +80,8 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   @override
   Widget build(BuildContext context) {
     final query = _searchController.text.trim().toLowerCase();
+    final isMobile =
+        MediaQuery.of(context).size.width < AppSizes.mobileBreakpoint;
 
     return AdminLayout(
       selectedIndex: 1,
@@ -168,6 +169,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                           contact: [phone, email].where((v) => v.isNotEmpty && v != '-').join(' • '),
                           isActive: isActive,
                           imageUrl: imageUrl,
+                          isMobile: isMobile,
                           onView: () => _openUserViewDialog(context, doc.id),
                           onProfile: () => _openProfile(doc.id),
                           onEdit: () => _openForm(userId: doc.id, initialData: data),
@@ -203,6 +205,7 @@ class _UserRow extends StatelessWidget {
     required this.contact,
     required this.isActive,
     required this.imageUrl,
+    required this.isMobile,
     required this.onView,
     required this.onProfile,
     required this.onEdit,
@@ -214,6 +217,7 @@ class _UserRow extends StatelessWidget {
   final String contact;
   final bool isActive;
   final String imageUrl;
+  final bool isMobile;
   final VoidCallback onView;
   final VoidCallback onProfile;
   final VoidCallback onEdit;
@@ -277,35 +281,91 @@ class _UserRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Wrap(
-            spacing: 2,
-            children: [
-              IconButton(
-                tooltip: 'View',
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.visibility_outlined, size: 20),
-                onPressed: onView,
-              ),
-              IconButton(
-                tooltip: 'Profile',
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.person_outline, size: 20),
-                onPressed: onProfile,
-              ),
-              IconButton(
-                tooltip: 'Edit',
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.edit_outlined, size: 20),
-                onPressed: onEdit,
-              ),
-              IconButton(
-                tooltip: 'Delete',
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.delete_outline, size: 20, color: Color(0xFFD32F2F)),
-                onPressed: onDelete,
-              ),
-            ],
-          ),
+          if (isMobile)
+            PopupMenuButton<String>(
+              tooltip: 'Actions',
+              icon: const Icon(Icons.more_vert, size: 20),
+              onSelected: (value) {
+                switch (value) {
+                  case 'view':
+                    onView();
+                    break;
+                  case 'profile':
+                    onProfile();
+                    break;
+                  case 'edit':
+                    onEdit();
+                    break;
+                  case 'delete':
+                    onDelete();
+                    break;
+                }
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: 'view',
+                  child: ListTile(
+                    leading: Icon(Icons.visibility_outlined),
+                    title: Text('View'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'profile',
+                  child: ListTile(
+                    leading: Icon(Icons.person_outline),
+                    title: Text('Profile'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'edit',
+                  child: ListTile(
+                    leading: Icon(Icons.edit_outlined),
+                    title: Text('Edit'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'delete',
+                  child: ListTile(
+                    leading: Icon(Icons.delete_outline, color: Color(0xFFD32F2F)),
+                    title: Text('Delete', style: TextStyle(color: Color(0xFFD32F2F))),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ],
+            )
+          else
+            Wrap(
+              spacing: 2,
+              children: [
+                IconButton(
+                  tooltip: 'View',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.visibility_outlined, size: 20),
+                  onPressed: onView,
+                ),
+                IconButton(
+                  tooltip: 'Profile',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.person_outline, size: 20),
+                  onPressed: onProfile,
+                ),
+                IconButton(
+                  tooltip: 'Edit',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.edit_outlined, size: 20),
+                  onPressed: onEdit,
+                ),
+                IconButton(
+                  tooltip: 'Delete',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.delete_outline, size: 20, color: Color(0xFFD32F2F)),
+                  onPressed: onDelete,
+                ),
+              ],
+            ),
         ],
       ),
     );

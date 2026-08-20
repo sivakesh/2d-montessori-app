@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/theme/app_sizes.dart';
 import '../../../services/user_session_log_service.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../fees/services/fee_service.dart';
@@ -261,71 +262,27 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Widget _buildAdminDashboard(BuildContext context) {
+    final isMobile =
+        MediaQuery.of(context).size.width < AppSizes.mobileBreakpoint;
     return AdminLayout(
       selectedIndex: 0,
       title: 'Admin Dashboard',
       body: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: EdgeInsets.all(isMobile ? 16 : 24),
         child: FutureBuilder<_DashboardData>(
           future: _future,
           builder: (context, snapshot) {
             final data = snapshot.data;
             final loading = snapshot.connectionState == ConnectionState.waiting;
             return SingleChildScrollView(
+              padding: EdgeInsets.only(bottom: isMobile ? 24 : 0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (loading)
                     const _DashboardSkeleton()
                   else if (data != null) ...[
-                    Wrap(
-                      spacing: 16,
-                      runSpacing: 16,
-                      children: [
-                        _KpiCard(
-                          title: 'Total Students',
-                          value: data.totalStudents.toString(),
-                          helperText: 'Active learners in school',
-                          icon: Icons.groups_outlined,
-                          color: const Color(0xFF2E7D32),
-                        ),
-                        _KpiCard(
-                          title: 'Total Staff',
-                          value: data.totalStaff.toString(),
-                          helperText: 'Teachers and support team',
-                          icon: Icons.badge_outlined,
-                          color: const Color(0xFF4E7C5B),
-                        ),
-                        _KpiCard(
-                          title: 'Active Classes',
-                          value: data.activeClasses.toString(),
-                          helperText: 'Running classrooms',
-                          icon: Icons.class_outlined,
-                          color: const Color(0xFF558B2F),
-                        ),
-                        _KpiCard(
-                          title: 'Today\'s Attendance',
-                          value: data.todayAttendance.toString(),
-                          helperText: 'Marked attendance records',
-                          icon: Icons.fact_check_outlined,
-                          color: const Color(0xFF388E3C),
-                        ),
-                        _KpiCard(
-                          title: 'Pending Fees',
-                          value: data.pendingFees.toString(),
-                          helperText: 'Fees needing follow-up',
-                          icon: Icons.payments_outlined,
-                          color: const Color(0xFF6D4C41),
-                        ),
-                        _KpiCard(
-                          title: 'Published Notices',
-                          value: data.publishedNotices.toString(),
-                          helperText: 'Visible school updates',
-                          icon: Icons.notifications_active_outlined,
-                          color: const Color(0xFF2E7D32),
-                        ),
-                      ],
-                    ),
+                    _KpiSection(data: data, isMobile: isMobile),
                     const SizedBox(height: 20),
                     LayoutBuilder(
                       builder: (context, constraints) {
@@ -390,71 +347,27 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                               : constraints.maxWidth >= 700
                                   ? 3
                                   : 2;
-                          return GridView.count(
-                            crossAxisCount: columns,
+                          // A fixed tile height (mainAxisExtent) rather than
+                          // childAspectRatio, so a 2-line label can never
+                          // overflow the cell regardless of column count.
+                          final tileHeight = columns >= 4
+                              ? 72.0
+                              : columns == 3
+                                  ? 80.0
+                                  : 92.0;
+                          return GridView.builder(
+                            gridDelegate:
+                                SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: columns,
+                              mainAxisSpacing: 12,
+                              crossAxisSpacing: 12,
+                              mainAxisExtent: tileHeight,
+                            ),
                             shrinkWrap: true,
                             physics: const NeverScrollableScrollPhysics(),
-                            mainAxisSpacing: 12,
-                            crossAxisSpacing: 12,
-                            childAspectRatio: 2.2,
-                            children: [
-                              _QuickActionCard(
-                                icon: Icons.person_add_alt_1_outlined,
-                                label: 'Add Student',
-                                onTap: () => _openScreen(
-                                  const admin_students_screen(),
-                                ),
-                              ),
-                              _QuickActionCard(
-                                icon: Icons.people_outline,
-                                label: 'Add User',
-                                onTap: () => _openScreen(
-                                  const AdminUsersScreen(),
-                                ),
-                              ),
-                              _QuickActionCard(
-                                icon: Icons.class_outlined,
-                                label: 'Add Class',
-                                onTap: () => _openScreen(
-                                  const AdminClassesScreen(),
-                                ),
-                              ),
-                              _QuickActionCard(
-                                icon: Icons.description_outlined,
-                                label: 'Add Document',
-                                onTap: () => _openScreen(
-                                  const AdminDocumentsScreen(),
-                                ),
-                              ),
-                              _QuickActionCard(
-                                icon: Icons.notifications_outlined,
-                                label: 'Create Notification',
-                                onTap: () => _openScreen(
-                                  const AdminNotificationsScreen(),
-                                ),
-                              ),
-                              _QuickActionCard(
-                                icon: Icons.fact_check_outlined,
-                                label: 'Mark Attendance',
-                                onTap: () => _openScreen(
-                                  const AdminAttendanceManagementScreen(),
-                                ),
-                              ),
-                              _QuickActionCard(
-                                icon: Icons.payments_outlined,
-                                label: 'Fee Collection',
-                                onTap: () => _openScreen(
-                                  const AdminFeesScreen(),
-                                ),
-                              ),
-                              _QuickActionCard(
-                                icon: Icons.account_balance_wallet_outlined,
-                                label: 'Finance Entry',
-                                onTap: () => _openScreen(
-                                  const AdminFinanceScreen(),
-                                ),
-                              ),
-                            ],
+                            itemCount: _quickActions.length,
+                            itemBuilder: (context, index) =>
+                                _quickActions[index],
                           );
                         },
                       ),
@@ -469,6 +382,48 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
+  List<Widget> get _quickActions => [
+        _QuickActionCard(
+          icon: Icons.person_add_alt_1_outlined,
+          label: 'Add Student',
+          onTap: () => _openScreen(const admin_students_screen()),
+        ),
+        _QuickActionCard(
+          icon: Icons.people_outline,
+          label: 'Add User',
+          onTap: () => _openScreen(const AdminUsersScreen()),
+        ),
+        _QuickActionCard(
+          icon: Icons.class_outlined,
+          label: 'Add Class',
+          onTap: () => _openScreen(const AdminClassesScreen()),
+        ),
+        _QuickActionCard(
+          icon: Icons.description_outlined,
+          label: 'Add Document',
+          onTap: () => _openScreen(const AdminDocumentsScreen()),
+        ),
+        _QuickActionCard(
+          icon: Icons.notifications_outlined,
+          label: 'Create Notification',
+          onTap: () => _openScreen(const AdminNotificationsScreen()),
+        ),
+        _QuickActionCard(
+          icon: Icons.fact_check_outlined,
+          label: 'Mark Attendance',
+          onTap: () => _openScreen(const AdminAttendanceManagementScreen()),
+        ),
+        _QuickActionCard(
+          icon: Icons.payments_outlined,
+          label: 'Fee Collection',
+          onTap: () => _openScreen(const AdminFeesScreen()),
+        ),
+        _QuickActionCard(
+          icon: Icons.account_balance_wallet_outlined,
+          label: 'Finance Entry',
+          onTap: () => _openScreen(const AdminFinanceScreen()),
+        ),
+      ];
 }
 
 class _DashboardData {
@@ -509,6 +464,87 @@ class _ActivityItem {
   final DateTime sortKey;
 }
 
+/// Lays out the 6 KPI cards: a desktop `Wrap` of roomy cards, or — on
+/// mobile — a fixed 2-column grid of compact cards, so a KPI section never
+/// collapses into one oversized card per row.
+class _KpiSection extends StatelessWidget {
+  const _KpiSection({required this.data, required this.isMobile});
+
+  final _DashboardData data;
+  final bool isMobile;
+
+  List<_KpiCard> _cards() => [
+        _KpiCard(
+          title: 'Total Students',
+          value: data.totalStudents.toString(),
+          helperText: 'Active learners in school',
+          icon: Icons.groups_outlined,
+          color: const Color(0xFF2E7D32),
+          compact: isMobile,
+        ),
+        _KpiCard(
+          title: 'Total Staff',
+          value: data.totalStaff.toString(),
+          helperText: 'Teachers and support team',
+          icon: Icons.badge_outlined,
+          color: const Color(0xFF4E7C5B),
+          compact: isMobile,
+        ),
+        _KpiCard(
+          title: 'Active Classes',
+          value: data.activeClasses.toString(),
+          helperText: 'Running classrooms',
+          icon: Icons.class_outlined,
+          color: const Color(0xFF558B2F),
+          compact: isMobile,
+        ),
+        _KpiCard(
+          title: 'Today\'s Attendance',
+          value: data.todayAttendance.toString(),
+          helperText: 'Marked attendance records',
+          icon: Icons.fact_check_outlined,
+          color: const Color(0xFF388E3C),
+          compact: isMobile,
+        ),
+        _KpiCard(
+          title: 'Pending Fees',
+          value: data.pendingFees.toString(),
+          helperText: 'Fees needing follow-up',
+          icon: Icons.payments_outlined,
+          color: const Color(0xFF6D4C41),
+          compact: isMobile,
+        ),
+        _KpiCard(
+          title: 'Published Notices',
+          value: data.publishedNotices.toString(),
+          helperText: 'Visible school updates',
+          icon: Icons.notifications_active_outlined,
+          color: const Color(0xFF2E7D32),
+          compact: isMobile,
+        ),
+      ];
+
+  @override
+  Widget build(BuildContext context) {
+    final cards = _cards();
+    if (!isMobile) {
+      return Wrap(spacing: 16, runSpacing: 16, children: cards);
+    }
+    return GridView.builder(
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 12,
+        mainAxisExtent: 118,
+      ),
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: cards.length,
+      itemBuilder: (context, index) => cards[index],
+    );
+  }
+}
+
 class _KpiCard extends StatelessWidget {
   const _KpiCard({
     required this.title,
@@ -516,6 +552,7 @@ class _KpiCard extends StatelessWidget {
     required this.helperText,
     required this.icon,
     required this.color,
+    this.compact = false,
   });
 
   final String title;
@@ -523,50 +560,59 @@ class _KpiCard extends StatelessWidget {
   final String helperText;
   final IconData icon;
   final Color color;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minWidth: 220, maxWidth: 320),
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 22,
-              offset: const Offset(0, 10),
+    final card = Container(
+      padding: EdgeInsets.all(compact ? 12 : 18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(compact ? 16 : 20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 22,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: EdgeInsets.all(compact ? 7 : 10),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(compact ? 10 : 14),
             ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.10),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(icon, color: color),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              title,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.grey[700],
-                    fontWeight: FontWeight.w600,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-            ),
+            child: Icon(icon, color: color, size: compact ? 18 : 24),
+          ),
+          SizedBox(height: compact ? 6 : 16),
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: (compact
+                    ? Theme.of(context).textTheme.bodySmall
+                    : Theme.of(context).textTheme.bodyMedium)
+                ?.copyWith(
+                  color: Colors.grey[700],
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+          SizedBox(height: compact ? 2 : 8),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: (compact
+                    ? Theme.of(context).textTheme.titleLarge
+                    : Theme.of(context).textTheme.headlineMedium)
+                ?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          if (!compact) ...[
             const SizedBox(height: 6),
             Text(
               helperText,
@@ -575,8 +621,14 @@ class _KpiCard extends StatelessWidget {
                   ),
             ),
           ],
-        ),
+        ],
       ),
+    );
+
+    if (compact) return card;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 220, maxWidth: 320),
+      child: card,
     );
   }
 }
@@ -602,24 +654,27 @@ class _QuickActionCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           child: Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(10),
+                padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
                   color: const Color(0xFF2E7D32).withOpacity(0.10),
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(icon, color: const Color(0xFF2E7D32)),
+                child: Icon(icon, color: const Color(0xFF2E7D32), size: 20),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontWeight: FontWeight.w600,
-                    fontSize: 14,
+                    fontSize: 13,
+                    height: 1.2,
                   ),
                 ),
               ),
@@ -789,11 +844,15 @@ class _MiniSummaryCard extends StatelessWidget {
                   children: [
                     Text(
                       title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: Colors.grey[700],
                         fontSize: 13,
@@ -866,11 +925,15 @@ class _ActivityTile extends StatelessWidget {
               children: [
                 Text(
                   item.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   item.subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: Colors.grey[700]),
                 ),
               ],
@@ -906,6 +969,8 @@ class _OperationTile extends StatelessWidget {
           Expanded(
             child: Text(
               '${item.title} • ${item.subtitle}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(color: Colors.grey[800]),
             ),
           ),

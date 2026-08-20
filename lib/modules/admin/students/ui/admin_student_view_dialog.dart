@@ -4,6 +4,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../data/admin_student_service.dart';
 import '../models/admin_student_model.dart';
 
@@ -232,14 +233,12 @@ class _AdminStudentViewDialogState extends State<AdminStudentViewDialog>
     await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
-        return Dialog(
-          insetPadding: const EdgeInsets.all(16),
+        return ResponsiveDialogShell(
+          desktopWidth: 700,
+          desktopHeight: 600,
           child: StatefulBuilder(
             builder: (context, setLocalState) {
-              return SizedBox(
-                width: 700,
-                height: 600,
-                child: Column(
+              return Column(
                   children: [
                     AppBar(
                       automaticallyImplyLeading: false,
@@ -298,8 +297,7 @@ class _AdminStudentViewDialogState extends State<AdminStudentViewDialog>
                       ),
                     ),
                   ],
-                ),
-              );
+                );
             },
           ),
         );

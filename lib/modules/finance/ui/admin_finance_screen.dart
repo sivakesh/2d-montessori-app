@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/theme/app_colors.dart';
+import '../../../core/widgets/responsive_dialog_shell.dart';
 import '../../admin/ui/admin_layout.dart';
 import '../models/finance_account_model.dart';
 import '../models/finance_category_model.dart';
@@ -872,12 +873,11 @@ class _InvoiceDetailsDialog extends StatelessWidget {
           ),
         );
 
-    return AlertDialog(
-      title: Text(invoice.invoiceNo.isEmpty ? 'Invoice' : invoice.invoiceNo),
-      content: SizedBox(
-        width: 480,
-        child: SingleChildScrollView(
-          child: Column(
+    return ResponsiveDialogShell.form(
+      desktopWidth: 480,
+      desktopHeight: 560,
+      title: invoice.invoiceNo.isEmpty ? 'Invoice' : invoice.invoiceNo,
+      content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -904,8 +904,6 @@ class _InvoiceDetailsDialog extends StatelessWidget {
                 ),
             ],
           ),
-        ),
-      ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
       ],
@@ -1561,11 +1559,11 @@ class _PayInvoiceDialogState extends State<_PayInvoiceDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('Pay Invoice - ${widget.invoice.partyName}'),
-      content: SizedBox(
-        width: 520,
-        child: Column(
+    return ResponsiveDialogShell.form(
+      desktopWidth: 520,
+      desktopHeight: 460,
+      title: 'Pay Invoice - ${widget.invoice.partyName}',
+      content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(controller: _amount, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number),
@@ -1579,10 +1577,14 @@ class _PayInvoiceDialogState extends State<_PayInvoiceDialog> {
             TextField(controller: _remarks, decoration: const InputDecoration(labelText: 'Remarks')),
           ],
         ),
-      ),
       actions: [
         TextButton(onPressed: _saving ? null : () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(onPressed: _saving ? null : _save, child: _saving ? const CircularProgressIndicator() : const Text('Save')),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: _saving
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Save'),
+        ),
       ],
     );
   }

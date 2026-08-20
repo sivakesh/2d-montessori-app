@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/widgets/responsive_dialog_shell.dart';
 import '../data/class_service.dart';
 
 class ClassFormDialog extends StatefulWidget {
@@ -91,13 +92,12 @@ class _ClassFormDialogState extends State<ClassFormDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.classId == null ? 'Add Class' : 'Edit Class'),
-      content: SizedBox(
-        width: 600,
-        child: Form(
+    return ResponsiveDialogShell.form(
+      desktopWidth: 600,
+      desktopHeight: 620,
+      title: widget.classId == null ? 'Add Class' : 'Edit Class',
+      content: Form(
           key: _formKey,
-          child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -146,8 +146,6 @@ class _ClassFormDialogState extends State<ClassFormDialog> {
               ],
             ),
           ),
-        ),
-      ),
       actions: [
         TextButton(onPressed: _saving ? null : () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(onPressed: _saving ? null : _save, child: _saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Save')),

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/config/app_env.dart';
 import '../../../core/services/profile_image_picker.dart';
+import '../../../core/widgets/responsive_dialog_shell.dart';
 import '../data/admin_profile_service.dart';
 import '../models/admin_profile_model.dart';
 
@@ -846,16 +847,27 @@ class _AdminProfileFormState extends State<AdminProfileForm>
                 await _loadStudents(setStateDialog: setStateDialog);
               });
             }
-            return Dialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Container(
-                width: 500,
-                height: 600,
+            return ResponsiveDialogShell(
+              desktopWidth: 500,
+              desktopHeight: 600,
+              child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Select Student',
+                            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.of(dialogContext).maybePop(),
+                        ),
+                      ],
+                    ),
                     TextField(
                       decoration: const InputDecoration(
                         hintText: 'Search by name/admission',

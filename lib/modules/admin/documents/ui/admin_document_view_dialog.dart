@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../models/admin_school_document.dart';
 
 class AdminDocumentViewDialog extends StatefulWidget {
@@ -18,12 +19,10 @@ class _AdminDocumentViewDialogState extends State<AdminDocumentViewDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      insetPadding: const EdgeInsets.all(20),
-      child: SizedBox(
-        width: 860,
-        height: 700,
-        child: FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+    return ResponsiveDialogShell(
+      desktopWidth: 860,
+      desktopHeight: 700,
+      child: FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
           future: FirebaseFirestore.instance.collection('school_documents').doc(widget.documentId).get(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
@@ -62,7 +61,6 @@ class _AdminDocumentViewDialogState extends State<AdminDocumentViewDialog> {
             );
           },
         ),
-      ),
     );
   }
 

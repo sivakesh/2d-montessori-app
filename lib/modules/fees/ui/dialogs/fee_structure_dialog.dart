@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../models/fee_component_model.dart';
 import '../../models/fee_structure_model.dart';
 import '../../services/fee_service.dart';
@@ -44,12 +45,11 @@ class _FeeStructureDialogState extends State<FeeStructureDialog> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) => AlertDialog(
-          title: const Text('Add Component'),
-          content: SizedBox(
-            width: 460,
-            child: SingleChildScrollView(
-              child: Column(
+        builder: (context, setModalState) => ResponsiveDialogShell.form(
+          desktopWidth: 460,
+          desktopHeight: 520,
+          title: 'Add Component',
+          content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   TextField(controller: name, decoration: const InputDecoration(labelText: 'Component Name *')),
@@ -84,8 +84,6 @@ class _FeeStructureDialogState extends State<FeeStructureDialog> {
                   SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Optional'), value: optional, onChanged: (v) => setModalState(() => optional = v)),
                 ],
               ),
-            ),
-          ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
             FilledButton(
@@ -150,13 +148,12 @@ class _FeeStructureDialogState extends State<FeeStructureDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.structure == null ? 'Add Fee Structure' : 'Edit Fee Structure'),
-      content: SizedBox(
-        width: 860,
-        child: Form(
+    return ResponsiveDialogShell.form(
+      desktopWidth: 860,
+      desktopHeight: 680,
+      title: widget.structure == null ? 'Add Fee Structure' : 'Edit Fee Structure',
+      content: Form(
           key: _formKey,
-          child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -186,8 +183,6 @@ class _FeeStructureDialogState extends State<FeeStructureDialog> {
               ],
             ),
           ),
-        ),
-      ),
       actions: [
         TextButton(onPressed: _saving ? null : () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(onPressed: _saving ? null : _save, child: const Text('Save')),

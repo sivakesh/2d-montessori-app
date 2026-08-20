@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/config/app_env.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_sizes.dart';
 import '../../finance/widgets/finance_status_chip.dart';
 import '../notifications/data/admin_notification_service.dart';
 import '../notifications/models/admin_notification_model.dart';
@@ -266,7 +267,7 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
   @override
   Widget build(BuildContext context) {
     final q = _searchController.text.trim().toLowerCase();
-    final isMobile = MediaQuery.of(context).size.width < 700;
+    final isMobile = MediaQuery.of(context).size.width < AppSizes.mobileBreakpoint;
     final filtered = _items.where((n) {
       final search = q.isEmpty || n.title.toLowerCase().contains(q) || n.message.toLowerCase().contains(q);
       final type = _type == 'All' || n.notificationType == _type;

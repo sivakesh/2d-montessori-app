@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../core/services/document_number_service.dart';
+import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../models/finance_category_model.dart';
 import '../../services/finance_service.dart';
 
@@ -79,10 +80,10 @@ class _AddExpenseDialogState extends State<AddExpenseDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => Dialog(
-        child: SizedBox(
-          width: 760,
-          child: Form(
+  Widget build(BuildContext context) => ResponsiveDialogShell(
+        desktopWidth: 760,
+        desktopHeight: 640,
+        child: Form(
             key: _formKey,
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(20),
@@ -124,11 +125,15 @@ class _AddExpenseDialogState extends State<AddExpenseDialog> {
                 Row(mainAxisAlignment: MainAxisAlignment.end, children: [
                   TextButton(onPressed: _saving ? null : () => Navigator.pop(context), child: const Text('Cancel')),
                   const SizedBox(width: 8),
-                  FilledButton(onPressed: _saving ? null : _save, child: _saving ? const CircularProgressIndicator() : const Text('Save')),
+                  FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Text('Save'),
+                  ),
                 ]),
               ]),
             ),
           ),
-        ),
       );
 }

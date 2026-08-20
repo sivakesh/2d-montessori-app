@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../models/finance_category_model.dart';
 import '../../services/finance_service.dart';
 
@@ -29,10 +30,10 @@ class _AddCategoryDialogState extends State<AddCategoryDialog> {
   }
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      child: SizedBox(
-        width: 520,
-        child: Form(
+    return ResponsiveDialogShell(
+      desktopWidth: 520,
+      desktopHeight: 420,
+      child: Form(
           key: _formKey,
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(20),
@@ -80,7 +81,6 @@ class _AddCategoryDialogState extends State<AddCategoryDialog> {
             ),
           ),
         ),
-      ),
     );
   }
 }
