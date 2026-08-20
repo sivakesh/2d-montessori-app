@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/widgets/responsive_dialog_shell.dart';
 import '../../admin/models/admin_class_model.dart';
 import '../data/class_service.dart';
 
@@ -19,12 +20,10 @@ class _ClassViewDialogState extends State<ClassViewDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      insetPadding: const EdgeInsets.all(20),
-      child: SizedBox(
-        width: 820,
-        height: 680,
-        child: FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+    return ResponsiveDialogShell(
+      desktopWidth: 820,
+      desktopHeight: 680,
+      child: FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
           future: FirebaseFirestore.instance.collection('classes').doc(widget.classId).get(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
@@ -64,7 +63,6 @@ class _ClassViewDialogState extends State<ClassViewDialog> {
             );
           },
         ),
-      ),
     );
   }
 

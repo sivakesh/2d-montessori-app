@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../models/admin_notification_model.dart';
 
 class AdminNotificationViewDialog extends StatefulWidget {
@@ -15,12 +16,10 @@ class _AdminNotificationViewDialogState extends State<AdminNotificationViewDialo
   int _tab = 0;
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      insetPadding: const EdgeInsets.all(20),
-      child: SizedBox(
-        width: 900,
-        height: 720,
-        child: FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+    return ResponsiveDialogShell(
+      desktopWidth: 900,
+      desktopHeight: 720,
+      child: FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
           future: FirebaseFirestore.instance.collection('school_notifications').doc(widget.notificationId).get(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
@@ -57,7 +56,6 @@ class _AdminNotificationViewDialogState extends State<AdminNotificationViewDialo
             );
           },
         ),
-      ),
     );
   }
 

@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../../../../core/services/document_number_service.dart';
+import '../../../../core/theme/app_sizes.dart';
+import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../services/finance_service.dart';
 
 class AddSalaryPaymentDialog extends StatefulWidget {
@@ -81,10 +83,10 @@ class _AddSalaryPaymentDialogState extends State<AddSalaryPaymentDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => Dialog(
-        child: SizedBox(
-          width: 760,
-          child: Form(
+  Widget build(BuildContext context) => ResponsiveDialogShell(
+        desktopWidth: 760,
+        desktopHeight: 680,
+        child: Form(
             key: _formKey,
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(20),
@@ -117,22 +119,39 @@ class _AddSalaryPaymentDialogState extends State<AddSalaryPaymentDialog> {
                 const SizedBox(height: 12),
                 TextFormField(controller: _amount, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number, validator: (v) => (double.tryParse(v ?? '') ?? 0) > 0 ? null : 'Required'),
                 const SizedBox(height: 12),
-                Row(children: [
-                  Expanded(child: TextFormField(controller: _deductions, decoration: const InputDecoration(labelText: 'Deductions'), keyboardType: TextInputType.number)),
-                  const SizedBox(width: 12),
-                  Expanded(child: TextFormField(controller: _bonus, decoration: const InputDecoration(labelText: 'Bonus'), keyboardType: TextInputType.number)),
-                ]),
+                Builder(
+                  builder: (context) {
+                    final deductionsField = TextFormField(controller: _deductions, decoration: const InputDecoration(labelText: 'Deductions'), keyboardType: TextInputType.number);
+                    final bonusField = TextFormField(controller: _bonus, decoration: const InputDecoration(labelText: 'Bonus'), keyboardType: TextInputType.number);
+                    if (MediaQuery.of(context).size.width < AppSizes.mobileBreakpoint) {
+                      return Column(children: [
+                        deductionsField,
+                        const SizedBox(height: 12),
+                        bonusField,
+                      ]);
+                    }
+                    return Row(children: [
+                      Expanded(child: deductionsField),
+                      const SizedBox(width: 12),
+                      Expanded(child: bonusField),
+                    ]);
+                  },
+                ),
                 const SizedBox(height: 12),
                 TextFormField(controller: _remarks, decoration: const InputDecoration(labelText: 'Remarks'), maxLines: 3),
                 const SizedBox(height: 16),
                 Row(mainAxisAlignment: MainAxisAlignment.end, children: [
                   TextButton(onPressed: _saving ? null : () => Navigator.pop(context), child: const Text('Cancel')),
                   const SizedBox(width: 8),
-                  FilledButton(onPressed: _saving ? null : _save, child: _saving ? const CircularProgressIndicator() : const Text('Save')),
+                  FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Text('Save'),
+                  ),
                 ]),
               ]),
             ),
           ),
-        ),
       );
 }

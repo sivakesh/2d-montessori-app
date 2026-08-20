@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_sizes.dart';
+
 class ResponsiveLayout extends StatelessWidget {
   final Widget mobile;
   final Widget web;
@@ -14,7 +16,7 @@ class ResponsiveLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
 
-    if (width >= 800) {
+    if (width >= AppSizes.mobileBreakpoint) {
       return web;
     } else {
       return mobile;

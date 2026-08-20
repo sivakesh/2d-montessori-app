@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../../../../core/theme/app_sizes.dart';
+import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../../classes/data/class_service.dart';
 import '../data/admin_documents_service.dart';
 import '../models/admin_school_document.dart';
@@ -178,14 +180,15 @@ class _AdminDocumentFormDialogState extends State<AdminDocumentFormDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.document == null ? 'Add Document' : 'Edit Document'),
-      content: SizedBox(
-        width: 760,
-        child: Form(
+    return ResponsiveDialogShell.form(
+      desktopWidth: 760,
+      desktopHeight: 680,
+      title: widget.document == null ? 'Add Document' : 'Edit Document',
+      content: Form(
           key: _formKey,
           child: ListView(
             shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
             children: [
               const Text('Basic Details', style: TextStyle(fontWeight: FontWeight.bold)),
               TextFormField(controller: _title, decoration: const InputDecoration(labelText: 'Title *'), validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null),
@@ -265,7 +268,6 @@ class _AdminDocumentFormDialogState extends State<AdminDocumentFormDialog> {
             ],
           ),
         ),
-      ),
       actions: [
         TextButton(onPressed: _saving ? null : () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(onPressed: _saving ? null : _save, child: _saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Save')),
@@ -315,87 +317,96 @@ class _ClassLinkDialogState extends State<_ClassLinkDialog> {
       final section = data['section']?.toString().toLowerCase() ?? '';
       return q.isEmpty || name.contains(q) || section.contains(q);
     }).toList();
-    return AlertDialog(
-      title: const Text('Select Classes'),
-      content: SizedBox(
-        width: 900,
-        height: 520,
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _search,
-                    onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(prefixIcon: Icon(Icons.search), labelText: 'Search classes'),
-                  ),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: available.length,
-                      itemBuilder: (context, index) {
-                        final doc = available[index];
-                        final data = doc.data();
-                        final name = data['name']?.toString() ?? 'Class';
-                        final section = data['section']?.toString() ?? '';
-                        final selected = _ids.contains(doc.id);
-                        return ListTile(
-                          title: Text(name),
-                          subtitle: Text(section.isEmpty ? '' : 'Section: $section'),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.add_circle, color: Colors.green),
-                            onPressed: selected
-                                ? null
-                                : () {
-                                    setState(() {
-                                      _ids.add(doc.id);
-                                      _names.add(name);
-                                    });
-                                  },
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Selected classes', style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: _ids.isEmpty
-                        ? const Center(child: Text('No classes selected'))
-                        : ListView.separated(
-                            itemCount: _ids.length,
-                            separatorBuilder: (_, _) => const SizedBox(height: 8),
-                            itemBuilder: (context, index) {
-                              return ListTile(
-                                tileColor: Colors.grey.shade100,
-                                title: Text(_names[index]),
-                                trailing: IconButton(
-                                  icon: const Icon(Icons.remove_circle, color: Colors.red),
-                                  onPressed: () {
-                                    setState(() {
-                                      _ids.removeAt(index);
-                                      _names.removeAt(index);
-                                    });
-                                  },
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+    final availablePane = Column(
+      children: [
+        TextField(
+          controller: _search,
+          onChanged: (_) => setState(() {}),
+          decoration: const InputDecoration(prefixIcon: Icon(Icons.search), labelText: 'Search classes'),
         ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: ListView.builder(
+            itemCount: available.length,
+            itemBuilder: (context, index) {
+              final doc = available[index];
+              final data = doc.data();
+              final name = data['name']?.toString() ?? 'Class';
+              final section = data['section']?.toString() ?? '';
+              final selected = _ids.contains(doc.id);
+              return ListTile(
+                title: Text(name),
+                subtitle: Text(section.isEmpty ? '' : 'Section: $section'),
+                trailing: IconButton(
+                  icon: const Icon(Icons.add_circle, color: Colors.green),
+                  onPressed: selected
+                      ? null
+                      : () {
+                          setState(() {
+                            _ids.add(doc.id);
+                            _names.add(name);
+                          });
+                        },
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+    final selectedPane = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Selected classes (${_ids.length})', style: const TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 12),
+        Expanded(
+          child: _ids.isEmpty
+              ? const Center(child: Text('No classes selected'))
+              : ListView.separated(
+                  itemCount: _ids.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  itemBuilder: (context, index) {
+                    return ListTile(
+                      tileColor: Colors.grey.shade100,
+                      title: Text(_names[index]),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.remove_circle, color: Colors.red),
+                        onPressed: () {
+                          setState(() {
+                            _ids.removeAt(index);
+                            _names.removeAt(index);
+                          });
+                        },
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+    final isMobile = MediaQuery.of(context).size.width < AppSizes.mobileBreakpoint;
+
+    return ResponsiveDialogShell.form(
+      desktopWidth: 900,
+      desktopHeight: 560,
+      title: 'Select Classes',
+      content: SizedBox(
+        height: isMobile ? 520 : 460,
+        child: isMobile
+            ? Column(
+                children: [
+                  Expanded(child: availablePane),
+                  const Divider(height: 24),
+                  Expanded(child: selectedPane),
+                ],
+              )
+            : Row(
+                children: [
+                  Expanded(child: availablePane),
+                  const SizedBox(width: 12),
+                  Expanded(child: selectedPane),
+                ],
+              ),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),

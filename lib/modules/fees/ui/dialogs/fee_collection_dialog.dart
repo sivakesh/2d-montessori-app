@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../models/student_fee_assignment_model.dart';
 import '../../services/fee_service.dart';
 
@@ -92,12 +93,11 @@ class _FeeCollectionDialogState extends State<FeeCollectionDialog> {
     final balance = assignment.balanceAmount;
     final fullyCollected = balance <= 0;
 
-    return AlertDialog(
-      title: Text('Collect Fee - ${widget.assignment.studentName}'),
-      content: SizedBox(
-        width: 540,
-        child: SingleChildScrollView(
-          child: Column(
+    return ResponsiveDialogShell.form(
+      desktopWidth: 540,
+      desktopHeight: 520,
+      title: 'Collect Fee - ${widget.assignment.studentName}',
+      content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (_loadingAssignment)
@@ -128,8 +128,6 @@ class _FeeCollectionDialogState extends State<FeeCollectionDialog> {
               TextField(controller: _remarks, decoration: const InputDecoration(labelText: 'Remarks')),
             ],
           ),
-        ),
-      ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(

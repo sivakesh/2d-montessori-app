@@ -329,6 +329,8 @@ class _DocumentRow extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     'Issue/Expiry: ${doc.issueDate?.toIso8601String().split('T').first ?? '-'} / ${doc.expiryDate?.toIso8601String().split('T').first ?? '-'}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                   ),
                 ],

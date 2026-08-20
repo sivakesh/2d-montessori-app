@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../models/fee_receipt_model.dart';
 import '../../services/fee_service.dart';
 
@@ -103,12 +104,11 @@ class _FeeReceiptViewDialogState extends State<FeeReceiptViewDialog> {
       );
     }
 
-    return AlertDialog(
-      title: const Text('2D Montessori Receipt'),
-      content: SizedBox(
-        width: 640,
-        child: SingleChildScrollView(
-          child: Column(
+    return ResponsiveDialogShell.form(
+      desktopWidth: 640,
+      desktopHeight: 700,
+      title: '2D Montessori Receipt',
+      content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -170,17 +170,16 @@ class _FeeReceiptViewDialogState extends State<FeeReceiptViewDialog> {
                 ],
               ),
               const SizedBox(height: 8),
-              const Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                runSpacing: 4,
+                children: const [
                   Text('System generated receipt', style: TextStyle(fontSize: 11)),
                   Text('Authorized Signature: ____________________', style: TextStyle(fontSize: 11)),
                 ],
               ),
             ],
           ),
-        ),
-      ),
     );
   }
 }

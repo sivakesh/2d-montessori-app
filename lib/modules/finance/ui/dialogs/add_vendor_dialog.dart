@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../models/vendor_model.dart';
 import '../../services/finance_service.dart';
 
@@ -33,10 +34,10 @@ class _AddVendorDialogState extends State<AddVendorDialog> {
   }
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      child: SizedBox(
-        width: 640,
-        child: Form(
+    return ResponsiveDialogShell(
+      desktopWidth: 640,
+      desktopHeight: 560,
+      child: Form(
           key: _formKey,
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(20),
@@ -85,7 +86,6 @@ class _AddVendorDialogState extends State<AddVendorDialog> {
             ),
           ),
         ),
-      ),
     );
   }
 }

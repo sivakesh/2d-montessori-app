@@ -7,6 +7,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/layout/bottom_nav.dart';
 import '../../../core/layout/responsive_layout.dart';
 import '../../../core/layout/sidebar.dart';
+import '../../../core/theme/app_sizes.dart';
+import '../../../core/widgets/responsive_dialog_shell.dart';
 import '../../auth/models/app_user.dart';
 import '../../auth/data/user_service.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -306,19 +308,27 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   className.contains(query);
             }).toList();
 
-            return Dialog(
-              insetPadding: const EdgeInsets.all(20),
-              child: SizedBox(
-                width: 600,
-                child: Padding(
+            return ResponsiveDialogShell(
+              desktopWidth: 600,
+              child: Padding(
                   padding: const EdgeInsets.all(20),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Select Student',
-                        style: Theme.of(context).textTheme.headlineSmall,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Select Student',
+                              style: Theme.of(context).textTheme.headlineSmall,
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () => Navigator.of(dialogContext).maybePop(),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 12),
                       TextField(
@@ -378,7 +388,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                     ],
                   ),
                 ),
-              ),
             );
           },
         );
@@ -405,19 +414,27 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   role.contains(query);
             }).toList();
 
-            return Dialog(
-              insetPadding: const EdgeInsets.all(20),
-              child: SizedBox(
-                width: 560,
-                child: Padding(
+            return ResponsiveDialogShell(
+              desktopWidth: 560,
+              child: Padding(
                   padding: const EdgeInsets.all(20),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Select Staff Member',
-                        style: Theme.of(context).textTheme.headlineSmall,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Select Staff Member',
+                              style: Theme.of(context).textTheme.headlineSmall,
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () => Navigator.of(dialogContext).maybePop(),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 12),
                       TextField(
@@ -456,7 +473,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                     ],
                   ),
                 ),
-              ),
             );
           },
         );
@@ -467,7 +483,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(currentUserProvider);
-    final isMobile = MediaQuery.of(context).size.width < 600;
+    final isMobile = MediaQuery.of(context).size.width < AppSizes.mobileBreakpoint;
 
     if (user == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -1431,11 +1447,15 @@ class _MetricCard extends StatelessWidget {
                 children: [
                   Text(
                     metric.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 6),
                   Text(
                     metric.value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -1489,10 +1509,17 @@ class _QuickActionCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: Theme.of(context).textTheme.titleMedium),
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                     const SizedBox(height: 4),
                     Text(
                       subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Colors.grey.shade600,
                       ),
@@ -1533,11 +1560,15 @@ class _RecentMoodCard extends StatelessWidget {
                 children: [
                   Text(
                     item.entityName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 4),
                   Text(
                     '${isStaff ? 'Staff' : 'Student'} • ${item.moodLabel} • Intensity ${item.intensity}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Colors.grey.shade600,
                     ),

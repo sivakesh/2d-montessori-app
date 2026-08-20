@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/theme/app_colors.dart';
 import '../../admin/ui/admin_layout.dart';
 import '../models/fee_receipt_model.dart';
 import '../models/fee_structure_model.dart';
@@ -256,38 +257,39 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
         physics: const NeverScrollableScrollPhysics(),
         itemCount: _structures.length,
         itemBuilder: (context, i) {
-                          final s = _structures[i];
-                          final frequencySummary = s.components.isEmpty
-                              ? 'No components'
-                              : s.components.map((c) => c.frequency).toSet().join(', ');
-                          return Card(
-                            child: ListTile(
-                              title: Text(s.name),
-                              subtitle: Text('${s.academicYear} • ${s.components.length} components • $frequencySummary'),
-                              trailing: Wrap(
-                                spacing: 4,
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.edit),
-                                    onPressed: () => _openStructure(structure: s),
-                                  ),
-                                  IconButton(
-                                    icon: _deletingId == s.id
-                                        ? const SizedBox(
-                                            width: 18,
-                                            height: 18,
-                                            child: CircularProgressIndicator(strokeWidth: 2),
-                                          )
-                                        : const Icon(Icons.delete, color: Colors.red),
-                                    onPressed: _deletingId == s.id
-                                        ? null
-                                        : () => _deleteStructure(s),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
+          final s = _structures[i];
+          final frequencySummary = s.components.isEmpty
+              ? 'No components'
+              : s.components.map((c) => c.frequency).toSet().join(', ');
+          return _FeeListCard(
+            icon: Icons.receipt_long_outlined,
+            title: s.name,
+            subtitleLines: ['${s.academicYear} • ${s.components.length} components • $frequencySummary'],
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: 'Edit',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.edit_outlined, size: 20),
+                  onPressed: () => _openStructure(structure: s),
+                ),
+                IconButton(
+                  tooltip: 'Delete',
+                  visualDensity: VisualDensity.compact,
+                  icon: _deletingId == s.id
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+                  onPressed: _deletingId == s.id ? null : () => _deleteStructure(s),
+                ),
+              ],
+            ),
+          );
+        },
       );
 
   Widget _buildAssignments() => ListView.builder(
@@ -296,25 +298,24 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
         itemCount: _assignments.length,
         itemBuilder: (context, i) {
           final a = _assignments[i];
-          return Card(
-            child: ListTile(
-              title: Text(a.studentName),
-              subtitle: Text('${a.className} • ${a.feeStructureName}\nBalance: ${a.balanceAmount.toStringAsFixed(0)}'),
-              trailing: Wrap(
-                spacing: 4,
-                children: [
-                  IconButton(
-                    icon: _deletingId == a.id
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.delete, color: Colors.red),
-                    onPressed: _deletingId == a.id ? null : () => _deleteAssignment(a),
-                  ),
-                ],
-              ),
+          return _FeeListCard(
+            icon: Icons.assignment_outlined,
+            title: a.studentName,
+            subtitleLines: [
+              '${a.className} • ${a.feeStructureName}',
+              'Balance: ${a.balanceAmount.toStringAsFixed(0)}',
+            ],
+            trailing: IconButton(
+              tooltip: 'Delete',
+              visualDensity: VisualDensity.compact,
+              icon: _deletingId == a.id
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+              onPressed: _deletingId == a.id ? null : () => _deleteAssignment(a),
             ),
           );
         },
@@ -327,29 +328,34 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
         itemBuilder: (context, i) {
           final items = _assignments.where((a) => a.balanceAmount > 0).toList();
           final a = items[i];
-          return Card(
-            child: ListTile(
-              title: Text(a.studentName),
-              subtitle: Text('${a.admissionNo} • ${a.className}\n${a.feeStructureName}\nPayable: ${a.payableAmount.toStringAsFixed(0)} • Paid: ${a.paidAmount.toStringAsFixed(0)} • Balance: ${a.balanceAmount.toStringAsFixed(0)}'),
-              trailing: Wrap(
-                spacing: 4,
-                children: [
-                  TextButton(
-                    onPressed: () => _openCollection(a),
-                    child: const Text('Collect'),
-                  ),
-                  IconButton(
-                    icon: _deletingId == a.id
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.delete, color: Colors.red),
-                    onPressed: _deletingId == a.id ? null : () => _deleteAssignment(a),
-                  ),
-                ],
-              ),
+          return _FeeListCard(
+            icon: Icons.payments_outlined,
+            title: a.studentName,
+            subtitleLines: [
+              '${a.admissionNo} • ${a.className}',
+              a.feeStructureName,
+              'Payable: ${a.payableAmount.toStringAsFixed(0)} • Paid: ${a.paidAmount.toStringAsFixed(0)} • Balance: ${a.balanceAmount.toStringAsFixed(0)}',
+            ],
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextButton(
+                  onPressed: () => _openCollection(a),
+                  child: const Text('Collect'),
+                ),
+                IconButton(
+                  tooltip: 'Delete',
+                  visualDensity: VisualDensity.compact,
+                  icon: _deletingId == a.id
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+                  onPressed: _deletingId == a.id ? null : () => _deleteAssignment(a),
+                ),
+              ],
             ),
           );
         },
@@ -361,37 +367,56 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
         itemCount: _receipts.length,
         itemBuilder: (context, i) {
           final r = _receipts[i];
-          return Card(
-            child: ListTile(
-              title: Text(r.receiptNo),
-              subtitle: Text('${r.studentName} • ${r.admissionNo} • ${r.className}\n${r.feeStructureName} • ${r.amount.toStringAsFixed(0)} • ${r.paymentMode}'),
-              trailing: Wrap(
-                spacing: 8,
-                children: [
-                  TextButton(
-                    onPressed: () => showDialog(context: context, builder: (_) => FeeReceiptViewDialog(receipt: r)),
-                    child: const Text('View'),
+          return _FeeListCard(
+            icon: Icons.description_outlined,
+            title: r.receiptNo,
+            subtitleLines: [
+              '${r.studentName} • ${r.admissionNo} • ${r.className}',
+              '${r.feeStructureName} • ${r.amount.toStringAsFixed(0)} • ${r.paymentMode}',
+            ],
+            trailing: PopupMenuButton<String>(
+              tooltip: 'Actions',
+              icon: const Icon(Icons.more_vert, size: 20),
+              onSelected: (value) {
+                switch (value) {
+                  case 'view':
+                    showDialog(context: context, builder: (_) => FeeReceiptViewDialog(receipt: r));
+                    break;
+                  case 'open_pdf':
+                    _openPdf(r.pdfUrl);
+                    break;
+                  case 'generate_pdf':
+                    showDialog(context: context, builder: (_) => FeeReceiptViewDialog(receipt: r));
+                    break;
+                  case 'delete':
+                    _deleteReceipt(r);
+                    break;
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'view',
+                  child: ListTile(leading: Icon(Icons.visibility_outlined), title: Text('View'), contentPadding: EdgeInsets.zero),
+                ),
+                PopupMenuItem(
+                  value: 'open_pdf',
+                  enabled: r.pdfUrl.isNotEmpty,
+                  child: const ListTile(leading: Icon(Icons.open_in_new), title: Text('Open PDF'), contentPadding: EdgeInsets.zero),
+                ),
+                PopupMenuItem(
+                  value: 'generate_pdf',
+                  enabled: r.pdfUrl.isEmpty,
+                  child: const ListTile(leading: Icon(Icons.picture_as_pdf_outlined), title: Text('Generate PDF'), contentPadding: EdgeInsets.zero),
+                ),
+                const PopupMenuItem(
+                  value: 'delete',
+                  child: ListTile(
+                    leading: Icon(Icons.delete_outline, color: Colors.red),
+                    title: Text('Delete', style: TextStyle(color: Colors.red)),
+                    contentPadding: EdgeInsets.zero,
                   ),
-                  TextButton(
-                    onPressed: r.pdfUrl.isEmpty ? null : () => _openPdf(r.pdfUrl),
-                    child: const Text('Open PDF'),
-                  ),
-                  TextButton(
-                    onPressed: r.pdfUrl.isEmpty ? () => showDialog(context: context, builder: (_) => FeeReceiptViewDialog(receipt: r)) : null,
-                    child: const Text('Generate PDF'),
-                  ),
-                  IconButton(
-                    icon: _deletingId == r.id
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.delete, color: Colors.red),
-                    onPressed: _deletingId == r.id ? null : () => _deleteReceipt(r),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           );
         },
@@ -405,28 +430,98 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
         itemCount: dues.length,
         itemBuilder: (context, i) {
           final a = dues[i];
-          return Card(
-            child: ListTile(
-              title: Text(a.studentName),
-              subtitle: Text('${a.admissionNo} • ${a.className}\nDue: ${a.balanceAmount.toStringAsFixed(0)}'),
-              trailing: Wrap(
-                spacing: 4,
-                children: [
-                  IconButton(
-                    icon: _deletingId == a.id
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.delete, color: Colors.red),
-                    onPressed: _deletingId == a.id ? null : () => _deleteAssignment(a),
-                  ),
-                ],
-              ),
+          return _FeeListCard(
+            icon: Icons.schedule_outlined,
+            title: a.studentName,
+            subtitleLines: [
+              '${a.admissionNo} • ${a.className}',
+              'Due: ${a.balanceAmount.toStringAsFixed(0)}',
+            ],
+            trailing: IconButton(
+              tooltip: 'Delete',
+              visualDensity: VisualDensity.compact,
+              icon: _deletingId == a.id
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+              onPressed: _deletingId == a.id ? null : () => _deleteAssignment(a),
             ),
           );
         },
       );
+  }
+}
+
+/// Compact list-card shared by the Fees tabs: icon + title/meta (wrapped,
+/// ellipsized) + trailing actions — matching the row pattern already used
+/// by Students/Classes/Documents/Notifications.
+class _FeeListCard extends StatelessWidget {
+  const _FeeListCard({
+    required this.icon,
+    required this.title,
+    required this.subtitleLines,
+    required this.trailing,
+  });
+
+  final IconData icon;
+  final String title;
+  final List<String> subtitleLines;
+  final Widget trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: AppColors.primary, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.textPrimary),
+                ),
+                for (final line in subtitleLines) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    line,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          trailing,
+        ],
+      ),
+    );
   }
 }

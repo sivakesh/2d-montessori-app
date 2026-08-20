@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/theme/app_sizes.dart';
+
 class UserViewDialog extends StatefulWidget {
   const UserViewDialog({super.key, required this.userId});
 
@@ -151,13 +153,15 @@ class _UserViewDialogState extends State<UserViewDialog>
       return const Center(child: Text('No profile found'));
     }
 
+    final isMobile =
+        MediaQuery.of(context).size.width < AppSizes.mobileBreakpoint;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: GridView.count(
-        crossAxisCount: 2,
-        childAspectRatio: 4.5,
+        crossAxisCount: isMobile ? 1 : 2,
         crossAxisSpacing: 8,
         mainAxisSpacing: 4,
+        childAspectRatio: isMobile ? 6 : 4.5,
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         children: [

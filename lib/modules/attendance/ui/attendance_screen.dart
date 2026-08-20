@@ -750,21 +750,25 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         ),
         const SizedBox(height: 12),
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            TextButton.icon(
+            IconButton(
+              tooltip: 'Previous week',
               onPressed: _canGoBack ? _goPreviousWeek : null,
               icon: const Icon(Icons.chevron_left),
-              label: const Text('Back'),
             ),
-            Text(
-              '${DateFormat('dd MMM').format(_selectedHistoryWeekStart)} - ${DateFormat('dd MMM').format(weekEnd)}',
-              style: Theme.of(context).textTheme.titleMedium,
+            Expanded(
+              child: Text(
+                '${DateFormat('dd MMM').format(_selectedHistoryWeekStart)} - ${DateFormat('dd MMM').format(weekEnd)}',
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
             ),
-            TextButton.icon(
+            IconButton(
+              tooltip: 'Next week',
               onPressed: _canGoNext ? _goNextWeek : null,
               icon: const Icon(Icons.chevron_right),
-              label: const Text('Next'),
             ),
           ],
         ),
@@ -1040,14 +1044,26 @@ class _AttendanceCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(name, style: Theme.of(context).textTheme.titleMedium),
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                   const SizedBox(height: 4),
                   Text(
                     secondary,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 2),
-                  Text(tertiary, style: Theme.of(context).textTheme.bodyMedium),
+                  Text(
+                    tertiary,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
                   const SizedBox(height: 10),
                   Row(
                     children: [
@@ -1073,7 +1089,9 @@ class _AttendanceCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            Column(
+            SizedBox(
+              width: 96,
+              child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 if (hasPhoto) ...[
@@ -1156,10 +1174,14 @@ class _AttendanceCard extends StatelessWidget {
                   const SizedBox(height: 6),
                   Text(
                     'Photo + mood required',
+                    textAlign: TextAlign.right,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                   ),
                 ],
               ],
+              ),
             ),
           ],
         ),

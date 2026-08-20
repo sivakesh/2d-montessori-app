@@ -2,6 +2,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import '../../../../core/theme/app_sizes.dart';
+import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../data/admin_notification_service.dart';
 import '../models/admin_notification_model.dart';
 
@@ -420,14 +422,15 @@ class _AdminNotificationFormDialogState extends State<AdminNotificationFormDialo
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.document == null ? 'Add Notification' : 'Edit Notification'),
-      content: SizedBox(
-        width: 860,
-        child: Form(
+    return ResponsiveDialogShell.form(
+      desktopWidth: 860,
+      desktopHeight: 680,
+      title: widget.document == null ? 'Add Notification' : 'Edit Notification',
+      content: Form(
           key: _formKey,
           child: ListView(
             shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
             children: [
               TextFormField(controller: _title, decoration: const InputDecoration(labelText: 'Title *'), validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null),
               TextFormField(controller: _message, decoration: const InputDecoration(labelText: 'Message *'), maxLines: 4, validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null),
@@ -599,7 +602,6 @@ class _AdminNotificationFormDialogState extends State<AdminNotificationFormDialo
             ],
           ),
         ),
-      ),
       actions: [
         TextButton(onPressed: _saving ? null : () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(onPressed: _saving ? null : _save, child: _saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Save')),
@@ -742,66 +744,75 @@ Widget _buildLinkDialog({
 }) {
   return StatefulBuilder(
     builder: (context, setState) {
-      return AlertDialog(
-        title: Text(title),
-        content: SizedBox(
-          width: 900,
-          height: 520,
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  children: [
-                    TextField(controller: search, onChanged: (_) => setState(() {}), decoration: InputDecoration(prefixIcon: const Icon(Icons.search), labelText: searchHint)),
-                    const SizedBox(height: 12),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: available.length,
-                        itemBuilder: (context, index) {
-                          final doc = available[index];
-                          final data = doc.data() as Map<String, dynamic>;
-                          final id = doc.id as String;
-                          final name = data['name']?.toString() ?? 'Item';
-                          if (selectedIds.contains(id)) return const SizedBox.shrink();
-                          return ListTile(
-                            title: Text(name),
-                            subtitle: Text(itemSubtitle(data)),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.add_circle, color: Colors.green),
-                              onPressed: () => onAdd(id, name),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Selected', style: TextStyle(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 12),
-                    Expanded(
-                      child: selectedIds.isEmpty
-                          ? const Center(child: Text('None selected'))
-                          : ListView.separated(
-                              itemCount: selectedIds.length,
-                              separatorBuilder: (_, _) => const SizedBox(height: 8),
-                              itemBuilder: (context, index) => ListTile(
-                                tileColor: Colors.grey.shade100,
-                                title: Text(selectedNames[index]),
-                                trailing: IconButton(icon: const Icon(Icons.remove_circle, color: Colors.red), onPressed: () => onRemove(index)),
-                              ),
-                            ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+      final availablePane = Column(
+        children: [
+          TextField(controller: search, onChanged: (_) => setState(() {}), decoration: InputDecoration(prefixIcon: const Icon(Icons.search), labelText: searchHint)),
+          const SizedBox(height: 12),
+          Expanded(
+            child: ListView.builder(
+              itemCount: available.length,
+              itemBuilder: (context, index) {
+                final doc = available[index];
+                final data = doc.data() as Map<String, dynamic>;
+                final id = doc.id as String;
+                final name = data['name']?.toString() ?? 'Item';
+                if (selectedIds.contains(id)) return const SizedBox.shrink();
+                return ListTile(
+                  title: Text(name),
+                  subtitle: Text(itemSubtitle(data)),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.add_circle, color: Colors.green),
+                    onPressed: () => onAdd(id, name),
+                  ),
+                );
+              },
+            ),
           ),
+        ],
+      );
+      final selectedPane = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Selected (${selectedIds.length})', style: const TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 12),
+          Expanded(
+            child: selectedIds.isEmpty
+                ? const Center(child: Text('None selected'))
+                : ListView.separated(
+                    itemCount: selectedIds.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) => ListTile(
+                      tileColor: Colors.grey.shade100,
+                      title: Text(selectedNames[index]),
+                      trailing: IconButton(icon: const Icon(Icons.remove_circle, color: Colors.red), onPressed: () => onRemove(index)),
+                    ),
+                  ),
+          ),
+        ],
+      );
+      final isMobile = MediaQuery.of(context).size.width < AppSizes.mobileBreakpoint;
+
+      return ResponsiveDialogShell.form(
+        desktopWidth: 900,
+        desktopHeight: 560,
+        title: title,
+        content: SizedBox(
+          height: isMobile ? 520 : 460,
+          child: isMobile
+              ? Column(
+                  children: [
+                    Expanded(child: availablePane),
+                    const Divider(height: 24),
+                    Expanded(child: selectedPane),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Expanded(child: availablePane),
+                    const SizedBox(width: 12),
+                    Expanded(child: selectedPane),
+                  ],
+                ),
         ),
         actions: [
           TextButton(

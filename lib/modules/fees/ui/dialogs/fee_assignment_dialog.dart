@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../models/fee_structure_model.dart';
 import '../../services/fee_service.dart';
 
@@ -104,13 +105,12 @@ class _FeeAssignmentDialogState extends State<FeeAssignmentDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Assign Fee'),
-      content: SizedBox(
-        width: 720,
-        child: Form(
+    return ResponsiveDialogShell.form(
+      desktopWidth: 720,
+      desktopHeight: 640,
+      title: 'Assign Fee',
+      content: Form(
           key: _formKey,
-          child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -174,8 +174,6 @@ class _FeeAssignmentDialogState extends State<FeeAssignmentDialog> {
               ],
             ),
           ),
-        ),
-      ),
       actions: [
         TextButton(onPressed: _saving ? null : () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(onPressed: _saving ? null : _save, child: _saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Save')),

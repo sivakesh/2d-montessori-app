@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../models/finance_account_model.dart';
 import '../../models/finance_category_model.dart';
 import '../../models/finance_income_model.dart';
@@ -81,10 +82,10 @@ class _AddIncomeDialogState extends State<AddIncomeDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      child: SizedBox(
-        width: 720,
-        child: Form(
+    return ResponsiveDialogShell(
+      desktopWidth: 720,
+      desktopHeight: 680,
+      child: Form(
           key: _formKey,
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(20),
@@ -159,14 +160,22 @@ class _AddIncomeDialogState extends State<AddIncomeDialog> {
                   children: [
                     TextButton(onPressed: _saving ? null : () => Navigator.pop(context), child: const Text('Cancel')),
                     const SizedBox(width: 8),
-                    FilledButton(onPressed: _saving ? null : _save, child: _saving ? const CircularProgressIndicator() : const Text('Save')),
+                    FilledButton(
+                      onPressed: _saving ? null : _save,
+                      child: _saving
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Save'),
+                    ),
                   ],
                 ),
               ],
             ),
           ),
         ),
-      ),
     );
   }
 }
