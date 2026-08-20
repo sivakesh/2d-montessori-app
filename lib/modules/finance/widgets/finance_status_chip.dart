@@ -10,9 +10,11 @@ class FinanceStatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Chip(
       label: Text(label),
-      backgroundColor: color.withOpacity(0.12),
+      backgroundColor: color.withValues(alpha: 0.12),
       labelStyle: TextStyle(color: color, fontWeight: FontWeight.w600),
-      side: BorderSide(color: color.withOpacity(0.3)),
+      side: BorderSide(color: color.withValues(alpha: 0.3)),
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
     );
   }
 }

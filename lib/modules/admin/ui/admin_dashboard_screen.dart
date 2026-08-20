@@ -1,8 +1,12 @@
 // ignore_for_file: deprecated_member_use
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
 import '../../../services/user_session_log_service.dart';
+import '../../auth/providers/auth_provider.dart';
+import '../../fees/services/fee_service.dart';
 import '../../fees/ui/admin_fees_screen.dart';
 import '../../finance/ui/admin_finance_screen.dart';
 import '../students/ui/admin_students_screen.dart';
@@ -18,6 +22,40 @@ class AdminDashboardScreen extends StatefulWidget {
 
   @override
   State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
+}
+
+/// Guards direct navigation (e.g. the '/admin_dashboard' route) so Staff
+/// cannot reach the Admin console even without going through the sidebar.
+class _AdminAccessRestrictedScreen extends StatelessWidget {
+  const _AdminAccessRestrictedScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Admin')),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.lock_outline, size: 48, color: Colors.grey),
+              const SizedBox(height: 12),
+              const Text(
+                'You do not have access to this section.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+                child: const Text('Go Back'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
@@ -60,30 +98,29 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return snap.size;
   }
 
+  // 'attendance' documents store the day as a 'yyyy-MM-dd' string in the
+  // `date` field on every write path (Dashboard Attendance's markPresent/
+  // markAbsent and the Admin Attendance Management batch save both write
+  // it). `attendanceDate` is only written by the admin batch path in that
+  // same string format, so a DateTime range filter against it can never
+  // match — querying `date` with an equality match is what actually
+  // reflects the stored data.
   Future<int> _countTodayAttendance() async {
-    final today = DateTime.now();
-    final start = DateTime(today.year, today.month, today.day);
-    final end = start.add(const Duration(days: 1));
+    final todayKey = DateFormat('yyyy-MM-dd').format(DateTime.now().toLocal());
     final snap = await _firestore
         .collection('attendance')
-        .where('attendanceDate', isGreaterThanOrEqualTo: start)
-        .where('attendanceDate', isLessThan: end)
+        .where('date', isEqualTo: todayKey)
         .get();
     return snap.size;
   }
 
+  // "Pending Fees" = student fee assignments with an outstanding balance,
+  // matching the Fees module's own Dues/Collections tabs
+  // (student_fee_assignments.balanceAmount > 0). Reuses FeeService rather
+  // than a second fee-calculation path.
   Future<int> _countPendingFees() async {
-    const candidates = ['fees', 'fee_collections', 'student_fees'];
-    for (final collection in candidates) {
-      try {
-        final snap = await _firestore
-            .collection(collection)
-            .where('status', whereIn: ['pending', 'due', 'unpaid'])
-            .get();
-        return snap.size;
-      } catch (_) {}
-    }
-    return 0;
+    final assignments = await FeeService().getAssignments();
+    return assignments.where((a) => a.balanceAmount > 0).length;
   }
 
   Future<List<_ActivityItem>> _recentFromCollection({
@@ -115,29 +152,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     }
   }
 
+  // Recent activity is built from actual creation timestamps across the
+  // core collections — there is no audit-log subsystem in this app (no
+  // code anywhere writes an "auditLogs" document), so that was previously
+  // queried but always fell through to this same union unnoticed.
   Future<List<_ActivityItem>> _loadRecentActivity() async {
-    try {
-      final audit = await _firestore
-          .collection('auditLogs')
-          .orderBy('createdAt', descending: true)
-          .limit(5)
-          .get();
-      if (audit.docs.isNotEmpty) {
-        return audit.docs.map((doc) {
-          final data = doc.data();
-          final createdAt = _timestampValue(data['createdAt']);
-          return _ActivityItem(
-            title: data['title']?.toString() ??
-                data['action']?.toString() ??
-                'Audit entry',
-            subtitle: data['module']?.toString() ?? 'Audit log',
-            trailing: _formatTimestamp(createdAt),
-            sortKey: createdAt,
-          );
-        }).toList();
-      }
-    } catch (_) {}
-
     final combined = <_ActivityItem>[];
     combined.addAll(
       await _recentFromCollection(
@@ -230,6 +249,18 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return Consumer(
+      builder: (context, ref, _) {
+        final role = ref.watch(currentUserProvider)?.role.toLowerCase();
+        if (role != 'admin') {
+          return const _AdminAccessRestrictedScreen();
+        }
+        return _buildAdminDashboard(context);
+      },
+    );
+  }
+
+  Widget _buildAdminDashboard(BuildContext context) {
     return AdminLayout(
       selectedIndex: 0,
       title: 'Admin Dashboard',
@@ -244,11 +275,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _DashboardHeader(
-                    dateLabel: _formatDate(DateTime.now()),
-                    loading: loading,
-                  ),
-                  const SizedBox(height: 20),
                   if (loading)
                     const _DashboardSkeleton()
                   else if (data != null) ...[
@@ -443,23 +469,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  String _formatDate(DateTime date) {
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    return '${months[date.month - 1]} ${date.day}, ${date.year}';
-  }
 }
 
 class _DashboardData {
@@ -498,96 +507,6 @@ class _ActivityItem {
   final String subtitle;
   final String trailing;
   final DateTime sortKey;
-}
-
-class _DashboardHeader extends StatelessWidget {
-  const _DashboardHeader({
-    required this.dateLabel,
-    required this.loading,
-  });
-
-  final String dateLabel;
-  final bool loading;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Admin Dashboard',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Overview of students, staff, classes, attendance, fees and school operations.',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Colors.grey[700],
-                    ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 16),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            _GreetingPill(
-              label: loading ? 'Loading...' : 'Welcome back',
-              icon: Icons.waving_hand_outlined,
-            ),
-            const SizedBox(height: 12),
-            _GreetingPill(
-              label: dateLabel,
-              icon: Icons.calendar_today_outlined,
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _GreetingPill extends StatelessWidget {
-  const _GreetingPill({required this.label, required this.icon});
-
-  final String label;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(999),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: const Color(0xFF2E7D32)),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _KpiCard extends StatelessWidget {

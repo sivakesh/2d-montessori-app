@@ -315,6 +315,25 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     }
   }
 
+  void _showSnack(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: isError ? Colors.red.shade600 : null,
+        ),
+      );
+  }
+
+  // Present is a strict sequence — mood, then camera, then upload, then the
+  // attendance write, then the mood-checkin write — and each stage can fail
+  // independently. The mood check-in must never be written unless the
+  // attendance record was actually saved, and a photo that was uploaded but
+  // never ended up referenced by a saved attendance record must not be left
+  // behind, so each stage is handled (and reported) on its own rather than
+  // behind one broad try/catch.
   Future<void> _markPresent({
     required String entityType,
     required String entityId,
@@ -327,54 +346,86 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   }) async {
     final service = ref.read(attendanceServiceProvider);
     final moodService = ref.read(moodCheckinServiceProvider);
+
     final mood = await MoodCheckinDialog.show(context, entityType: entityType);
     if (mood == null || !mounted) return;
+
     setState(() => _marking[entityId] = true);
+
+    String? photoUrl;
     try {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Uploading photo...')));
-      final photoUrl = await service.captureAndUploadPhoto(
+      _showSnack('Opening camera…');
+      photoUrl = await service.captureAndUploadPhoto(
         entityType: entityType,
         entityId: entityId,
       );
-      if (photoUrl == null || !mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Saving attendance...')));
-      final attendanceId = await service.markPresent(
+    } catch (_) {
+      if (mounted) setState(() => _marking[entityId] = false);
+      _showSnack('Could not upload the photo. Please try again.', isError: true);
+      return;
+    }
+
+    if (photoUrl == null) {
+      // User cancelled the camera (or it was unavailable) — nothing was
+      // written, and the mood already selected is intentionally discarded.
+      if (mounted) setState(() => _marking[entityId] = false);
+      _showSnack(
+        'Attendance not marked. A photo is required to mark Present.',
+        isError: true,
+      );
+      return;
+    }
+
+    final uploadedPhotoUrl = photoUrl;
+    String attendanceId;
+    try {
+      _showSnack('Saving attendance…');
+      attendanceId = await service.markPresent(
         entityType: entityType,
         entityId: entityId,
         entityName: entityName,
         classId: classId,
         markedBy: markedBy,
-        photoUrl: photoUrl,
+        photoUrl: uploadedPhotoUrl,
         role: role,
         phone: phone,
         email: email,
       );
-      if (mounted) {
-        setState(() {
-          _attendanceMap[_attendanceKey(entityType, entityId)] = {
-            'entityType': entityType,
-            'entityId': entityId,
-            'entityName': entityName,
-            'classId': classId ?? '',
-            'date': DateTime.now().toLocal().toIso8601String().split('T').first,
-            'photoUrl': photoUrl,
-            'markedBy': markedBy,
-            'status': 'present',
-            'role': role,
-            'phone': phone,
-            'email': email,
-          };
-        });
-      }
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Saving mood check-in...')));
+    } catch (_) {
+      // The photo is already in Storage but no attendance record ended up
+      // referencing it — clean it up rather than leaving it orphaned.
+      await service.deleteAttendancePhoto(
+        entityType: entityType,
+        entityId: entityId,
+        date: service.dateKeyFor(DateTime.now()),
+      );
+      if (mounted) setState(() => _marking[entityId] = false);
+      _showSnack('Could not save attendance. Please try again.', isError: true);
+      return;
+    }
+
+    // Attendance is saved from this point on — everything below is best
+    // effort and must not make attendance look like it failed.
+    if (mounted) {
+      setState(() {
+        _attendanceMap[_attendanceKey(entityType, entityId)] = {
+          'entityType': entityType,
+          'entityId': entityId,
+          'entityName': entityName,
+          'classId': classId ?? '',
+          'date': DateTime.now().toLocal().toIso8601String().split('T').first,
+          'photoUrl': uploadedPhotoUrl,
+          'markedBy': markedBy,
+          'status': 'present',
+          'role': role,
+          'phone': phone,
+          'email': email,
+        };
+      });
+    }
+
+    try {
+      _showSnack('Saving mood check-in…');
       await moodService.createMoodCheckin(
         entityType: entityType,
         entityId: entityId,
@@ -387,23 +438,19 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         notes: mood.notes,
         source: 'attendance',
         attendanceId: attendanceId,
-        photoUrl: photoUrl,
+        photoUrl: uploadedPhotoUrl,
         createdBy: markedBy,
       );
       await _loadData();
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Attendance marked')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to mark attendance: $e')),
-        );
-      }
-    } finally {
       if (mounted) setState(() => _marking[entityId] = false);
+      _showSnack('Attendance marked.');
+    } catch (_) {
+      await _loadData();
+      if (mounted) setState(() => _marking[entityId] = false);
+      _showSnack(
+        'Attendance marked, but mood check-in could not be saved.',
+        isError: true,
+      );
     }
   }
 
@@ -446,19 +493,11 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         };
       });
       await _loadData();
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Attendance marked')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to mark attendance: $e')),
-        );
-      }
-    } finally {
       if (mounted) setState(() => _marking[entityId] = false);
+      _showSnack('Attendance marked.');
+    } catch (_) {
+      if (mounted) setState(() => _marking[entityId] = false);
+      _showSnack('Could not save attendance. Please try again.', isError: true);
     }
   }
 
@@ -505,14 +544,6 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
 
   String _attendanceKey(String entityType, String entityId) =>
       '${entityType}_$entityId';
-
-  void _openAddAttendanceFlow() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Use the row actions below to add attendance'),
-      ),
-    );
-  }
 
   Widget _buildTodayTab(
     BuildContext context,
@@ -816,28 +847,9 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Attendance',
-                          style: Theme.of(context).textTheme.headlineSmall,
-                        ),
-                      ),
-                      Material(
-                        color: Colors.green,
-                        shape: const CircleBorder(),
-                        child: Tooltip(
-                          message: 'Add Attendance',
-                          child: IconButton(
-                            onPressed: _openAddAttendanceFlow,
-                            icon: const Icon(Icons.add),
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ],
+                  Text(
+                    'Attendance',
+                    style: Theme.of(context).textTheme.headlineSmall,
                   ),
                   const SizedBox(height: 8),
                   Text(
@@ -1110,7 +1122,7 @@ class _AttendanceCard extends StatelessWidget {
                       Tooltip(
                         message: isMarked
                             ? 'Attendance marked'
-                            : 'Mark present with photo',
+                            : 'Mark Present — photo + mood check-in required',
                         child: Material(
                           color: Colors.green,
                           shape: const CircleBorder(),
@@ -1140,6 +1152,13 @@ class _AttendanceCard extends StatelessWidget {
                     ],
                   ],
                 ),
+                if (!isMarked && !marking) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'Photo + mood required',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                  ),
+                ],
               ],
             ),
           ],

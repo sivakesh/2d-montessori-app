@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/config/app_env.dart';
 import '../students/data/admin_student_service.dart';
 import '../students/models/admin_student_model.dart';
 
@@ -722,14 +723,15 @@ class _AdminStudentFormState extends State<AdminStudentForm>
                   ),
                   const SizedBox(height: 12),
                   _sectionTitle('Basic Info'),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      onPressed: fillSampleData,
-                      icon: const Icon(Icons.auto_awesome),
-                      label: const Text('Seed Sample'),
+                  if (currentEnvironment == AppEnvironment.dev)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: fillSampleData,
+                        icon: const Icon(Icons.auto_awesome),
+                        label: const Text('Seed Sample'),
+                      ),
                     ),
-                  ),
                   const SizedBox(height: 16),
                   Wrap(
                     spacing: 16,

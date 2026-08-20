@@ -1,7 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/config/app_env.dart';
+import '../../../core/theme/app_colors.dart';
 import '../../admin/models/admin_class_model.dart';
+import '../../finance/widgets/finance_status_chip.dart';
 import '../data/class_service.dart';
 import 'class_form_dialog.dart';
 import 'class_view_dialog.dart';
@@ -42,7 +45,30 @@ class ClassListScreenState extends State<ClassListScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<bool> _confirmDelete() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete class?'),
+        content: const Text('This action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
   Future<void> _deleteClass(String classId) async {
+    if (!await _confirmDelete()) return;
     await _service.deleteClass(classId);
     if (mounted) setState(() {});
   }
@@ -56,10 +82,25 @@ class ClassListScreenState extends State<ClassListScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Classes', style: Theme.of(context).textTheme.headlineSmall),
-              const Spacer(),
-              if (!widget.readOnly)
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Classes',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Manage classes, sections, capacity, and academic year.',
+                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+              if (!widget.readOnly && currentEnvironment == AppEnvironment.dev)
                 TextButton.icon(
                   onPressed: () async {
                     await _service.seedSampleClasses();
@@ -70,7 +111,7 @@ class ClassListScreenState extends State<ClassListScreen> {
                 ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
           TextField(
             controller: _searchController,
             decoration: const InputDecoration(
@@ -79,7 +120,7 @@ class ClassListScreenState extends State<ClassListScreen> {
             ),
             onChanged: (_) => setState(() {}),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
           Expanded(
             child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
               stream: _service.watchClasses(),
@@ -102,82 +143,185 @@ class ClassListScreenState extends State<ClassListScreen> {
                 }).toList();
 
                 if (docs.isEmpty) {
-                  return const Center(child: Text('No classes available.'));
+                  return const _ClassesEmptyState();
                 }
 
                 return ListView.separated(
                   itemCount: docs.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 12),
+                  separatorBuilder: (_, _) => const SizedBox(height: 10),
                   itemBuilder: (context, index) {
                     final doc = docs[index];
                     final model = AdminClassModel.fromMap(doc.id, doc.data());
-                    return Card(
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
+                    return _ClassRow(
+                      model: model,
+                      showDetails: !widget.readOnly,
+                      showActions: !widget.readOnly,
+                      onView: () => showDialog(
+                        context: context,
+                        barrierDismissible: false,
+                        builder: (_) => ClassViewDialog(classId: doc.id),
                       ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            CircleAvatar(
-                              radius: 24,
-                              child: Text(
-                                model.name.isNotEmpty ? model.name[0].toUpperCase() : '?',
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(model.name, style: Theme.of(context).textTheme.titleMedium),
-                                  const SizedBox(height: 4),
-                                  if (model.section.isNotEmpty)
-                                    Text('Section: ${model.section}'),
-                                  const SizedBox(height: 2),
-                                  Text('Status: ${model.isActive ? 'Active' : 'Inactive'}'),
-                                  if (!widget.readOnly) ...[
-                                    const SizedBox(height: 2),
-                                    Text('Academic Year: ${model.academicYear.isEmpty ? '-' : model.academicYear}'),
-                                    const SizedBox(height: 2),
-                                    Text('Capacity: ${model.capacity?.toString() ?? '-'}'),
-                                    const SizedBox(height: 2),
-                                    Text('Approval: ${model.approvalStatus}'),
-                                  ],
-                                ],
-                              ),
-                            ),
-                            if (!widget.readOnly)
-                              Column(
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.visibility),
-                                    onPressed: () => showDialog(
-                                      context: context,
-                                      barrierDismissible: false,
-                                      builder: (_) => ClassViewDialog(classId: doc.id),
-                                    ),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.edit),
-                                    onPressed: () => _openForm(classId: doc.id, initialData: doc.data()),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.delete),
-                                    onPressed: () => _deleteClass(doc.id),
-                                  ),
-                                ],
-                              ),
-                          ],
-                        ),
-                      ),
+                      onEdit: () => _openForm(classId: doc.id, initialData: doc.data()),
+                      onDelete: () => _deleteClass(doc.id),
                     );
                   },
                 );
               },
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Compact class row matching the shared card style established for
+/// Finance/Attendance/Users/Students. [showDetails]/[showActions] preserve
+/// the screen's existing readOnly behavior (used embedded, read-only, in
+/// the staff Dashboard). Presentation only.
+class _ClassRow extends StatelessWidget {
+  const _ClassRow({
+    required this.model,
+    required this.showDetails,
+    required this.showActions,
+    required this.onView,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final AdminClassModel model;
+  final bool showDetails;
+  final bool showActions;
+  final VoidCallback onView;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 20,
+            backgroundColor: AppColors.primary.withValues(alpha: 0.1),
+            child: Text(
+              model.name.isNotEmpty ? model.name[0].toUpperCase() : '?',
+              style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.primary),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  model.name.isEmpty ? 'Class' : model.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.textPrimary),
+                ),
+                if (model.section.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    'Section ${model.section}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  ),
+                ],
+                if (showDetails) ...[
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 16,
+                    runSpacing: 4,
+                    children: [
+                      Text('Academic Year ${model.academicYear.isEmpty ? '-' : model.academicYear}', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                      Text('Capacity ${model.capacity?.toString() ?? '-'}', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    FinanceStatusChip(label: model.isActive ? 'ACTIVE' : 'INACTIVE', color: model.isActive ? AppColors.primary : Colors.grey),
+                    if (showDetails)
+                      FinanceStatusChip(
+                        label: model.approvalStatus.toUpperCase(),
+                        color: model.approvalStatus.toLowerCase() == 'approved' ? AppColors.secondary : const Color(0xFFB26A00),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (showActions) ...[
+            const SizedBox(width: 8),
+            Wrap(
+              spacing: 2,
+              children: [
+                IconButton(
+                  tooltip: 'View',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.visibility_outlined, size: 20),
+                  onPressed: onView,
+                ),
+                IconButton(
+                  tooltip: 'Edit',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.edit_outlined, size: 20),
+                  onPressed: onEdit,
+                ),
+                IconButton(
+                  tooltip: 'Delete',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.delete_outline, size: 20, color: Color(0xFFD32F2F)),
+                  onPressed: onDelete,
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ClassesEmptyState extends StatelessWidget {
+  const _ClassesEmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.class_outlined, size: 36, color: AppColors.textSecondary.withValues(alpha: 0.6)),
+          const SizedBox(height: 12),
+          const Text(
+            'No classes found',
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: AppColors.textPrimary),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'No classes match your current search.',
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
           ),
         ],
       ),

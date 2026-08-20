@@ -37,6 +37,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   List<_DashboardMetric> _metrics = const [];
   List<MoodCheckinModel> _recentMoodCheckins = const [];
   final Map<String, String> _classNames = {};
+  final _classListKey = GlobalKey<ClassListScreenState>();
+  final _studentListKey = GlobalKey<StudentListScreenState>();
 
   @override
   void initState() {
@@ -471,6 +473,25 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
+    final isAdmin = user.role.toLowerCase() == 'admin';
+    final Widget? fab = !isAdmin
+        ? null
+        : selectedIndex == 1
+        ? FloatingActionButton(
+            backgroundColor: const Color(0xFF2E7D32),
+            elevation: 4,
+            onPressed: () => _classListKey.currentState?.openAddClass(),
+            child: const Icon(Icons.add, color: Colors.white),
+          )
+        : selectedIndex == 2
+        ? FloatingActionButton(
+            backgroundColor: const Color(0xFF2E7D32),
+            elevation: 4,
+            onPressed: () => _studentListKey.currentState?.openAddStudent(),
+            child: const Icon(Icons.add, color: Colors.white),
+          )
+        : null;
+
     final dashboardContent = SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
       child: Padding(
@@ -483,11 +504,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _DashboardHeader(
-              userName: user.name?.isNotEmpty == true ? user.name! : user.phone,
-              userPhone: user.phone,
-              dateLabel: _formatDate(DateTime.now().toLocal()),
-            ),
+            _DashboardHeader(dateLabel: _formatDate(DateTime.now().toLocal())),
             const SizedBox(height: 14),
             _PersonalWellbeingCard(
               onSaved: () async {
@@ -606,11 +623,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     return ResponsiveLayout(
       mobile: Scaffold(
         backgroundColor: Colors.grey[50],
+        floatingActionButton: fab,
         appBar: AppBar(
           centerTitle: false,
           title: const Text('Dashboard'),
           actions: [
-            if (user.role.toLowerCase() == 'admin')
+            if (isAdmin)
               IconButton(
                 icon: const Icon(Icons.admin_panel_settings),
                 onPressed: () =>
@@ -635,8 +653,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               onRefresh: _loadDashboardData,
               child: dashboardContent,
             ),
-            1 => const ClassListScreen(readOnly: true),
-            2 => const StudentListScreen(),
+            1 => ClassListScreen(key: _classListKey, readOnly: !isAdmin),
+            2 => StudentListScreen(key: _studentListKey),
             3 => const AttendanceScreen(),
             _ => RefreshIndicator(
               onRefresh: _loadDashboardData,
@@ -651,6 +669,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       ),
       web: Scaffold(
         backgroundColor: Colors.grey[50],
+        floatingActionButton: fab,
         body: Row(
           children: [
             AppSidebar(
@@ -663,7 +682,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   AppBar(
                     title: const Text('Dashboard'),
                     actions: [
-                      if (user.role.toLowerCase() == 'admin')
+                      if (isAdmin)
                         IconButton(
                           icon: const Icon(Icons.admin_panel_settings),
                           onPressed: () => Navigator.of(
@@ -692,8 +711,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                         onRefresh: _loadDashboardData,
                         child: dashboardContent,
                       ),
-                      1 => const ClassListScreen(readOnly: true),
-                      2 => const StudentListScreen(),
+                      1 => ClassListScreen(key: _classListKey, readOnly: !isAdmin),
+                      2 => StudentListScreen(key: _studentListKey),
                       3 => const AttendanceScreen(),
                       _ => RefreshIndicator(
                         onRefresh: _loadDashboardData,
@@ -711,47 +730,248 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   }
 }
 
-class _DashboardHeader extends StatelessWidget {
+class _DashboardHeader extends ConsumerWidget {
   const _DashboardHeader({
-    required this.userName,
-    required this.userPhone,
     required this.dateLabel,
   });
 
-  final String userName;
-  final String userPhone;
   final String dateLabel;
 
   @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final providerUser = ref.watch(currentUserProvider);
+    final authUser = FirebaseAuth.instance.currentUser;
+    final phone = providerUser?.phone.trim().isNotEmpty == true
+        ? providerUser!.phone.trim()
+        : authUser?.phoneNumber?.trim() ?? '';
+    final displayName = providerUser?.name?.trim() ?? '';
+    final displayRole = providerUser?.role.trim() ?? '';
+    final providerData = <String, dynamic>{
+      'name': displayName,
+      'fullName': displayName,
+      'displayName': displayName,
+      'role': displayRole,
+      'phoneNumber': phone,
+      'mobile': phone,
+      'phone': phone,
+      'contactNumber': phone,
+    };
+
+    final fallbackRef = authUser?.uid.isNotEmpty == true
+        ? FirebaseFirestore.instance
+            .collection('users')
+            .where('firebaseAuthUid', isEqualTo: authUser!.uid)
+            .limit(1)
+        : phone.isNotEmpty
+        ? FirebaseFirestore.instance
+            .collection('users')
+            .where('phoneNumber', isEqualTo: phone)
+            .limit(1)
+        : null;
+
+    if (fallbackRef == null) {
+      return _UserSummaryCard(userData: providerData, dateLabel: dateLabel);
+    }
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: fallbackRef.snapshots(),
+      builder: (context, snapshot) {
+        final docs = snapshot.data?.docs ?? const [];
+        final firestoreData = docs.isNotEmpty ? docs.first.data() : const {};
+        return _UserSummaryCard(
+          userData: {
+            ...firestoreData,
+            ...providerData,
+            'profileUrl':
+                firestoreData['profileUrl'] ??
+                firestoreData['photoUrl'] ??
+                firestoreData['avatarUrl'] ??
+                firestoreData['profileImageUrl'],
+            'photoUrl':
+                firestoreData['photoUrl'] ??
+                firestoreData['profileUrl'] ??
+                firestoreData['avatarUrl'] ??
+                firestoreData['profileImageUrl'],
+            'avatarUrl':
+                firestoreData['avatarUrl'] ??
+                firestoreData['profileUrl'] ??
+                firestoreData['photoUrl'] ??
+                firestoreData['profileImageUrl'],
+            'profileImageUrl':
+                firestoreData['profileImageUrl'] ??
+                firestoreData['photoUrl'] ??
+                firestoreData['profileUrl'] ??
+                firestoreData['avatarUrl'],
+          },
+          dateLabel: dateLabel,
+        );
+      },
+    );
+  }
+}
+
+class _UserSummaryCard extends StatelessWidget {
+  const _UserSummaryCard({
+    required this.userData,
+    required this.dateLabel,
+  });
+
+  final Map<String, dynamic> userData;
+  final String dateLabel;
+
+  String _firstNonEmpty(List<String> keys, {String fallback = ''}) {
+    for (final key in keys) {
+      final value = userData[key]?.toString().trim() ?? '';
+      if (value.isNotEmpty) return value;
+    }
+    return fallback;
+  }
+
+  String _formatRole(String role) {
+    final normalized = role.trim().toLowerCase();
+    switch (normalized) {
+      case 'admin':
+        return 'Admin';
+      case 'school_admin':
+      case 'school-admin':
+      case 'school admin':
+        return 'School Admin';
+      case 'staff':
+        return 'Staff';
+      default:
+        return 'Staff';
+    }
+  }
+
+  String _name() {
+    final phone = _phone();
+    return _firstNonEmpty(
+      const ['name', 'fullName', 'displayName'],
+      fallback: phone.isNotEmpty ? phone : 'User',
+    );
+  }
+
+  String _phone() {
+    return _firstNonEmpty(const ['phoneNumber', 'mobile', 'phone', 'contactNumber']);
+  }
+
+  String _role() {
+    return _formatRole(_firstNonEmpty(const ['role'], fallback: 'staff'));
+  }
+
+  String _photoUrl() {
+    return _firstNonEmpty(const ['profileUrl', 'photoUrl', 'avatarUrl', 'profileImageUrl']);
+  }
+
+  String _initials(String name) {
+    final parts = name.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return 'U';
+    String firstLetter(String value) => value.isNotEmpty ? value[0].toUpperCase() : '';
+    if (parts.length == 1) return firstLetter(parts.first);
+    return '${firstLetter(parts.first)}${firstLetter(parts.last)}';
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final name = _name();
+    final phone = _phone();
+    final role = _role();
+    final photoUrl = _photoUrl();
+    final initials = _initials(name);
+
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: Padding(
         padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Welcome back', style: Theme.of(context).textTheme.labelLarge),
-            const SizedBox(height: 6),
-            Text(userName, style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 4),
-            Text(
-              userPhone,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade600),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              dateLabel,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade500),
-            ),
-          ],
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 420;
+            final info = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Welcome back', style: Theme.of(context).textTheme.labelLarge),
+                const SizedBox(height: 6),
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '$role${phone.isNotEmpty ? ' • $phone' : ''}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Colors.grey.shade600,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  dateLabel,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey.shade500,
+                      ),
+                ),
+              ],
+            );
+
+            if (compact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  info,
+                  const SizedBox(height: 16),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: _Avatar(imageUrl: photoUrl, initials: initials),
+                  ),
+                ],
+              );
+            }
+
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(child: info),
+                const SizedBox(width: 16),
+                _Avatar(imageUrl: photoUrl, initials: initials),
+              ],
+            );
+          },
         ),
       ),
+    );
+  }
+}
+
+class _Avatar extends StatelessWidget {
+  const _Avatar({
+    required this.imageUrl,
+    required this.initials,
+  });
+
+  final String imageUrl;
+  final String initials;
+
+  @override
+  Widget build(BuildContext context) {
+    return CircleAvatar(
+      radius: 28,
+      backgroundColor: const Color(0xFF2E7D32).withOpacity(0.12),
+      backgroundImage: imageUrl.isNotEmpty ? NetworkImage(imageUrl) : null,
+      onBackgroundImageError: imageUrl.isNotEmpty ? (Object error, StackTrace? stackTrace) {} : null,
+      child: imageUrl.isEmpty
+          ? Text(
+              initials,
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF2E7D32),
+              ),
+            )
+          : null,
     );
   }
 }

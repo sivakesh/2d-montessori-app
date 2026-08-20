@@ -6,6 +6,7 @@
 // tree, read text, and verify that the values of widget properties are correct.
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:montessori_app/main.dart';
@@ -13,7 +14,9 @@ import 'package:montessori_app/core/widgets/app_logo.dart';
 
 void main() {
   testWidgets('shows branded logo on launch', (WidgetTester tester) async {
-    await tester.pumpWidget(const MontessoriApp());
+    await tester.pumpWidget(
+      const ProviderScope(child: MontessoriApp()),
+    );
 
     expect(find.byType(AppLogo), findsOneWidget);
     expect(find.byType(Image), findsOneWidget);
