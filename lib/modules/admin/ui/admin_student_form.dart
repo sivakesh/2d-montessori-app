@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/config/app_env.dart';
+import '../../../core/theme/app_colors.dart';
 import '../students/data/admin_student_service.dart';
 import '../students/models/admin_student_model.dart';
 
@@ -1223,8 +1224,10 @@ class _AdminStudentFormState extends State<AdminStudentForm>
           right: 16,
           child: FloatingActionButton(
             mini: true,
+            backgroundColor: AppColors.primary,
+            elevation: 4,
             onPressed: _openUploadDialog,
-            child: const Icon(Icons.add),
+            child: const Icon(Icons.add, color: Colors.white),
           ),
         ),
         Positioned(

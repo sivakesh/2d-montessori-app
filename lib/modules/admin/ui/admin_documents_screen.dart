@@ -5,6 +5,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../finance/widgets/finance_status_chip.dart';
 import '../documents/data/admin_documents_service.dart';
 import '../documents/models/admin_school_document.dart';
+import 'admin_fab.dart';
 import 'admin_layout.dart';
 import '../documents/ui/admin_document_form_dialog.dart';
 import '../documents/ui/admin_document_view_dialog.dart';
@@ -114,13 +115,11 @@ class _AdminDocumentsScreenState extends State<AdminDocumentsScreen> {
     return AdminLayout(
       selectedIndex: 4,
       title: 'Documents',
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: AppColors.primary,
-        elevation: 4,
+      floatingActionButton: AdminFab(
+        icon: Icons.add,
         onPressed: () => _openForm(),
-        child: const Icon(Icons.add, color: Colors.white),
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -207,31 +206,36 @@ class _AdminDocumentsScreenState extends State<AdminDocumentsScreen> {
               ),
             ),
             const SizedBox(height: 20),
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : filtered.isEmpty
-                      ? const _DocumentsEmptyState()
-                      : ListView.builder(
-                          itemCount: filtered.length,
-                          itemBuilder: (context, index) {
-                            final doc = filtered[index];
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: _DocumentRow(
-                                doc: doc,
-                                onView: () => showDialog(
-                                  context: context,
-                                  barrierDismissible: false,
-                                  builder: (_) => AdminDocumentViewDialog(documentId: doc.id),
-                                ),
-                                onEdit: () => _openForm(doc: doc),
-                                onDelete: () => _deleteDoc(doc),
-                              ),
-                            );
-                          },
-                        ),
-            ),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 40),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (filtered.isEmpty)
+              const _DocumentsEmptyState()
+            else
+              ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: filtered.length,
+                itemBuilder: (context, index) {
+                  final doc = filtered[index];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _DocumentRow(
+                      doc: doc,
+                      onView: () => showDialog(
+                        context: context,
+                        barrierDismissible: false,
+                        builder: (_) => AdminDocumentViewDialog(documentId: doc.id),
+                      ),
+                      onEdit: () => _openForm(doc: doc),
+                      onDelete: () => _deleteDoc(doc),
+                    ),
+                  );
+                },
+              ),
+            const SizedBox(height: 24),
           ],
         ),
       ),

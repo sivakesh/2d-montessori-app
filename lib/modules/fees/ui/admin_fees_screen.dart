@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/theme/app_colors.dart';
+import '../../admin/ui/admin_fab.dart';
 import '../../admin/ui/admin_layout.dart';
 import '../models/fee_receipt_model.dart';
 import '../models/fee_structure_model.dart';
@@ -164,8 +165,8 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
     return AdminLayout(
       selectedIndex: 6,
       title: 'Fees',
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: const Color(0xFF2E7D32),
+      floatingActionButton: AdminFab(
+        icon: Icons.add,
         onPressed: () {
           if (_tab == 0) {
             _openStructure();
@@ -175,7 +176,6 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
             _openCollection(_assignments.firstWhere((a) => a.balanceAmount > 0));
           }
         },
-        child: const Icon(Icons.add, color: Colors.white),
       ),
       body: Padding(
         padding: const EdgeInsets.all(24),

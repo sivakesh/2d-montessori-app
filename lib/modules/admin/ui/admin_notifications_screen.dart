@@ -8,6 +8,7 @@ import '../notifications/data/admin_notification_service.dart';
 import '../notifications/models/admin_notification_model.dart';
 import '../notifications/ui/admin_notification_form_dialog.dart';
 import '../notifications/ui/admin_notification_view_dialog.dart';
+import 'admin_fab.dart';
 import 'admin_layout.dart';
 
 class AdminNotificationsScreen extends StatefulWidget {
@@ -284,18 +285,13 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
     return AdminLayout(
       selectedIndex: 5,
       title: 'Notifications',
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: AppColors.primary,
-        elevation: 4,
+      floatingActionButton: AdminFab(
+        icon: Icons.add,
         onPressed: () => _openForm(),
-        child: const Icon(Icons.add, color: Colors.white),
       ),
-      body: Padding(
-        padding: EdgeInsets.zero,
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-            child: Column(
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+        child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
@@ -491,36 +487,36 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 96),
-                    child: _loading
-                        ? const Center(child: CircularProgressIndicator())
-                        : filtered.isEmpty
-                            ? const _NotificationsEmptyState()
-                            : ListView.builder(
-                                itemCount: filtered.length,
-                                itemBuilder: (context, index) {
-                                  final n = filtered[index];
-                                  return Padding(
-                                    padding: const EdgeInsets.only(bottom: 10),
-                                    child: _NotificationRow(
-                                      notification: n,
-                                      onView: () => showDialog(
-                                        context: context,
-                                        builder: (_) => AdminNotificationViewDialog(notificationId: n.id),
-                                      ),
-                                      onEdit: () => _openForm(model: n),
-                                    ),
-                                  );
-                                },
-                              ),
+                if (_loading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 40),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (filtered.isEmpty)
+                  const _NotificationsEmptyState()
+                else
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: filtered.length,
+                    itemBuilder: (context, index) {
+                      final n = filtered[index];
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _NotificationRow(
+                          notification: n,
+                          onView: () => showDialog(
+                            context: context,
+                            builder: (_) => AdminNotificationViewDialog(notificationId: n.id),
+                          ),
+                          onEdit: () => _openForm(model: n),
+                        ),
+                      );
+                    },
                   ),
-                ),
+                const SizedBox(height: 24),
               ],
             ),
-          ),
-        ),
       ),
     );
   }

@@ -5,6 +5,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_sizes.dart';
 import '../../../core/widgets/responsive_dialog_shell.dart';
 import '../../finance/widgets/finance_status_chip.dart';
+import 'admin_fab.dart';
 import 'admin_layout.dart';
 import 'admin_user_form_screen.dart';
 import 'admin_profile_screen.dart';
@@ -184,11 +185,9 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: AppColors.primary,
-        elevation: 4,
+      floatingActionButton: AdminFab(
+        icon: Icons.add,
         onPressed: () => _openForm(),
-        child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }

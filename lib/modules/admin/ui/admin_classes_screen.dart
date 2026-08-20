@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../classes/ui/class_list_screen.dart';
+import 'admin_fab.dart';
 import 'admin_layout.dart';
 
 class AdminClassesScreen extends StatefulWidget {
@@ -17,11 +18,9 @@ class _AdminClassesScreenState extends State<AdminClassesScreen> {
     return AdminLayout(
       selectedIndex: 3,
       title: 'Classes',
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: const Color(0xFF2E7D32),
-        elevation: 4,
+      floatingActionButton: AdminFab(
+        icon: Icons.add,
         onPressed: () => _listKey.currentState?.openAddClass(),
-        child: const Icon(Icons.add, color: Colors.white),
       ),
       body: ClassListScreen(key: _listKey),
     );

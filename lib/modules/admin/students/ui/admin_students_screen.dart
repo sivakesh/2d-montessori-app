@@ -8,6 +8,7 @@ import '../../../finance/widgets/finance_status_chip.dart';
 import '../data/admin_student_service.dart';
 import '../models/admin_student_model.dart';
 import 'admin_student_view_dialog.dart';
+import '../../ui/admin_fab.dart';
 import '../../ui/admin_layout.dart';
 import '../../ui/admin_student_form.dart';
 
@@ -151,11 +152,9 @@ class _AdminStudentsScreenState extends State<AdminStudentsScreen> {
     return AdminLayout(
       selectedIndex: 2,
       title: 'Students',
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: AppColors.primary,
-        elevation: 4,
+      floatingActionButton: AdminFab(
+        icon: Icons.add,
         onPressed: () => _openForm(),
-        child: const Icon(Icons.add, color: Colors.white),
       ),
       body: Padding(
         padding: const EdgeInsets.all(24),

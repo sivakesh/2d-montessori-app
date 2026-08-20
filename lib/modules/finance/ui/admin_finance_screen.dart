@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/responsive_dialog_shell.dart';
+import '../../admin/ui/admin_fab.dart';
 import '../../admin/ui/admin_layout.dart';
 import '../models/finance_account_model.dart';
 import '../models/finance_category_model.dart';
@@ -101,8 +102,8 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
       // Reports (tab 6) is a read-only placeholder with nothing to add.
       floatingActionButton: _tab == 6
           ? null
-          : FloatingActionButton(
-              backgroundColor: AppColors.primary,
+          : AdminFab(
+              icon: Icons.add,
               onPressed: () async {
                 switch (_tab) {
                   case 0:
@@ -123,7 +124,6 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
                     break;
                 }
               },
-              child: const Icon(Icons.add, color: Colors.white),
             ),
       body: Padding(
         padding: const EdgeInsets.all(24),

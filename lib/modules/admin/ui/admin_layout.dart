@@ -31,6 +31,11 @@ class AdminLayout extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isMobile = MediaQuery.of(context).size.width < AppSizes.mobileBreakpoint;
+    // Mobile bottom-nav order/labels reflect actual admin usage frequency:
+    // Dashboard (home) > Students/Fees (frequent daily ops) > Alerts
+    // (important but checked less often) > More (secondary modules). Kept
+    // as a single ordered list so the selected-state math below and the
+    // "More" sheet stay trivially in sync with what's rendered.
     final mobileNavItems = <MobileNavItem>[
       MobileNavItem(
         label: 'Dashboard',
@@ -38,13 +43,6 @@ class AdminLayout extends ConsumerWidget {
         route: 'dashboard',
         screenIndex: 0,
         builder: (_) => const AdminDashboardScreen(),
-      ),
-      MobileNavItem(
-        label: 'Notifications',
-        icon: Icons.notifications_outlined,
-        route: 'notifications',
-        screenIndex: 5,
-        builder: (_) => const AdminNotificationsScreen(),
       ),
       MobileNavItem(
         label: 'Students',
@@ -59,6 +57,13 @@ class AdminLayout extends ConsumerWidget {
         route: 'fees',
         screenIndex: 6,
         builder: (_) => const AdminFeesScreen(),
+      ),
+      MobileNavItem(
+        label: 'Alerts',
+        icon: Icons.notifications_outlined,
+        route: 'notifications',
+        screenIndex: 5,
+        builder: (_) => const AdminNotificationsScreen(),
       ),
       MobileNavItem(label: 'More', icon: Icons.more_horiz, route: 'more'),
     ];
@@ -118,13 +123,16 @@ class AdminLayout extends ConsumerWidget {
       ),
     ];
 
-    int mobileSelectedIndex() {
-      if (selectedIndex == 0) return 0;
-      if (selectedIndex == 5) return 1;
-      if (selectedIndex == 2) return 2;
-      if (selectedIndex == 6) return 3;
-      return 4;
-    }
+    // Derived from mobileNavItems (by screenIndex, not position) so the
+    // selected-state pill always tracks the right destination even if the
+    // display order above changes again later. Any screenIndex not in the
+    // primary bar (i.e. reached via the "More" sheet) falls back to the
+    // last ("More") slot.
+    final mobileSelectedIndex = () {
+      final index =
+          mobileNavItems.indexWhere((item) => item.screenIndex == selectedIndex);
+      return index == -1 ? mobileNavItems.length - 1 : index;
+    }();
 
     Future<void> openDestination(WidgetBuilder builder) async {
       Navigator.of(
@@ -181,7 +189,14 @@ class AdminLayout extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
+      // Explicit rather than relying on Scaffold defaults: the FAB floats
+      // in its own overlay layer above the bottom nav (never reserves
+      // space in the body's layout flow), and the body never extends
+      // behind the nav bar, so there's no seam for a stray background
+      // band to appear between content and the nav bar.
+      extendBody: false,
       floatingActionButton: floatingActionButton,
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       body: isMobile
           ? Column(
               children: [
@@ -225,13 +240,13 @@ class AdminLayout extends ConsumerWidget {
             ),
       bottomNavigationBar: isMobile
           ? NavigationBar(
-              selectedIndex: mobileSelectedIndex(),
+              selectedIndex: mobileSelectedIndex,
               onDestinationSelected: (index) {
-                if (index == 4) {
+                if (index == mobileNavItems.length - 1) {
                   openMoreSheet();
                   return;
                 }
-                if (index == mobileSelectedIndex()) return;
+                if (index == mobileSelectedIndex) return;
                 final item = mobileNavItems[index];
                 if (item.builder != null) {
                   openDestination(item.builder!);

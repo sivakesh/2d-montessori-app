@@ -6,6 +6,7 @@ import '../../../core/config/app_env.dart';
 import '../../../core/services/profile_image_picker.dart';
 import '../../../core/widgets/responsive_dialog_shell.dart';
 import '../data/admin_profile_service.dart';
+import 'admin_fab.dart';
 import '../models/admin_profile_model.dart';
 
 class AdminProfileForm extends StatefulWidget {
@@ -590,11 +591,9 @@ class _AdminProfileFormState extends State<AdminProfileForm>
         Positioned(
           right: 20,
           bottom: 80,
-          child: FloatingActionButton(
-            backgroundColor: const Color(0xFF2E7D32),
-            elevation: 4,
+          child: AdminFab(
+            icon: Icons.add,
             onPressed: _openStudentLookup,
-            child: const Icon(Icons.add, color: Colors.white),
           ),
         ),
       ],
@@ -665,11 +664,9 @@ class _AdminProfileFormState extends State<AdminProfileForm>
           alignment: Alignment.centerRight,
           child: Padding(
             padding: const EdgeInsets.only(right: 16, top: 10),
-            child: FloatingActionButton(
-              backgroundColor: const Color(0xFF2E7D32),
-              elevation: 4,
+            child: AdminFab(
+              icon: Icons.add,
               onPressed: _openUploadDialog,
-              child: const Icon(Icons.add, color: Colors.white),
             ),
           ),
         ),

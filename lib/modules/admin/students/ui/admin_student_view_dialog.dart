@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/widgets/responsive_dialog_shell.dart';
+import '../../ui/admin_fab.dart';
 import '../data/admin_student_service.dart';
 import '../models/admin_student_model.dart';
 
@@ -473,10 +474,9 @@ class _AdminStudentViewDialogState extends State<AdminStudentViewDialog>
         Positioned(
           right: 20,
           bottom: 80,
-          child: FloatingActionButton(
-            backgroundColor: const Color(0xFF2E7D32),
+          child: AdminFab(
+            icon: Icons.add,
             onPressed: _openParentLookup,
-            child: const Icon(Icons.add, color: Colors.white),
           ),
         ),
       ],
