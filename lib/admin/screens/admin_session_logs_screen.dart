@@ -103,9 +103,7 @@ class _AdminSessionLogsScreenState extends ConsumerState<AdminSessionLogsScreen>
     return AdminLayout(
       selectedIndex: 9,
       title: 'Login & Logout Logs',
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: FutureBuilder<List<UserSessionLogModel>>(
+      body: FutureBuilder<List<UserSessionLogModel>>(
           future: _future,
           builder: (context, snapshot) {
             final logs = snapshot.data ?? const <UserSessionLogModel>[];
@@ -113,6 +111,7 @@ class _AdminSessionLogsScreenState extends ConsumerState<AdminSessionLogsScreen>
             final loading = snapshot.connectionState == ConnectionState.waiting;
 
             return SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -203,12 +202,12 @@ class _AdminSessionLogsScreenState extends ConsumerState<AdminSessionLogsScreen>
                       items: filtered,
                       formatDateTime: _formatDateTime,
                     ),
+                  const SizedBox(height: 24),
                 ],
               ),
             );
           },
         ),
-      ),
     );
   }
 }

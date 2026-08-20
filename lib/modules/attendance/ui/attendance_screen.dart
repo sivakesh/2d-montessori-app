@@ -553,6 +553,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   ) {
     return SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 40),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -743,6 +744,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     final dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 40),
       children: [
         Text(
           'Attendance History',
@@ -847,7 +849,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
           child: DefaultTabController(
             length: 2,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [

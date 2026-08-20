@@ -98,7 +98,7 @@ class StudentListScreenState extends ConsumerState<StudentListScreen> {
     final service = ref.watch(studentServiceProvider);
     final isAdmin = _isAdmin;
     final query = _searchController.text.trim().toLowerCase();
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -182,8 +182,7 @@ class StudentListScreenState extends ConsumerState<StudentListScreen> {
             },
           ),
           const SizedBox(height: 16),
-          Expanded(
-            child: FutureBuilder<List<QueryDocumentSnapshot<Map<String, dynamic>>>>(
+          FutureBuilder<List<QueryDocumentSnapshot<Map<String, dynamic>>>>(
               future: service.getAllStudents(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
@@ -224,6 +223,8 @@ class StudentListScreenState extends ConsumerState<StudentListScreen> {
                     }
 
                     return ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
                       itemCount: filteredDocs.length,
                       separatorBuilder: (_, _) => const SizedBox(height: 10),
                       itemBuilder: (context, index) {
@@ -244,7 +245,7 @@ class StudentListScreenState extends ConsumerState<StudentListScreen> {
                 );
               },
             ),
-          ),
+          const SizedBox(height: 24),
         ],
       ),
     );
