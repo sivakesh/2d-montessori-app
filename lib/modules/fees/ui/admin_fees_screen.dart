@@ -177,11 +177,9 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
           }
         },
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : LayoutBuilder(
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : LayoutBuilder(
                 builder: (context, constraints) {
                   final cardWidth = constraints.maxWidth >= 1200
                       ? (constraints.maxWidth - 32) / 3
@@ -189,6 +187,7 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
                           ? (constraints.maxWidth - 16) / 2
                           : constraints.maxWidth;
               return SingleChildScrollView(
+                    padding: const EdgeInsets.all(24),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -228,12 +227,12 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
                         ),
                         const SizedBox(height: 16),
                         _buildTab(),
+                        const SizedBox(height: 24),
                       ],
                     ),
                   );
                 },
               ),
-      ),
     );
   }
 

@@ -267,15 +267,18 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return AdminLayout(
       selectedIndex: 0,
       title: 'Admin Dashboard',
-      body: Padding(
-        padding: EdgeInsets.all(isMobile ? 16 : 24),
-        child: FutureBuilder<_DashboardData>(
+      body: FutureBuilder<_DashboardData>(
           future: _future,
           builder: (context, snapshot) {
             final data = snapshot.data;
             final loading = snapshot.connectionState == ConnectionState.waiting;
             return SingleChildScrollView(
-              padding: EdgeInsets.only(bottom: isMobile ? 24 : 0),
+              padding: EdgeInsets.fromLTRB(
+                isMobile ? 16 : 24,
+                isMobile ? 16 : 24,
+                isMobile ? 16 : 24,
+                isMobile ? 40 : 24,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -378,7 +381,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             );
           },
         ),
-      ),
     );
   }
 

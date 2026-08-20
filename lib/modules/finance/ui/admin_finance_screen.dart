@@ -125,10 +125,9 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
                 }
               },
             ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
-        child: SingleChildScrollView(
-          child: Column(
+        child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('Finance', style: Theme.of(context).textTheme.headlineSmall),
@@ -148,9 +147,9 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
               ),
               const SizedBox(height: 20),
               _buildBody(),
+              const SizedBox(height: 24),
             ],
           ),
-        ),
       ),
     );
   }

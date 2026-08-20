@@ -156,7 +156,7 @@ class _AdminStudentsScreenState extends State<AdminStudentsScreen> {
         icon: Icons.add,
         onPressed: () => _openForm(),
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -230,32 +230,37 @@ class _AdminStudentsScreenState extends State<AdminStudentsScreen> {
               ),
             ),
             const SizedBox(height: 20),
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : filtered.isEmpty
-                      ? const _StudentsEmptyState()
-                      : ListView.builder(
-                          itemCount: filtered.length,
-                          itemBuilder: (context, index) {
-                            final doc = filtered[index];
-                            final data = doc.data();
-                            final student = AdminStudentModel.fromMap(doc.id, data);
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: _StudentRow(
-                                name: student.name,
-                                admissionNo: student.admissionNo,
-                                className: _classNameFor(student.classId),
-                                isActive: student.isActive,
-                                onView: () => _openView(doc.id),
-                                onEdit: () => _openForm(studentId: doc.id, initialData: data),
-                                onDelete: () => _deleteStudent(doc.id),
-                              ),
-                            );
-                          },
-                        ),
-            ),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 40),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (filtered.isEmpty)
+              const _StudentsEmptyState()
+            else
+              ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: filtered.length,
+                itemBuilder: (context, index) {
+                  final doc = filtered[index];
+                  final data = doc.data();
+                  final student = AdminStudentModel.fromMap(doc.id, data);
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _StudentRow(
+                      name: student.name,
+                      admissionNo: student.admissionNo,
+                      className: _classNameFor(student.classId),
+                      isActive: student.isActive,
+                      onView: () => _openView(doc.id),
+                      onEdit: () => _openForm(studentId: doc.id, initialData: data),
+                      onDelete: () => _deleteStudent(doc.id),
+                    ),
+                  );
+                },
+              ),
+            const SizedBox(height: 24),
           ],
         ),
       ),

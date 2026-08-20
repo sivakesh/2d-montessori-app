@@ -76,7 +76,7 @@ class ClassListScreenState extends State<ClassListScreen> {
   @override
   Widget build(BuildContext context) {
     final query = _searchController.text.trim().toLowerCase();
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -121,17 +121,22 @@ class ClassListScreenState extends State<ClassListScreen> {
             onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 20),
-          Expanded(
-            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
               stream: _service.watchClasses(),
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
-                  return Center(
-                    child: Text('Failed to load classes: ${snapshot.error}'),
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 40),
+                    child: Center(
+                      child: Text('Failed to load classes: ${snapshot.error}'),
+                    ),
                   );
                 }
                 if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 40),
+                    child: Center(child: CircularProgressIndicator()),
+                  );
                 }
 
                 final docs = snapshot.data!.docs.where((doc) {
@@ -147,6 +152,8 @@ class ClassListScreenState extends State<ClassListScreen> {
                 }
 
                 return ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
                   itemCount: docs.length,
                   separatorBuilder: (_, _) => const SizedBox(height: 10),
                   itemBuilder: (context, index) {
@@ -168,7 +175,7 @@ class ClassListScreenState extends State<ClassListScreen> {
                 );
               },
             ),
-          ),
+          const SizedBox(height: 24),
         ],
       ),
     );

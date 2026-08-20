@@ -87,7 +87,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     return AdminLayout(
       selectedIndex: 1,
       title: 'Users',
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -111,20 +111,25 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
               onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 16),
-            Expanded(
-              child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                 stream: FirebaseFirestore.instance
                     .collection('users')
                     .orderBy('createdAt', descending: true)
                     .snapshots(),
                 builder: (context, snapshot) {
                   if (snapshot.hasError) {
-                    return Center(
-                      child: Text('Failed to load users: ${snapshot.error}'),
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 40),
+                      child: Center(
+                        child: Text('Failed to load users: ${snapshot.error}'),
+                      ),
                     );
                   }
                   if (!snapshot.hasData) {
-                    return const Center(child: CircularProgressIndicator());
+                    return const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 40),
+                      child: Center(child: CircularProgressIndicator()),
+                    );
                   }
 
                   final docs = snapshot.data!.docs.where((doc) {
@@ -147,6 +152,8 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                   }
 
                   return ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
                     itemCount: docs.length,
                     itemBuilder: (context, index) {
                       final doc = docs[index];
@@ -181,7 +188,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                   );
                 },
               ),
-            ),
+            const SizedBox(height: 24),
           ],
         ),
       ),
