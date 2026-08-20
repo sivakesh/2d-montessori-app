@@ -1,8 +1,10 @@
 // ignore_for_file: deprecated_member_use
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../services/user_session_log_service.dart';
+import '../../auth/providers/auth_provider.dart';
 import '../../fees/services/fee_service.dart';
 import '../../fees/ui/admin_fees_screen.dart';
 import '../../finance/ui/admin_finance_screen.dart';
@@ -19,6 +21,40 @@ class AdminDashboardScreen extends StatefulWidget {
 
   @override
   State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
+}
+
+/// Guards direct navigation (e.g. the '/admin_dashboard' route) so Staff
+/// cannot reach the Admin console even without going through the sidebar.
+class _AdminAccessRestrictedScreen extends StatelessWidget {
+  const _AdminAccessRestrictedScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Admin')),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.lock_outline, size: 48, color: Colors.grey),
+              const SizedBox(height: 12),
+              const Text(
+                'You do not have access to this section.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+                child: const Text('Go Back'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
@@ -208,6 +244,18 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return Consumer(
+      builder: (context, ref, _) {
+        final role = ref.watch(currentUserProvider)?.role.toLowerCase();
+        if (role != 'admin') {
+          return const _AdminAccessRestrictedScreen();
+        }
+        return _buildAdminDashboard(context);
+      },
+    );
+  }
+
+  Widget _buildAdminDashboard(BuildContext context) {
     return AdminLayout(
       selectedIndex: 0,
       title: 'Admin Dashboard',

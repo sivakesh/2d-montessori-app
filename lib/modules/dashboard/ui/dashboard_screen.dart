@@ -37,6 +37,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   List<_DashboardMetric> _metrics = const [];
   List<MoodCheckinModel> _recentMoodCheckins = const [];
   final Map<String, String> _classNames = {};
+  final _classListKey = GlobalKey<ClassListScreenState>();
+  final _studentListKey = GlobalKey<StudentListScreenState>();
 
   @override
   void initState() {
@@ -471,6 +473,25 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
+    final isAdmin = user.role.toLowerCase() == 'admin';
+    final Widget? fab = !isAdmin
+        ? null
+        : selectedIndex == 1
+        ? FloatingActionButton(
+            backgroundColor: const Color(0xFF2E7D32),
+            elevation: 4,
+            onPressed: () => _classListKey.currentState?.openAddClass(),
+            child: const Icon(Icons.add, color: Colors.white),
+          )
+        : selectedIndex == 2
+        ? FloatingActionButton(
+            backgroundColor: const Color(0xFF2E7D32),
+            elevation: 4,
+            onPressed: () => _studentListKey.currentState?.openAddStudent(),
+            child: const Icon(Icons.add, color: Colors.white),
+          )
+        : null;
+
     final dashboardContent = SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
       child: Padding(
@@ -602,11 +623,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     return ResponsiveLayout(
       mobile: Scaffold(
         backgroundColor: Colors.grey[50],
+        floatingActionButton: fab,
         appBar: AppBar(
           centerTitle: false,
           title: const Text('Dashboard'),
           actions: [
-            if (user.role.toLowerCase() == 'admin')
+            if (isAdmin)
               IconButton(
                 icon: const Icon(Icons.admin_panel_settings),
                 onPressed: () =>
@@ -631,8 +653,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               onRefresh: _loadDashboardData,
               child: dashboardContent,
             ),
-            1 => const ClassListScreen(readOnly: true),
-            2 => const StudentListScreen(),
+            1 => ClassListScreen(key: _classListKey, readOnly: !isAdmin),
+            2 => StudentListScreen(key: _studentListKey),
             3 => const AttendanceScreen(),
             _ => RefreshIndicator(
               onRefresh: _loadDashboardData,
@@ -647,6 +669,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       ),
       web: Scaffold(
         backgroundColor: Colors.grey[50],
+        floatingActionButton: fab,
         body: Row(
           children: [
             AppSidebar(
@@ -659,7 +682,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   AppBar(
                     title: const Text('Dashboard'),
                     actions: [
-                      if (user.role.toLowerCase() == 'admin')
+                      if (isAdmin)
                         IconButton(
                           icon: const Icon(Icons.admin_panel_settings),
                           onPressed: () => Navigator.of(
@@ -688,8 +711,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                         onRefresh: _loadDashboardData,
                         child: dashboardContent,
                       ),
-                      1 => const ClassListScreen(readOnly: true),
-                      2 => const StudentListScreen(),
+                      1 => ClassListScreen(key: _classListKey, readOnly: !isAdmin),
+                      2 => StudentListScreen(key: _studentListKey),
                       3 => const AttendanceScreen(),
                       _ => RefreshIndicator(
                         onRefresh: _loadDashboardData,

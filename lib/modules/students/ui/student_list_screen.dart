@@ -2,20 +2,31 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/config/app_env.dart';
+import '../../../core/theme/app_colors.dart';
 import '../../admin/models/admin_class_model.dart';
-import '../../admin/models/admin_student_model.dart';
+import '../../admin/students/data/admin_student_service.dart';
+import '../../admin/students/models/admin_student_model.dart';
+import '../../admin/students/ui/admin_student_view_dialog.dart';
+import '../../admin/ui/admin_student_form.dart';
+import '../../auth/providers/auth_provider.dart';
+import '../../finance/widgets/finance_status_chip.dart';
 import '../providers/student_provider.dart';
 
 class StudentListScreen extends ConsumerStatefulWidget {
   const StudentListScreen({super.key});
 
   @override
-  ConsumerState<StudentListScreen> createState() => _StudentListScreenState();
+  ConsumerState<StudentListScreen> createState() => StudentListScreenState();
 }
 
-class _StudentListScreenState extends ConsumerState<StudentListScreen> {
+class StudentListScreenState extends ConsumerState<StudentListScreen> {
   final _searchController = TextEditingController();
   final Set<String> _selectedClassIds = {};
+  final _adminService = AdminStudentService();
+
+  bool get _isAdmin =>
+      (ref.read(currentUserProvider)?.role ?? '').toLowerCase() == 'admin';
 
   @override
   void dispose() {
@@ -23,16 +34,105 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
     super.dispose();
   }
 
+  Future<void> openAddStudent() async {
+    if (!_isAdmin) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const AdminStudentForm()),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _editStudent(String studentId, Map<String, dynamic> data) async {
+    if (!_isAdmin) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AdminStudentForm(studentId: studentId, initialData: data),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _viewStudent(String studentId) async {
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AdminStudentViewDialog(
+        studentId: studentId,
+        readOnly: !_isAdmin,
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<bool> _confirmDelete() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete student?'),
+        content: const Text('This action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
+  Future<void> _deleteStudent(String studentId) async {
+    if (!_isAdmin) return;
+    if (!await _confirmDelete()) return;
+    await _adminService.deleteStudent(studentId);
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final service = ref.watch(studentServiceProvider);
+    final isAdmin = _isAdmin;
     final query = _searchController.text.trim().toLowerCase();
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Students', style: Theme.of(context).textTheme.headlineSmall),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Students',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Search, filter, and view student profiles.',
+                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+              if (isAdmin && currentEnvironment == AppEnvironment.dev)
+                TextButton.icon(
+                  onPressed: () async {
+                    await _adminService.seedSampleStudents();
+                    if (mounted) setState(() {});
+                  },
+                  icon: const Icon(Icons.auto_awesome),
+                  label: const Text('Seed Sample'),
+                ),
+            ],
+          ),
           const SizedBox(height: 16),
           TextField(
             controller: _searchController,
@@ -110,7 +210,7 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
                 }).toList();
 
                 if (filteredDocs.isEmpty) {
-                  return const Center(child: Text('No students available.'));
+                  return const _StudentsEmptyState();
                 }
 
                 return FutureBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -125,36 +225,18 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
 
                     return ListView.separated(
                       itemCount: filteredDocs.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 12),
+                      separatorBuilder: (_, _) => const SizedBox(height: 10),
                       itemBuilder: (context, index) {
                         final doc = filteredDocs[index];
                         final data = doc.data();
                         final student = AdminStudentModel.fromMap(doc.id, data);
-                        final gender = data['gender']?.toString() ?? '-';
-                        final age = data['age']?.toString() ?? data['studentAge']?.toString() ?? '';
-                        return Card(
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              child: Text(
-                                student.name.isNotEmpty ? student.name[0].toUpperCase() : '?',
-                              ),
-                            ),
-                            title: Text(student.name),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text('Admission No: ${data['admissionNo']?.toString() ?? '-'}'),
-                                Text('Class: ${classMap[student.classId] ?? '-'}'),
-                                Text('Gender: $gender'),
-                                if (age.isNotEmpty) Text('Age: $age'),
-                              ],
-                            ),
-                          ),
+                        return _StudentRow(
+                          model: student,
+                          className: classMap[student.classId] ?? '-',
+                          showActions: isAdmin,
+                          onView: () => _viewStudent(doc.id),
+                          onEdit: () => _editStudent(doc.id, data),
+                          onDelete: () => _deleteStudent(doc.id),
                         );
                       },
                     );
@@ -162,6 +244,143 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
                 );
               },
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Compact student row matching the shared card style established for
+/// Classes/Finance/Attendance/Users. [showActions] hides Edit/Delete for
+/// Staff while View remains available to everyone.
+class _StudentRow extends StatelessWidget {
+  const _StudentRow({
+    required this.model,
+    required this.className,
+    required this.showActions,
+    required this.onView,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final AdminStudentModel model;
+  final String className;
+  final bool showActions;
+  final VoidCallback onView;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitle = [model.admissionNo, className]
+        .where((v) => v.isNotEmpty && v != '-')
+        .join(' • ');
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 20,
+            backgroundColor: AppColors.primary.withValues(alpha: 0.1),
+            child: Text(
+              model.name.isNotEmpty ? model.name[0].toUpperCase() : '?',
+              style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.primary),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  model.name.isEmpty ? 'Student' : model.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.textPrimary),
+                ),
+                if (subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  ),
+                ],
+                const SizedBox(height: 6),
+                FinanceStatusChip(
+                  label: model.isActive ? 'ACTIVE' : 'INACTIVE',
+                  color: model.isActive ? AppColors.primary : Colors.grey,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Wrap(
+            spacing: 2,
+            children: [
+              IconButton(
+                tooltip: 'View',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.visibility_outlined, size: 20),
+                onPressed: onView,
+              ),
+              if (showActions) ...[
+                IconButton(
+                  tooltip: 'Edit',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.edit_outlined, size: 20),
+                  onPressed: onEdit,
+                ),
+                IconButton(
+                  tooltip: 'Delete',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.delete_outline, size: 20, color: Color(0xFFD32F2F)),
+                  onPressed: onDelete,
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StudentsEmptyState extends StatelessWidget {
+  const _StudentsEmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.school_outlined, size: 36, color: AppColors.textSecondary.withValues(alpha: 0.6)),
+          const SizedBox(height: 12),
+          const Text(
+            'No students found',
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: AppColors.textPrimary),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'No students match your current search or filters.',
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
           ),
         ],
       ),

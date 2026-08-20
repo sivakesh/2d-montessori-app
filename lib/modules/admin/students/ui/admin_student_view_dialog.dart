@@ -8,9 +8,18 @@ import '../data/admin_student_service.dart';
 import '../models/admin_student_model.dart';
 
 class AdminStudentViewDialog extends StatefulWidget {
-  const AdminStudentViewDialog({super.key, required this.studentId});
+  const AdminStudentViewDialog({
+    super.key,
+    required this.studentId,
+    this.readOnly = false,
+  });
 
   final String studentId;
+
+  /// When true, hides parent-linking and document management mutations
+  /// (used when Staff opens the shared Student View from the main
+  /// Students screen). Admin section usage is unaffected.
+  final bool readOnly;
 
   @override
   State<AdminStudentViewDialog> createState() => _AdminStudentViewDialogState();
@@ -443,6 +452,9 @@ class _AdminStudentViewDialogState extends State<AdminStudentViewDialog>
   }
 
   Widget _buildParentsTab(AdminStudentModel student) {
+    if (widget.readOnly) {
+      return _buildParentList();
+    }
     return Stack(
       children: [
         Column(
@@ -490,35 +502,37 @@ class _AdminStudentViewDialogState extends State<AdminStudentViewDialog>
           child: ListTile(
             title: Text(parent['name']?.toString() ?? ''),
             subtitle: Text(parent['email']?.toString() ?? ''),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButton<String>(
-                  value: relation,
-                  items: const [
-                    DropdownMenuItem(value: 'Father', child: Text('Father')),
-                    DropdownMenuItem(value: 'Mother', child: Text('Mother')),
-                    DropdownMenuItem(value: 'Guardian', child: Text('Guardian')),
-                  ],
-                  onChanged: (val) {
-                    if (val == null) return;
-                    setState(() {
-                      parent['relation'] = val;
-                      selectedRelations[userId] = val;
-                    });
-                  },
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete),
-                  onPressed: () {
-                    setState(() {
-                      selectedRelations.remove(userId);
-                      linkedParents.removeAt(index);
-                    });
-                  },
-                ),
-              ],
-            ),
+            trailing: widget.readOnly
+                ? Text(relation, style: const TextStyle(fontWeight: FontWeight.w600))
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      DropdownButton<String>(
+                        value: relation,
+                        items: const [
+                          DropdownMenuItem(value: 'Father', child: Text('Father')),
+                          DropdownMenuItem(value: 'Mother', child: Text('Mother')),
+                          DropdownMenuItem(value: 'Guardian', child: Text('Guardian')),
+                        ],
+                        onChanged: (val) {
+                          if (val == null) return;
+                          setState(() {
+                            parent['relation'] = val;
+                            selectedRelations[userId] = val;
+                          });
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete),
+                        onPressed: () {
+                          setState(() {
+                            selectedRelations.remove(userId);
+                            linkedParents.removeAt(index);
+                          });
+                        },
+                      ),
+                    ],
+                  ),
           ),
         );
       },
@@ -551,10 +565,11 @@ class _AdminStudentViewDialogState extends State<AdminStudentViewDialog>
                                 icon: const Icon(Icons.open_in_new),
                                 onPressed: () => _openDocument(doc.url),
                               ),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline),
-                                onPressed: () => _deleteDocument(doc.url),
-                              ),
+                              if (!widget.readOnly)
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline),
+                                  onPressed: () => _deleteDocument(doc.url),
+                                ),
                             ],
                           ),
                         ),
@@ -562,22 +577,24 @@ class _AdminStudentViewDialogState extends State<AdminStudentViewDialog>
                     },
                   ),
           ),
-          TextField(
-            controller: _docNameController,
-            decoration: const InputDecoration(
-              labelText: 'Document Name',
-              prefixIcon: Icon(Icons.drive_file_rename_outline),
+          if (!widget.readOnly) ...[
+            TextField(
+              controller: _docNameController,
+              decoration: const InputDecoration(
+                labelText: 'Document Name',
+                prefixIcon: Icon(Icons.drive_file_rename_outline),
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: FilledButton.icon(
-              onPressed: _uploadDocument,
-              icon: const Icon(Icons.upload_file),
-              label: const Text('Upload'),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.icon(
+                onPressed: _uploadDocument,
+                icon: const Icon(Icons.upload_file),
+                label: const Text('Upload'),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
