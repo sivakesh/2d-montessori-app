@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_sizes.dart';
 import '../../../core/widgets/responsive_dialog_shell.dart';
 import '../../admin/ui/admin_fab.dart';
 import '../../admin/ui/admin_layout.dart';
@@ -214,7 +215,7 @@ class _DashboardTab extends StatelessWidget {
               builder: (context, salaryInvoicesSnap) {
                 final outstanding = _outstandingTotal(expenseInvoicesSnap.data) + _outstandingTotal(salaryInvoicesSnap.data);
                 return Padding(
-                  padding: const EdgeInsets.only(bottom: 96),
+                  padding: const EdgeInsets.only(bottom: AppSizes.fabScrollClearance),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -1214,6 +1215,9 @@ class _LedgerTab extends StatelessWidget {
                             ))
                         .toList(),
                   ),
+                // Reserves clearance so the last transaction can scroll
+                // fully clear of the floating "Add" FAB.
+                const SizedBox(height: AppSizes.fabScrollClearance),
               ],
             );
           },
@@ -1303,6 +1307,9 @@ class _SettingsTab extends StatelessWidget {
             );
           },
         ),
+        // Reserves clearance so the last account can scroll fully clear
+        // of the floating "Add" FAB.
+        const SizedBox(height: AppSizes.fabScrollClearance),
       ],
     );
   }

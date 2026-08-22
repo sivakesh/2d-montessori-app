@@ -97,6 +97,63 @@ class AttendanceService {
   String dateKeyFor(DateTime date) =>
       DateFormat('yyyy-MM-dd').format(date.toLocal());
 
+  /// Direct-by-ID read of a single entity's attendance for one day (default
+  /// today), reusing the same deterministic `{date}_{entityType}_{entityId}`
+  /// document id every write path above already uses. Read-only — added for
+  /// the Parent dashboard so it can look up one child's attendance without a
+  /// broad query, and does not affect the write paths above.
+  Future<Map<String, dynamic>?> getAttendanceForEntity({
+    required String entityType,
+    required String entityId,
+    DateTime? date,
+  }) async {
+    final dateKey = dateKeyFor(date ?? DateTime.now());
+    final doc = await _attendance
+        .doc(_attendanceId(dateKey, entityType, entityId))
+        .get();
+    return doc.exists ? doc.data() : null;
+  }
+
+  /// Read-only, single-entity attendance history for the last [days] days
+  /// (today inclusive), for the Parent attendance history view. Reuses the
+  /// exact same deterministic `{date}_{entityType}_{entityId}` document id
+  /// every write path above already uses, so it can fetch exactly one
+  /// entity's recent days in a single `whereIn` query instead of
+  /// [getAttendanceHistoryMap]'s broad date-range scan across every entity
+  /// (which would require filtering other students/staff back out in the
+  /// UI). Capped at 30 — Firestore's `whereIn` clause limit — which also
+  /// matches the "recent attendance" window a Parent view needs; days with
+  /// no record come back as `status: 'not_marked'` rather than being
+  /// omitted, so the caller always gets one entry per day.
+  Future<List<Map<String, dynamic>>> getAttendanceHistoryForEntity({
+    required String entityType,
+    required String entityId,
+    int days = 30,
+  }) async {
+    assert(days > 0 && days <= 30);
+    final today = DateTime.now();
+    final dateKeys = [
+      for (var i = 0; i < days; i++)
+        dateKeyFor(today.subtract(Duration(days: i))),
+    ];
+    final ids = [
+      for (final dateKey in dateKeys)
+        _attendanceId(dateKey, entityType, entityId),
+    ];
+    final snap = await _attendance
+        .where(FieldPath.documentId, whereIn: ids)
+        .get();
+    final byId = {for (final doc in snap.docs) doc.id: doc.data()};
+
+    return [
+      for (var i = 0; i < dateKeys.length; i++)
+        if (byId[ids[i]] != null)
+          byId[ids[i]]!
+        else
+          {'date': dateKeys[i], 'status': 'not_marked'},
+    ];
+  }
+
   DateTime getAcademicYearStart(DateTime today) {
     if (today.month >= 6) {
       return DateTime(today.year, 6, 1);

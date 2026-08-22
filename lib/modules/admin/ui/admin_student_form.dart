@@ -13,15 +13,87 @@ import '../../../core/theme/app_colors.dart';
 import '../students/data/admin_student_service.dart';
 import '../students/models/admin_student_model.dart';
 
+/// The exact, and only, set of values the Parents tab's "Relationship"
+/// DropdownButtonFormField ever offers as items (see its `items:` list in
+/// `_buildParentsTab`). Public (not `_`-prefixed) — like
+/// `computeAttendanceSummary` in admin_attendance_management_screen.dart —
+/// so [sanitizeParentRelation] and [normalizeParentLinks] can be unit
+/// tested directly without needing Firebase/widget setup.
+const relationOptions = <String>['Father', 'Mother', 'Guardian', 'Other'];
+
+/// Whether [raw] is one of [relationOptions]. Falls back to 'Guardian' for
+/// anything else — missing, empty, a legacy value no longer offered, or
+/// (the root cause of the production crash this fixes) a stray parent user
+/// id that ended up stored in the `relation` field. This never discards
+/// the parent link itself (id/name/email/phone are untouched elsewhere);
+/// it only ever corrects the relationship label so the Relationship
+/// dropdown's value always has a matching item.
+String sanitizeParentRelation(dynamic raw) {
+  final value = raw?.toString() ?? '';
+  return relationOptions.contains(value) ? value : 'Guardian';
+}
+
+/// Normalizes a student document's raw `parentLinks` array into the form's
+/// editable state. Two corrections are applied here — at the single point
+/// raw Firestore data enters the form — so every downstream read
+/// (the resolved display list, the Relationship dropdown, and the save
+/// flow, which re-persists whatever is in this normalized state) sees
+/// already-valid data:
+///
+/// - `relation` is sanitized via [sanitizeParentRelation] instead of
+///   merely checked for presence, which is what let an invalid value
+///   (e.g. a raw id) reach the Relationship DropdownButtonFormField's
+///   `initialValue` and crash with "There should be exactly one item with
+///   DropdownButton's value: ...".
+/// - entries are deduplicated by the stable parent identifier (`userId` in
+///   Firestore, `id` here) rather than left as-is. The Parents tab's "add"
+///   action only guards against adding a duplicate within one already-
+///   loaded form session; it can't prevent two concurrent admin sessions
+///   (or an older app version, or a manual data edit) from having
+///   previously written the same parent into `parentLinks` twice.
+///   Re-saving an unresolved duplicate would also create a second
+///   `user_student_links` document for the same (userId, studentId) pair.
+///   The first occurrence is kept since it reflects the earliest/original
+///   link.
+List<Map<String, dynamic>> normalizeParentLinks(dynamic rawLinks) {
+  final seenIds = <String>{};
+  return (rawLinks as List<dynamic>? ?? const [])
+      .whereType<Map>()
+      .map((e) {
+        final map = Map<String, dynamic>.from(e);
+        return {
+          'id': map['userId'] ?? map['id'],
+          'name': map['name'] ?? '',
+          'email': map['email'] ?? '',
+          'phone': map['phone'] ?? '',
+          'relation': sanitizeParentRelation(map['relation']),
+          'linkedAt': map['linkedAt'],
+        };
+      })
+      .where((e) => (e['id']?.toString() ?? '').isNotEmpty)
+      .where((e) => seenIds.add(e['id'].toString()))
+      .toList();
+}
+
 class AdminStudentForm extends StatefulWidget {
   const AdminStudentForm({
     super.key,
     this.studentId,
     this.initialData,
+    this.service,
+    this.firestore,
   });
 
   final String? studentId;
   final Map<String, dynamic>? initialData;
+
+  /// Overridable only so tests can inject a fake-Firestore-backed
+  /// AdminStudentService/FirebaseFirestore — the same DI seam every other
+  /// service in this codebase (AttendanceService, ParentService,
+  /// AdminNotificationService, ...) already exposes. Production callers
+  /// never pass these.
+  final AdminStudentService? service;
+  final FirebaseFirestore? firestore;
 
   @override
   State<AdminStudentForm> createState() => _AdminStudentFormState();
@@ -31,7 +103,8 @@ class _AdminStudentFormState extends State<AdminStudentForm>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
   final _formKey = GlobalKey<FormState>();
-  final _service = AdminStudentService();
+  late final _service = widget.service ?? AdminStudentService();
+  late final _firestore = widget.firestore ?? FirebaseFirestore.instance;
   final _picker = ImagePicker();
 
   final _nameController = TextEditingController();
@@ -110,7 +183,7 @@ class _AdminStudentFormState extends State<AdminStudentForm>
     _bloodGroupController.text = _selectedBloodGroup;
     _isActive = data['isActive'] != false;
     _profileImageUrl = data['profileImageUrl']?.toString() ?? '';
-    _parentLinks = _normalizeParentLinks(data['parentLinks']);
+    _parentLinks = normalizeParentLinks(data['parentLinks']);
     _documents = _normalizeDocuments(data['documents']);
     _loadClasses();
     _fetchUsers();
@@ -187,24 +260,6 @@ class _AdminStudentFormState extends State<AdminStudentForm>
     return _calculateAgeFromDob(dob?.toString() ?? '')?.toString() ?? '';
   }
 
-  List<Map<String, dynamic>> _normalizeParentLinks(dynamic rawLinks) {
-    return (rawLinks as List<dynamic>? ?? const [])
-        .whereType<Map>()
-        .map((e) {
-          final map = Map<String, dynamic>.from(e);
-          return {
-            'id': map['userId'] ?? map['id'],
-            'name': map['name'] ?? '',
-            'email': map['email'] ?? '',
-            'phone': map['phone'] ?? '',
-            'relation': map['relation'] ?? 'Guardian',
-            'linkedAt': map['linkedAt'],
-          };
-        })
-        .where((e) => (e['id']?.toString() ?? '').isNotEmpty)
-        .toList();
-  }
-
   Map<String, dynamic>? _findUserById(String userId) {
     for (final user in _allUsers) {
       if (user['id']?.toString() == userId) return user;
@@ -227,9 +282,7 @@ class _AdminStudentFormState extends State<AdminStudentForm>
         'phone': (parent['phone']?.toString().isNotEmpty ?? false)
             ? parent['phone']
             : resolved?['phone'] ?? '',
-        'relation': parent['relation']?.toString().isNotEmpty == true
-            ? parent['relation']
-            : 'Guardian',
+        'relation': sanitizeParentRelation(parent['relation']),
         'linkedAt': parent['linkedAt'],
       };
     }).toList();
@@ -255,7 +308,7 @@ class _AdminStudentFormState extends State<AdminStudentForm>
   }
 
   Future<void> _fetchUsers() async {
-    final snapshot = await FirebaseFirestore.instance
+    final snapshot = await _firestore
         .collection('users')
         .where('role', isEqualTo: 'parent')
         .get();
@@ -278,7 +331,7 @@ class _AdminStudentFormState extends State<AdminStudentForm>
     final studentId = widget.studentId;
     if (studentId == null) return;
 
-    final doc = await FirebaseFirestore.instance
+    final doc = await _firestore
         .collection('students')
         .doc(studentId)
         .get();
@@ -299,12 +352,56 @@ class _AdminStudentFormState extends State<AdminStudentForm>
     debugPrint('Loaded Documents: ${loadedDocs.length}');
   }
 
+  /// Loads the active classes for the Class dropdown, then reconciles the
+  /// student's own `_classId` (set from `initialData['classId']` in
+  /// `initState`, before this async call ever runs) against them.
+  ///
+  /// `getClasses()` only returns `isActive: true` classes, but a student's
+  /// stored `classId` can reference a class an admin later archived
+  /// (isActive: false, still exists) or genuinely deleted — student
+  /// records are never bulk-updated when a class is archived/deleted.
+  /// Passing that id straight through as the Class DropdownButtonFormField
+  /// `initialValue` while it's absent from `items` is exactly what threw
+  /// "There should be exactly one item with [DropdownButton]'s value:
+  /// ..." here — the same class of bug the Relationship dropdown had, on
+  /// a different dropdown/field.
   Future<void> _loadClasses() async {
     final classes = await _service.getClasses();
+    final activeIds = classes.map((c) => c.id).toSet();
+    final originalClassId = _classId;
+    final isMissingFromActiveClasses = originalClassId != null &&
+        originalClassId.isNotEmpty &&
+        !activeIds.contains(originalClassId);
+
+    // Resolved directly by id (bypassing the isActive filter) only when
+    // the student's own class isn't already among the active ones —
+    // covers both an archived class (isActive: false, still exists) and
+    // a genuinely deleted one (resolves to null).
+    final archivedClass = isMissingFromActiveClasses
+        ? await _service.getClassById(originalClassId)
+        : null;
+
+    // The class no longer exists at all — don't keep a dangling id the
+    // dropdown can never resolve. Falling back to null here lets the
+    // existing "Required" validator force the admin to explicitly pick a
+    // class before saving, instead of this silently reassigning the
+    // student to an arbitrary different one.
+    final resolvedClassId =
+        isMissingFromActiveClasses && archivedClass == null
+            ? null
+            : originalClassId;
+
     if (!mounted) return;
     safeSetState(() {
-      _classes = classes;
-      _classId ??= classes.isNotEmpty ? classes.first.id : null;
+      _classes = [...classes, ?archivedClass];
+      // Only a brand-new student (no classId at all yet) defaults to the
+      // first active class — matches the pre-existing Add Student
+      // behavior. An existing student's own class assignment (active,
+      // archived-but-existing, or now cleared because it was deleted) is
+      // never silently overwritten here.
+      _classId = (originalClassId == null || originalClassId.isEmpty)
+          ? (classes.isNotEmpty ? classes.first.id : null)
+          : resolvedClassId;
       _loading = false;
     });
   }
@@ -1022,19 +1119,15 @@ class _AdminStudentFormState extends State<AdminStudentForm>
                                       ),
                                     const SizedBox(height: 8),
                                     DropdownButtonFormField<String>(
-                                      initialValue: parent['relation']?.toString().isNotEmpty == true
-                                          ? parent['relation'].toString()
-                                          : 'Guardian',
+                                      initialValue: sanitizeParentRelation(parent['relation']),
                                       decoration: const InputDecoration(
                                         labelText: 'Relationship',
                                         border: OutlineInputBorder(),
                                         isDense: true,
                                       ),
-                                      items: const [
-                                        DropdownMenuItem(value: 'Father', child: Text('Father')),
-                                        DropdownMenuItem(value: 'Mother', child: Text('Mother')),
-                                        DropdownMenuItem(value: 'Guardian', child: Text('Guardian')),
-                                        DropdownMenuItem(value: 'Other', child: Text('Other')),
+                                      items: [
+                                        for (final option in relationOptions)
+                                          DropdownMenuItem(value: option, child: Text(option)),
                                       ],
                                       onChanged: (value) {
                                         if (value == null) return;

@@ -36,6 +36,20 @@ class AdminStudentService {
     return snapshot.docs;
   }
 
+  /// A single class by id, regardless of `isActive` — unlike [getClasses],
+  /// which only returns active classes. Used by the Student Edit form to
+  /// resolve a student's own `classId` when a class has been archived
+  /// (isActive: false) after the student was assigned to it, so that id
+  /// can still be shown/selected instead of being silently dropped.
+  /// Returns null if the class truly no longer exists.
+  Future<DocumentSnapshot<Map<String, dynamic>>?> getClassById(
+    String classId,
+  ) async {
+    if (classId.isEmpty) return null;
+    final doc = await _classes.doc(classId).get();
+    return doc.exists ? doc : null;
+  }
+
   Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> searchParentUsers(
     String query,
   ) async {

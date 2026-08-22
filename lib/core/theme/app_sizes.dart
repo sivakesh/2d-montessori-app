@@ -9,4 +9,10 @@ class AppSizes {
   /// already used by ResponsiveLayout and AdminLayout. Screens/dialogs
   /// should reuse this instead of hardcoding their own literal.
   static const double mobileBreakpoint = 800;
+
+  /// Extra bottom clearance a scrollable screen must reserve so its last
+  /// item can scroll fully clear of a floating AdminFab (which doesn't
+  /// reserve layout space of its own). Screens with a FAB should add this
+  /// to their trailing spacer instead of picking their own number.
+  static const double fabScrollClearance = 96;
 }

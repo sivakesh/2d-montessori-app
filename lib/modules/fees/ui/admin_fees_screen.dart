@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_sizes.dart';
 import '../../admin/ui/admin_fab.dart';
 import '../../admin/ui/admin_layout.dart';
 import '../models/fee_receipt_model.dart';
@@ -227,7 +228,9 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
                         ),
                         const SizedBox(height: 16),
                         _buildTab(),
-                        const SizedBox(height: 24),
+                        // Reserves clearance so the last row can scroll
+                        // fully clear of the floating "Add" FAB.
+                        const SizedBox(height: 24 + AppSizes.fabScrollClearance),
                       ],
                     ),
                   );

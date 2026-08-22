@@ -14,6 +14,7 @@ class ResponsiveDialogShell extends StatelessWidget {
     required this.desktopWidth,
     this.desktopHeight,
     this.desktopInsetPadding = const EdgeInsets.all(24),
+    this.mobileCompact = false,
     required this.child,
   });
 
@@ -46,6 +47,16 @@ class ResponsiveDialogShell extends StatelessWidget {
   final double desktopWidth;
   final double? desktopHeight;
   final EdgeInsets desktopInsetPadding;
+
+  /// Opt-in mobile presentation for short, content-sized forms (e.g. a
+  /// 2-field "Add Category" dialog). Instead of the default full-screen
+  /// Scaffold — appropriate for longer forms that actually fill the
+  /// screen — [child] is shown in a margin-inset [Dialog] that sizes to
+  /// its own content, so a short form doesn't leave a large empty area
+  /// below it. Defaults to false so every existing caller keeps today's
+  /// exact full-screen mobile behavior.
+  final bool mobileCompact;
+
   final Widget child;
 
   @override
@@ -54,6 +65,15 @@ class ResponsiveDialogShell extends StatelessWidget {
         MediaQuery.of(context).size.width < AppSizes.mobileBreakpoint;
 
     if (isMobile) {
+      if (mobileCompact) {
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 40,
+          ),
+          child: child,
+        );
+      }
       return Scaffold(body: SafeArea(child: child));
     }
 

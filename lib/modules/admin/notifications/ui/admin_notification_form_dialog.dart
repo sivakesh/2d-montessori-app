@@ -51,6 +51,7 @@ class _AdminNotificationFormDialogState extends State<AdminNotificationFormDialo
   static const _types = ['General Announcement','Circular','Reminder','Emergency Alert','Event Notice','Fee Reminder','Holiday Notice','Academic Notice','Attendance Notice','Exam Notice','Health & Safety','Transport Notice','Parent Meeting','Staff Notice','Public Notice','Other'];
   static const _cats = ['Academic','Administration','Admission','Finance','HR/Staff','Parent Communication','Compliance','Safety','Events','General'];
   static const _audiences = ['Parents','Staff','Public','Admin Only'];
+  static const _statuses = ['Draft','Scheduled','Published','Archived','Expired'];
   static const _visibilities = ['Admin Only','Staff','Parents','Public'];
   static const _priorities = ['Low','Normal','High','Urgent'];
   @override
@@ -437,6 +438,7 @@ class _AdminNotificationFormDialogState extends State<AdminNotificationFormDialo
               DropdownButtonFormField<String>(initialValue: _notificationType, items: _types.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(), onChanged: (v) => setState(() => _notificationType = v ?? _notificationType), decoration: const InputDecoration(labelText: 'Notification Type *')),
               DropdownButtonFormField<String>(initialValue: _category, items: _cats.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(), onChanged: (v) => setState(() => _category = v ?? _category), decoration: const InputDecoration(labelText: 'Category *')),
               DropdownButtonFormField<String>(initialValue: _priority, items: _priorities.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(), onChanged: (v) => setState(() => _priority = v ?? _priority), decoration: const InputDecoration(labelText: 'Priority *')),
+              DropdownButtonFormField<String>(initialValue: _status, items: _statuses.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(), onChanged: (v) => setState(() => _status = v ?? _status), decoration: const InputDecoration(labelText: 'Status *')),
               DropdownButtonFormField<String>(
                 initialValue: _audience,
                 items: _audiences.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),

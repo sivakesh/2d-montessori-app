@@ -22,6 +22,7 @@ import '../../mood_checkin/models/mood_option_model.dart';
 import '../../mood_checkin/providers/mood_checkin_provider.dart';
 import '../../mood_checkin/ui/mood_checkin_dialog.dart';
 import '../../mood_checkin/widgets/mood_option_chip.dart';
+import '../../notifications/ui/notifications_feed_screen.dart';
 import '../../students/providers/student_provider.dart';
 import '../../students/ui/student_list_screen.dart';
 
@@ -490,6 +491,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     }
 
     final isAdmin = user.role.toLowerCase() == 'admin';
+    // Mirrors AppBottomNav/AppSidebar's destination order (Dashboard,
+    // Classes, Students, Attendance) so the title always names the screen
+    // that's actually on screen instead of staying stuck on "Dashboard".
+    const tabTitles = ['Dashboard', 'Classes', 'Students', 'Attendance'];
+    final currentTitle = selectedIndex >= 0 && selectedIndex < tabTitles.length
+        ? tabTitles[selectedIndex]
+        : tabTitles[0];
     final Widget? fab = !isAdmin
         ? null
         : selectedIndex == 1
@@ -642,13 +650,25 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         floatingActionButton: fab,
         appBar: AppBar(
           centerTitle: false,
-          title: const Text('Dashboard'),
+          title: Text(currentTitle),
           actions: [
             if (isAdmin)
               IconButton(
                 icon: const Icon(Icons.admin_panel_settings),
                 onPressed: () =>
                     Navigator.of(context).pushNamed('/admin_dashboard'),
+              )
+            else
+              IconButton(
+                icon: const Icon(Icons.notifications_outlined),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => NotificationsFeedScreen.forStaff(
+                      title: 'Notifications',
+                      staffUserId: user.id,
+                    ),
+                  ),
+                ),
               ),
             IconButton(
               icon: const Icon(Icons.logout),
@@ -696,7 +716,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               child: Column(
                 children: [
                   AppBar(
-                    title: const Text('Dashboard'),
+                    title: Text(currentTitle),
                     actions: [
                       if (isAdmin)
                         IconButton(
@@ -704,6 +724,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                           onPressed: () => Navigator.of(
                             context,
                           ).pushNamed('/admin_dashboard'),
+                        )
+                      else
+                        IconButton(
+                          icon: const Icon(Icons.notifications_outlined),
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => NotificationsFeedScreen.forStaff(
+                                title: 'Notifications',
+                                staffUserId: user.id,
+                              ),
+                            ),
+                          ),
                         ),
                       IconButton(
                         icon: const Icon(Icons.logout),

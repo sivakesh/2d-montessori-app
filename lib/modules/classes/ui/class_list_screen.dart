@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/config/app_env.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_sizes.dart';
 import '../../admin/models/admin_class_model.dart';
 import '../../finance/widgets/finance_status_chip.dart';
 import '../data/class_service.dart';
@@ -175,7 +176,9 @@ class ClassListScreenState extends State<ClassListScreen> {
                 );
               },
             ),
-          const SizedBox(height: 24),
+          // Reserves clearance so the last class's actions can scroll
+          // fully clear of the floating "Add class" FAB (Admin only).
+          const SizedBox(height: 24 + AppSizes.fabScrollClearance),
         ],
       ),
     );

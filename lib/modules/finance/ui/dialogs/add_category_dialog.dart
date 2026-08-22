@@ -33,6 +33,7 @@ class _AddCategoryDialogState extends State<AddCategoryDialog> {
     return ResponsiveDialogShell(
       desktopWidth: 520,
       desktopHeight: 420,
+      mobileCompact: true,
       child: Form(
           key: _formKey,
           child: SingleChildScrollView(

@@ -27,6 +27,32 @@ class AdminNotificationService {
     return snap.docs.map((d) => AdminNotificationModel.fromMap(d.id, d.data())).toList();
   }
 
+  /// Published notifications for one consumer audience ('Parents' or
+  /// 'Staff'), for the read-only Parent/Staff notification feeds. A single
+  /// equality filter on `audience` — no `orderBy` — so this doesn't need a
+  /// composite index beyond what [getNotifications] already relies on;
+  /// `status` and sort order are applied client-side on the already-narrow
+  /// result, the same way [AttendanceService.filterByClasses] narrows by
+  /// one field server-side and refines further in Dart. Per-student/
+  /// per-staff targeting (`applicableStudentIds`/`applicableStaffIds`) is
+  /// intentionally left to the caller, since only it knows which specific
+  /// student/staff ids are relevant.
+  Future<List<AdminNotificationModel>> getNotificationsForAudience(
+    String audience,
+  ) async {
+    final snap = await _notifications.where('audience', isEqualTo: audience).get();
+    final items = snap.docs
+        .map((d) => AdminNotificationModel.fromMap(d.id, d.data()))
+        .where((n) => n.status == 'Published')
+        .toList();
+    items.sort((a, b) {
+      final aDate = a.publishDate ?? a.createdAt ?? DateTime(2000);
+      final bDate = b.publishDate ?? b.createdAt ?? DateTime(2000);
+      return bDate.compareTo(aDate);
+    });
+    return items;
+  }
+
   Future<PlatformFile?> pickAttachment() async {
     final res = await _filePicker.pickFiles(withData: true);
     if (res == null || res.files.isEmpty) return null;

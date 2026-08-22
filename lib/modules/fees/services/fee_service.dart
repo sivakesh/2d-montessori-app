@@ -53,6 +53,20 @@ class FeeService {
     return StudentFeeAssignmentModel.fromMap(snap.id, data);
   }
 
+  /// Assignments for one student, using the same `studentId` equality
+  /// filter already used inline elsewhere in this file (e.g. [assignFee]).
+  /// Read-only — added for the Parent dashboard so it can show one child's
+  /// fee summary without fetching every assignment in the school.
+  Future<List<StudentFeeAssignmentModel>> getAssignmentsForStudent(
+    String studentId,
+  ) async {
+    final snap = await _assignments.where('studentId', isEqualTo: studentId).get();
+    return snap.docs
+        .where((d) => d.data()['isDeleted'] != true)
+        .map((d) => StudentFeeAssignmentModel.fromMap(d.id, d.data()))
+        .toList();
+  }
+
   Future<List<FeeReceiptModel>> getReceipts() async {
     final snap = await _receipts.orderBy('createdAt', descending: true).get();
     return snap.docs
