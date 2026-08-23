@@ -28,19 +28,27 @@ class AdminNotificationService {
   }
 
   /// Published notifications for one consumer audience ('Parents' or
-  /// 'Staff'), for the read-only Parent/Staff notification feeds. A single
-  /// equality filter on `audience` — no `orderBy` — so this doesn't need a
-  /// composite index beyond what [getNotifications] already relies on;
-  /// `status` and sort order are applied client-side on the already-narrow
-  /// result, the same way [AttendanceService.filterByClasses] narrows by
-  /// one field server-side and refines further in Dart. Per-student/
-  /// per-staff targeting (`applicableStudentIds`/`applicableStaffIds`) is
-  /// intentionally left to the caller, since only it knows which specific
-  /// student/staff ids are relevant.
+  /// 'Staff'), for the read-only Parent/Staff notification feeds. `audience`
+  /// is matched against both the requested audience and 'Public' — a
+  /// Public-audience notification is meant to reach every authenticated
+  /// consumer, and since Parents/Staff each fetch their own audience-scoped
+  /// slice, without this a Public notification would never match either
+  /// slice's equality filter and would silently never appear anywhere
+  /// outside Admin. Still a single field filter (`whereIn`) — no
+  /// `orderBy` — so this doesn't need a composite index beyond what
+  /// [getNotifications] already relies on; `status` and sort order are
+  /// applied client-side on the already-narrow result, the same way
+  /// [AttendanceService.filterByClasses] narrows by one field server-side
+  /// and refines further in Dart. Per-student/per-staff targeting
+  /// (`applicableStudentIds`/`applicableStaffIds`) is intentionally left to
+  /// the caller, since only it knows which specific student/staff ids are
+  /// relevant.
   Future<List<AdminNotificationModel>> getNotificationsForAudience(
     String audience,
   ) async {
-    final snap = await _notifications.where('audience', isEqualTo: audience).get();
+    final snap = await _notifications
+        .where('audience', whereIn: [audience, 'Public'])
+        .get();
     final items = snap.docs
         .map((d) => AdminNotificationModel.fromMap(d.id, d.data()))
         .where((n) => n.status == 'Published')

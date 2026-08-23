@@ -17,11 +17,19 @@ import '../../admin/notifications/models/admin_notification_model.dart';
 /// itself never sets it true, but AdminNotificationService.
 /// seedSampleNotifications does, so both flags are honored to correctly
 /// match notifications authored either way.
+///
+/// A `Public`-audience notification (`_setPublic()` in the form) carries
+/// none of the above targeting flags — it clears them all, since Public
+/// targeting is orthogonal to class/student targeting — so it's checked
+/// first and short-circuits straight to relevant.
 bool isNotificationRelevantToParent(
   AdminNotificationModel notification, {
   required Set<String> childStudentIds,
   required Set<String> childClassIds,
 }) {
+  if (notification.audience == 'Public' || notification.isPublic) {
+    return true;
+  }
   if (notification.appliesToAllClasses || notification.appliesToAllStudents) {
     return true;
   }
@@ -38,11 +46,16 @@ bool isNotificationRelevantToParent(
 
 /// Whether a Staff-audience notification is relevant to the staff member
 /// with id [staffUserId]. Mirrors `_setStaffAll` (`appliesToAllStaff: true`)
-/// and `_setStaffSelected` (`applicableStaffIds`) from the same form.
+/// and `_setStaffSelected` (`applicableStaffIds`) from the same form. A
+/// `Public`-audience notification is checked first, same reasoning as
+/// [isNotificationRelevantToParent].
 bool isNotificationRelevantToStaff(
   AdminNotificationModel notification, {
   required String staffUserId,
 }) {
+  if (notification.audience == 'Public' || notification.isPublic) {
+    return true;
+  }
   if (notification.appliesToAllStaff) return true;
   if (staffUserId.isEmpty) return false;
   return notification.applicableStaffIds.contains(staffUserId);

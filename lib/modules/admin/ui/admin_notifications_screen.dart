@@ -12,14 +12,17 @@ import 'admin_fab.dart';
 import 'admin_layout.dart';
 
 class AdminNotificationsScreen extends StatefulWidget {
-  const AdminNotificationsScreen({super.key});
+  const AdminNotificationsScreen({super.key, AdminNotificationService? service})
+      : _service = service;
+
+  final AdminNotificationService? _service;
 
   @override
   State<AdminNotificationsScreen> createState() => _AdminNotificationsScreenState();
 }
 
 class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
-  final _service = AdminNotificationService();
+  late final _service = widget._service ?? AdminNotificationService();
   final _searchController = TextEditingController();
   String _type = 'All';
   String _category = 'All';
@@ -60,6 +63,54 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
       builder: (_) => AdminNotificationFormDialog(document: model),
     );
     await _load();
+  }
+
+  /// Archives (never hard-deletes) a notification — reuses the existing
+  /// `status` lifecycle the model, the Admin status filter, and the Parent/
+  /// Staff feed query (`status == 'Published'` only) already support, so
+  /// archiving instantly removes it from Parent/Staff/Public consumer feeds
+  /// while preserving the original document (and its attachment, if any)
+  /// for Admin history. Only touches this one notification's `status`/
+  /// `updatedAt` fields via [AdminNotificationService.archiveNotification]'s
+  /// merge write — no other document is read or written.
+  Future<void> _archiveNotification(AdminNotificationModel notification) async {
+    final title = notification.title.isEmpty ? 'this notification' : '"${notification.title}"';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Archive Notification'),
+        content: Text(
+          'Archive $title? It will no longer appear in Parent, Staff, or Public '
+          'notification feeds. This does not delete it — it stays visible to '
+          'Admin and can be found via the Archived status filter.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Archive'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await _service.archiveNotification(notification.id);
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Notification archived')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to archive notification: $e')),
+      );
+    }
   }
 
   List<String> _notificationTypeOptions() => const [
@@ -510,6 +561,7 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
                             builder: (_) => AdminNotificationViewDialog(notificationId: n.id),
                           ),
                           onEdit: () => _openForm(model: n),
+                          onArchive: () => _archiveNotification(n),
                         ),
                       );
                     },
@@ -542,19 +594,21 @@ class _FilterGroupLabel extends StatelessWidget {
 }
 
 /// Compact notification row matching the shared card style established
-/// for Finance/Attendance/Users/Students/Classes/Documents. Only View and
-/// Edit are exposed — delete/publish/archive were deliberately left out of
-/// the prior stabilization pass and are not added here.
+/// for Finance/Attendance/Users/Students/Classes/Documents. View, Edit, and
+/// Archive are exposed; Archive is hidden once a notification is already
+/// Archived, since re-archiving it is a no-op with nothing left to confirm.
 class _NotificationRow extends StatelessWidget {
   const _NotificationRow({
     required this.notification,
     required this.onView,
     required this.onEdit,
+    required this.onArchive,
   });
 
   final AdminNotificationModel notification;
   final VoidCallback onView;
   final VoidCallback onEdit;
+  final VoidCallback onArchive;
 
   @override
   Widget build(BuildContext context) {
@@ -630,6 +684,13 @@ class _NotificationRow extends StatelessWidget {
                 icon: const Icon(Icons.edit_outlined, size: 20),
                 onPressed: onEdit,
               ),
+              if (notification.status != 'Archived')
+                IconButton(
+                  tooltip: 'Archive',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.archive_outlined, size: 20, color: Color(0xFFD32F2F)),
+                  onPressed: onArchive,
+                ),
             ],
           ),
         ],
