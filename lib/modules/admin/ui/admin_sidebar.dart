@@ -69,6 +69,16 @@ class _AdminSidebarState extends State<AdminSidebar> {
       selectedIcon: Icons.login,
       label: 'Login Logs',
     ),
+    _SidebarDestination(
+      icon: Icons.bar_chart_outlined,
+      selectedIcon: Icons.bar_chart,
+      label: 'Reports',
+    ),
+    _SidebarDestination(
+      icon: Icons.settings_outlined,
+      selectedIcon: Icons.settings,
+      label: 'Settings',
+    ),
   ];
 
   @override

@@ -210,6 +210,15 @@ class AdminLayout extends ConsumerWidget {
                   selectedIndex: selectedIndex,
                   onDestinationSelected: (index) {
                     if (index == selectedIndex) return;
+                    // Reports and Settings have no screen yet, matching the
+                    // mobile "More Modules" sheet's placeholder behavior.
+                    if (index == 10 || index == 11) {
+                      final label = index == 10 ? 'Reports' : 'Settings';
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('$label is coming soon')),
+                      );
+                      return;
+                    }
                     final Widget destination = switch (index) {
                       0 => const AdminDashboardScreen(),
                       1 => const AdminUsersScreen(),
