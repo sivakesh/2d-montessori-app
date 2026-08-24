@@ -14,12 +14,15 @@ import '../../auth/data/user_service.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../../services/user_session_log_service.dart';
 import '../../admin/students/data/admin_student_service.dart';
+import '../../admin/ui/admin_attendance_management_screen.dart'
+    show resolveAttendanceDisplayStatus;
 import '../../attendance/providers/attendance_provider.dart';
 import '../../attendance/ui/attendance_screen.dart';
 import '../../calendar/ui/calendar_view.dart';
 import '../../classes/data/class_service.dart';
 import '../../classes/providers/class_provider.dart';
 import '../../classes/ui/class_list_screen.dart';
+import '../../leave/services/leave_service.dart';
 import '../../leave/ui/my_leave_view.dart';
 import '../../mood_checkin/models/mood_checkin_model.dart';
 import '../../mood_checkin/models/mood_option_model.dart';
@@ -37,6 +40,7 @@ class DashboardScreen extends ConsumerStatefulWidget {
     this.userSessionLogService,
     this.adminStudentService,
     this.classService,
+    this.leaveService,
   });
 
   /// Overridable only so tests can inject fake-Firestore-backed services —
@@ -48,11 +52,14 @@ class DashboardScreen extends ConsumerStatefulWidget {
   /// from initState, so an un-injected instance throws before the widget
   /// ever finishes mounting. adminStudentService/classService are passed
   /// through to the Students/Classes tabs for the same reason — those
-  /// screens construct their own services eagerly too.
+  /// screens construct their own services eagerly too. leaveService is the
+  /// same seam AttendanceScreen already exposes, needed here so the "Not
+  /// Marked Today" count can fold in approved Student Leave (ATT-06).
   final UserService? userService;
   final UserSessionLogService? userSessionLogService;
   final AdminStudentService? adminStudentService;
   final ClassService? classService;
+  final LeaveService? leaveService;
 
   @override
   ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
@@ -71,6 +78,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   late final _userService = widget.userService ?? UserService();
   late final _userSessionLogService =
       widget.userSessionLogService ?? UserSessionLogService();
+  late final _leaveService = widget.leaveService ?? LeaveService();
 
   @override
   void initState() {
@@ -88,15 +96,39 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       final classService = ref.read(classServiceProvider);
 
       final classes = await classService.getClasses();
+      // Already active-only: StudentService.getAllStudents and
+      // UserService.getStaffUsers both filter `isActive == true`
+      // server-side (staff additionally to the staff/teacher/admin_staff
+      // roles) — so these lists ARE the Total Students / Total Staff
+      // populations, with no further filtering needed here.
       final students = await studentService.getAllStudents();
       final staff = await _userService.getStaffUsers();
       final attendanceMap = await attendanceService.getTodayAttendanceMap();
-      final overview = await attendanceService.getAttendanceOverview();
       final moodCount = await moodService.getTodayMoodCheckinCount();
       final alertCount = await moodService.getTodayAlertCount();
       final recentMoodCheckins = await moodService.getLatestTodayMoodCheckins(
         limit: 5,
       );
+      // Best-effort, same fallback AttendanceScreen uses for the identical
+      // lookup: a failure to resolve on-leave students/staff must not block
+      // the dashboard from loading — it just means Not Marked Today
+      // temporarily can't exclude leave for this refresh.
+      Set<String> studentIdsOnLeave = {};
+      try {
+        studentIdsOnLeave = await _leaveService.getStudentIdsOnApprovedLeave(
+          DateTime.now().toLocal(),
+        );
+      } catch (_) {
+        studentIdsOnLeave = {};
+      }
+      Set<String> staffIdsOnLeave = {};
+      try {
+        staffIdsOnLeave = await _leaveService.getStaffIdsOnApprovedLeave(
+          DateTime.now().toLocal(),
+        );
+      } catch (_) {
+        staffIdsOnLeave = {};
+      }
 
       final classNames = <String, String>{
         for (final doc in classes)
@@ -106,46 +138,105 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         ..clear()
         ..addAll(classNames);
 
-      final activeStudents = students
-          .where((doc) => doc.data()['isActive'] == true)
-          .length;
-      const staffRoles = {'staff', 'teacher', 'admin_staff'};
-      final activeStaff = staff
-          .where((user) => staffRoles.contains(user.role.toLowerCase()))
-          .length;
-      final presentCount = overview.presentCount;
-      final absentCount = overview.absentCount;
-      final notMarked =
-          (activeStudents + activeStaff - presentCount - absentCount).clamp(
-            0,
-            99999,
-          );
-      final staffPresentToday = attendanceMap.values.where((record) {
-        final entityType = record['entityType']?.toString() ?? '';
-        final status = record['status']?.toString() ?? '';
-        return entityType == 'staff' && status == 'present';
-      }).length;
-      final studentPresentToday = attendanceMap.values.where((record) {
-        final entityType = record['entityType']?.toString() ?? '';
-        final status = record['status']?.toString() ?? '';
-        return entityType == 'student' && status == 'present';
-      }).length;
+      final totalStudents = students.length;
+      final totalStaff = staff.length;
+      final totalPeople = totalStudents + totalStaff;
+
+      // One pass per population resolves Present/Absent/On Leave/Not Marked
+      // together, via the same resolveAttendanceDisplayStatus helper the
+      // Attendance screen itself uses (ATT-01..05) — so this can never
+      // disagree with what Attendance shows, and Total = Present + Absent +
+      // On Leave + Not Marked holds by construction rather than by a
+      // separate "Total - Present" assumption. Present/Absent keep the
+      // exact status == 'present'/'absent' check this dashboard has always
+      // used, so those two counts are unchanged from before; only Not
+      // Marked's calculation changes, to stop miscounting an approved leave.
+      var studentsPresent = 0;
+      var studentsAbsent = 0;
+      var studentsOnLeave = 0;
+      var studentsNotMarked = 0;
+      for (final doc in students) {
+        final record = attendanceMap['student_${doc.id}'];
+        final display = resolveAttendanceDisplayStatus(
+          rawStatus: _dashboardRawStatus(record),
+          isOnApprovedLeave: studentIdsOnLeave.contains(doc.id),
+        );
+        switch (display) {
+          case 'present':
+            studentsPresent++;
+          case 'absent':
+            studentsAbsent++;
+          case 'on_leave':
+            studentsOnLeave++;
+          default:
+            studentsNotMarked++;
+        }
+      }
+
+      // Staff Leave -> Attendance is now wired (ATT-06 completion), the same
+      // resolveAttendanceDisplayStatus pipeline as Students, via
+      // LeaveService.getStaffIdsOnApprovedLeave.
+      var staffPresent = 0;
+      var staffAbsent = 0;
+      var staffOnLeave = 0;
+      var staffNotMarked = 0;
+      for (final user in staff) {
+        final record = attendanceMap['staff_${user.id}'];
+        final display = resolveAttendanceDisplayStatus(
+          rawStatus: _dashboardRawStatus(record),
+          isOnApprovedLeave: staffIdsOnLeave.contains(user.id),
+        );
+        switch (display) {
+          case 'present':
+            staffPresent++;
+          case 'absent':
+            staffAbsent++;
+          case 'on_leave':
+            staffOnLeave++;
+          default:
+            staffNotMarked++;
+        }
+      }
+
+      // Documents (and, in debug builds, enforces) the reconciliation rule
+      // ATT-06 requires — Total = Present + Absent + On Leave + Not Marked
+      // for each population — rather than assuming Not Marked = Total -
+      // Present, which would silently double-count an approved leave.
+      assert(
+        studentsPresent + studentsAbsent + studentsOnLeave + studentsNotMarked ==
+            totalStudents,
+      );
+      assert(
+        staffPresent + staffAbsent + staffOnLeave + staffNotMarked == totalStaff,
+      );
+
+      final notMarked = studentsNotMarked + staffNotMarked;
 
       final metrics = <_DashboardMetric>[
         _DashboardMetric(
           'Total Students',
-          activeStudents.toString(),
+          totalStudents.toString(),
           Icons.groups_outlined,
         ),
         _DashboardMetric(
-          'Staff Present Today',
-          staffPresentToday.toString(),
-          Icons.badge_outlined,
+          'Total Staff',
+          totalStaff.toString(),
+          Icons.people_outline,
+        ),
+        _DashboardMetric(
+          'Total People',
+          totalPeople.toString(),
+          Icons.diversity_3,
         ),
         _DashboardMetric(
           'Students Present Today',
-          studentPresentToday.toString(),
+          studentsPresent.toString(),
           Icons.verified_outlined,
+        ),
+        _DashboardMetric(
+          'Staff Present Today',
+          staffPresent.toString(),
+          Icons.badge_outlined,
         ),
         _DashboardMetric(
           'Not Marked Today',
@@ -178,6 +269,21 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     } finally {
       if (mounted) setState(() => _loadingMetrics = false);
     }
+  }
+
+  /// The dashboard's own, pre-existing present/absent convention — a plain
+  /// `status == 'present'`/`'absent'` check on the attendance record, with
+  /// no photo-based fallback (unlike AttendanceScreen's own richer
+  /// `_rawStatus`). Kept exactly as this dashboard already computed
+  /// Present Today before ATT-06, so those counts are unchanged; only fed
+  /// into [resolveAttendanceDisplayStatus] so Not Marked Today can also
+  /// fold in approved leave via that one shared helper.
+  String _dashboardRawStatus(Map<String, dynamic>? record) {
+    if (record == null) return 'not_marked';
+    final status = record['status']?.toString() ?? '';
+    if (status == 'present') return 'present';
+    if (status == 'absent') return 'absent';
+    return 'not_marked';
   }
 
   String _formatDate(DateTime date) {

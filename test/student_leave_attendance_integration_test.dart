@@ -158,6 +158,183 @@ void main() {
     });
   });
 
+  // ATT-02: Attendance History's range-based sibling of
+  // getStudentIdsOnApprovedLeave — resolves an entire displayed week from
+  // one getAllStudentLeaveRequests query instead of one call per date.
+  group('LeaveService.getStudentIdsOnApprovedLeaveForRange', () {
+    test('an approved leave on the exact historical date is included for that date', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      final id = await service.submitStudentLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Teacher Priya',
+        requesterRole: LeaveRequesterRole.staff,
+        studentId: 'student-1',
+        studentName: 'Aarav',
+        leaveType: LeaveType.sick,
+        startDate: DateTime(2026, 8, 24),
+        endDate: DateTime(2026, 8, 24),
+        reason: 'Fever',
+      );
+      await service.approveLeaveRequest(id, reviewedBy: 'admin-1');
+
+      final result = await service.getStudentIdsOnApprovedLeaveForRange(
+        startDate: DateTime(2026, 8, 24),
+        endDate: DateTime(2026, 8, 30),
+      );
+
+      expect(result['2026-08-24'], contains('student-1'));
+    });
+
+    test('an approved leave spanning multiple historical dates shows on every covered date', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      final id = await service.submitStudentLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Teacher Priya',
+        requesterRole: LeaveRequesterRole.staff,
+        studentId: 'student-1',
+        studentName: 'Aarav',
+        leaveType: LeaveType.sick,
+        startDate: DateTime(2026, 8, 24),
+        endDate: DateTime(2026, 8, 26),
+        reason: 'Fever',
+      );
+      await service.approveLeaveRequest(id, reviewedBy: 'admin-1');
+
+      final result = await service.getStudentIdsOnApprovedLeaveForRange(
+        startDate: DateTime(2026, 8, 24),
+        endDate: DateTime(2026, 8, 30),
+      );
+
+      expect(result['2026-08-23'], isNull);
+      expect(result['2026-08-24'], contains('student-1'));
+      expect(result['2026-08-25'], contains('student-1'));
+      expect(result['2026-08-26'], contains('student-1'));
+      expect(result['2026-08-27'], isNull);
+    });
+
+    test('a leave starting before the displayed week and ending inside it only marks the covered dates', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      final id = await service.submitStudentLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Teacher Priya',
+        requesterRole: LeaveRequesterRole.staff,
+        studentId: 'student-1',
+        studentName: 'Aarav',
+        leaveType: LeaveType.earned,
+        startDate: DateTime(2026, 8, 22),
+        endDate: DateTime(2026, 8, 25),
+        reason: 'Family event',
+      );
+      await service.approveLeaveRequest(id, reviewedBy: 'admin-1');
+
+      // Displayed week starts on the 24th — the leave began two days
+      // earlier, outside the window.
+      final result = await service.getStudentIdsOnApprovedLeaveForRange(
+        startDate: DateTime(2026, 8, 24),
+        endDate: DateTime(2026, 8, 30),
+      );
+
+      expect(result['2026-08-24'], contains('student-1'));
+      expect(result['2026-08-25'], contains('student-1'));
+      expect(result['2026-08-26'], isNull);
+    });
+
+    test('a leave that ends before the displayed week produces no On Leave dates in that window', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      final id = await service.submitStudentLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Teacher Priya',
+        requesterRole: LeaveRequesterRole.staff,
+        studentId: 'student-1',
+        studentName: 'Aarav',
+        leaveType: LeaveType.sick,
+        startDate: DateTime(2026, 8, 10),
+        endDate: DateTime(2026, 8, 12),
+        reason: 'Fever',
+      );
+      await service.approveLeaveRequest(id, reviewedBy: 'admin-1');
+
+      final result = await service.getStudentIdsOnApprovedLeaveForRange(
+        startDate: DateTime(2026, 8, 24),
+        endDate: DateTime(2026, 8, 30),
+      );
+
+      expect(result, isEmpty);
+    });
+
+    test('a Pending student leave request never appears in the range map', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      await service.submitStudentLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Teacher Priya',
+        requesterRole: LeaveRequesterRole.staff,
+        studentId: 'student-1',
+        studentName: 'Aarav',
+        leaveType: LeaveType.sick,
+        startDate: DateTime(2026, 8, 24),
+        endDate: DateTime(2026, 8, 24),
+        reason: 'Fever',
+      );
+
+      final result = await service.getStudentIdsOnApprovedLeaveForRange(
+        startDate: DateTime(2026, 8, 24),
+        endDate: DateTime(2026, 8, 30),
+      );
+
+      expect(result, isEmpty);
+    });
+
+    test('a Rejected student leave request never appears in the range map', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      final id = await service.submitStudentLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Teacher Priya',
+        requesterRole: LeaveRequesterRole.staff,
+        studentId: 'student-1',
+        studentName: 'Aarav',
+        leaveType: LeaveType.sick,
+        startDate: DateTime(2026, 8, 24),
+        endDate: DateTime(2026, 8, 24),
+        reason: 'Fever',
+      );
+      await service.rejectLeaveRequest(id, reviewedBy: 'admin-1');
+
+      final result = await service.getStudentIdsOnApprovedLeaveForRange(
+        startDate: DateTime(2026, 8, 24),
+        endDate: DateTime(2026, 8, 30),
+      );
+
+      expect(result, isEmpty);
+    });
+
+    test('an approved Staff (not student) leave request never appears in the range map', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      final id = await service.submitLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Teacher Priya',
+        leaveType: LeaveType.sick,
+        startDate: DateTime(2026, 8, 24),
+        endDate: DateTime(2026, 8, 24),
+        reason: 'Fever',
+      );
+      await service.approveLeaveRequest(id, reviewedBy: 'admin-1');
+
+      final result = await service.getStudentIdsOnApprovedLeaveForRange(
+        startDate: DateTime(2026, 8, 24),
+        endDate: DateTime(2026, 8, 30),
+      );
+
+      expect(result, isEmpty);
+    });
+  });
+
   group('LeaveService.submitStudentLeaveRequest — 5-calendar-day cap', () {
     test('exactly 5 inclusive days is accepted', () async {
       final firestore = FakeFirebaseFirestore();

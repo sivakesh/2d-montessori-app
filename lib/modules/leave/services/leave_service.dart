@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
 
 import '../../admin/notifications/data/admin_notification_service.dart';
 import '../../parent/data/parent_service.dart';
@@ -130,6 +131,64 @@ class LeaveService {
         .toList();
     _sortByCreatedAtDesc(items);
     return items;
+  }
+
+  /// Staff ids with an Approved leave request whose `[startDate, endDate]`
+  /// range includes [date] (inclusive on both ends) — the Staff Leave
+  /// sibling of [getStudentIdsOnApprovedLeave], used by Attendance to show
+  /// "On Leave" instead of Not Marked/Absent for exactly that date. Staff
+  /// Leave has no separate "staffId" field — the requester of a
+  /// `subjectType == 'staff'` request IS the staff member the leave is for
+  /// (see [submitLeaveRequest]) — so [LeaveRequestModel.requesterId] is
+  /// what identifies them here. Reuses [getAllRequests] (already scoped to
+  /// `subjectType == 'staff'`) rather than a second query shape.
+  Future<Set<String>> getStaffIdsOnApprovedLeave(DateTime date) async {
+    final all = await getAllRequests();
+    final day = DateTime(date.year, date.month, date.day);
+    bool coversDay(LeaveRequestModel r) {
+      final start = DateTime(r.startDate.year, r.startDate.month, r.startDate.day);
+      final end = DateTime(r.endDate.year, r.endDate.month, r.endDate.day);
+      return !day.isBefore(start) && !day.isAfter(end);
+    }
+
+    return all
+        .where((r) => r.status == LeaveStatus.approved && coversDay(r))
+        .map((r) => r.requesterId)
+        .toSet();
+  }
+
+  /// Range-based sibling of [getStaffIdsOnApprovedLeave] — used by
+  /// Attendance History so a full displayed week can be resolved from the
+  /// same single [getAllRequests] query instead of one call per displayed
+  /// date. Returns, for every date in `[startDate, endDate]` (inclusive on
+  /// both ends) that has at least one Approved staff leave covering it, the
+  /// set of staff ids on leave that date — keyed by `yyyy-MM-dd`. A date
+  /// with no approved staff leave is simply absent from the map rather than
+  /// mapping to an empty set. Mirrors
+  /// [getStudentIdsOnApprovedLeaveForRange] exactly, substituting
+  /// requesterId for studentId.
+  Future<Map<String, Set<String>>> getStaffIdsOnApprovedLeaveForRange({
+    required DateTime startDate,
+    required DateTime endDate,
+  }) async {
+    final all = await getAllRequests();
+    final rangeStart = DateTime(startDate.year, startDate.month, startDate.day);
+    final rangeEnd = DateTime(endDate.year, endDate.month, endDate.day);
+    final dateFormat = DateFormat('yyyy-MM-dd');
+
+    final result = <String, Set<String>>{};
+    for (final r in all) {
+      if (r.status != LeaveStatus.approved) continue;
+      final leaveStart = DateTime(r.startDate.year, r.startDate.month, r.startDate.day);
+      final leaveEnd = DateTime(r.endDate.year, r.endDate.month, r.endDate.day);
+      var cursor = leaveStart.isAfter(rangeStart) ? leaveStart : rangeStart;
+      final last = leaveEnd.isBefore(rangeEnd) ? leaveEnd : rangeEnd;
+      while (!cursor.isAfter(last)) {
+        (result[dateFormat.format(cursor)] ??= <String>{}).add(r.requesterId);
+        cursor = cursor.add(const Duration(days: 1));
+      }
+    }
+    return result;
   }
 
   // ---------------------------------------------------------------------
@@ -269,6 +328,43 @@ class LeaveService {
         .map((r) => r.studentId)
         .whereType<String>()
         .toSet();
+  }
+
+  /// Range-based sibling of [getStudentIdsOnApprovedLeave] — used by
+  /// Attendance History so a full displayed week can be resolved from the
+  /// same single [getAllStudentLeaveRequests] query instead of one call per
+  /// displayed date. Returns, for every date in `[startDate, endDate]`
+  /// (inclusive on both ends) that has at least one Approved student leave
+  /// covering it, the set of student ids on leave that date — keyed by
+  /// `yyyy-MM-dd`. A date with no approved student leave is simply absent
+  /// from the map rather than mapping to an empty set.
+  Future<Map<String, Set<String>>> getStudentIdsOnApprovedLeaveForRange({
+    required DateTime startDate,
+    required DateTime endDate,
+  }) async {
+    final all = await getAllStudentLeaveRequests();
+    final rangeStart = DateTime(startDate.year, startDate.month, startDate.day);
+    final rangeEnd = DateTime(endDate.year, endDate.month, endDate.day);
+    final dateFormat = DateFormat('yyyy-MM-dd');
+
+    final result = <String, Set<String>>{};
+    for (final r in all) {
+      if (r.status != LeaveStatus.approved) continue;
+      final studentId = r.studentId;
+      if (studentId == null) continue;
+      final leaveStart = DateTime(r.startDate.year, r.startDate.month, r.startDate.day);
+      final leaveEnd = DateTime(r.endDate.year, r.endDate.month, r.endDate.day);
+      // Clip the leave's own range to the displayed range before iterating,
+      // so a leave spanning far outside the displayed week never loops over
+      // dates that will never be shown.
+      var cursor = leaveStart.isAfter(rangeStart) ? leaveStart : rangeStart;
+      final last = leaveEnd.isBefore(rangeEnd) ? leaveEnd : rangeEnd;
+      while (!cursor.isAfter(last)) {
+        (result[dateFormat.format(cursor)] ??= <String>{}).add(studentId);
+        cursor = cursor.add(const Duration(days: 1));
+      }
+    }
+    return result;
   }
 
   // ---------------------------------------------------------------------

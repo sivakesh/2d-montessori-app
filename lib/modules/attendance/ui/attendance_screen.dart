@@ -3,10 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../admin/ui/admin_attendance_management_screen.dart'
+    show resolveAttendanceDisplayStatus;
 import '../../auth/data/user_service.dart';
 import '../../auth/models/app_user.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../classes/providers/class_provider.dart';
+import '../../leave/services/leave_service.dart';
 import '../../mood_checkin/providers/mood_checkin_provider.dart';
 import '../../mood_checkin/ui/mood_checkin_dialog.dart';
 import '../../mood_checkin/services/mood_checkin_service.dart';
@@ -21,13 +24,26 @@ DateTime getAcademicYearStart(DateTime today) {
 }
 
 class AttendanceScreen extends ConsumerStatefulWidget {
-  const AttendanceScreen({super.key});
+  const AttendanceScreen({super.key, this.leaveService, this.userService});
+
+  /// Overridable only so tests can inject a fake-Firestore-backed
+  /// LeaveService — the same DI seam AdminAttendanceManagementScreen already
+  /// exposes on its own constructor. Production callers never pass this.
+  final LeaveService? leaveService;
+
+  /// Overridable for the same reason as [leaveService] — UserService is
+  /// instantiated directly here rather than via a riverpod provider, so a
+  /// widget test needs its own seam to inject a fake-Firestore-backed
+  /// instance. Production callers never pass this.
+  final UserService? userService;
 
   @override
   ConsumerState<AttendanceScreen> createState() => _AttendanceScreenState();
 }
 
 class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
+  late final _leaveService = widget.leaveService ?? LeaveService();
+  late final _userService = widget.userService ?? UserService();
   bool _loading = true;
   String? _errorMessage;
   final _searchController = TextEditingController();
@@ -36,8 +52,29 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   List<QueryDocumentSnapshot<Map<String, dynamic>>> _allStudents = [];
   List<QueryDocumentSnapshot<Map<String, dynamic>>> _students = [];
   List<AppUser> _staff = [];
+  /// Every active staff member returned by the attendance roster query,
+  /// unfiltered by the search box — [_staff] above is the search-filtered
+  /// list used by the Today tab; History always shows the full roster, the
+  /// same way [_allStudents] (vs. [_students]) already does for students.
+  List<AppUser> _allStaff = [];
   Map<String, Map<String, dynamic>> _attendanceMap = {};
   Map<String, Map<String, dynamic>> _historyAttendanceMap = {};
+  /// Student ids with an Approved leave request covering today — recomputed
+  /// on every `_loadData` so a student's leave on any other date never
+  /// appears here.
+  Set<String> _studentIdsOnLeave = {};
+  /// Staff ids with an Approved leave request covering today — same shape
+  /// as [_studentIdsOnLeave], for Staff Leave.
+  Set<String> _staffIdsOnLeave = {};
+  /// Student ids on Approved leave for each date in the currently displayed
+  /// History week, keyed by `yyyy-MM-dd` — recomputed on every `_loadData`
+  /// (i.e. whenever the selected History week changes) against exactly that
+  /// week's range, so navigating weeks never shows stale leave data.
+  Map<String, Set<String>> _historyStudentIdsOnLeave = {};
+  /// Staff ids on Approved leave for each date in the currently displayed
+  /// History week — same shape as [_historyStudentIdsOnLeave], for Staff
+  /// Leave.
+  Map<String, Set<String>> _historyStaffIdsOnLeave = {};
   late DateTime _selectedHistoryWeekStart;
   Map<String, String> _classNames = {};
   int _studentCount = 0;
@@ -69,7 +106,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     try {
       final classService = ref.read(classServiceProvider);
       final studentService = ref.read(studentServiceProvider);
-      final userService = UserService();
+      final userService = _userService;
       final attendanceService = ref.read(attendanceServiceProvider);
       final moodService = ref.read(moodCheckinServiceProvider);
 
@@ -82,12 +119,47 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
             startDate: _selectedHistoryWeekStart,
             endDate: _selectedHistoryWeekStart.add(const Duration(days: 6)),
           );
-      final overview = await attendanceService.getAttendanceOverview(
-        classIds: _selectedClassIds.toList(),
-      );
-      final notMarked = await attendanceService.getNotMarkedCount(
-        classIds: _selectedClassIds.toList(),
-      );
+      // Best-effort: a failure to resolve on-leave students/staff must not
+      // block attendance from loading — it just means the On Leave
+      // indicator is temporarily unavailable for today.
+      Set<String> studentIdsOnLeave = {};
+      try {
+        studentIdsOnLeave = await _leaveService.getStudentIdsOnApprovedLeave(
+          DateTime.now().toLocal(),
+        );
+      } catch (_) {
+        studentIdsOnLeave = {};
+      }
+      Set<String> staffIdsOnLeave = {};
+      try {
+        staffIdsOnLeave = await _leaveService.getStaffIdsOnApprovedLeave(
+          DateTime.now().toLocal(),
+        );
+      } catch (_) {
+        staffIdsOnLeave = {};
+      }
+      // Same best-effort fallback, resolved for the whole displayed History
+      // week rather than a single date.
+      Map<String, Set<String>> historyStudentIdsOnLeave = {};
+      try {
+        historyStudentIdsOnLeave =
+            await _leaveService.getStudentIdsOnApprovedLeaveForRange(
+          startDate: _selectedHistoryWeekStart,
+          endDate: _selectedHistoryWeekStart.add(const Duration(days: 6)),
+        );
+      } catch (_) {
+        historyStudentIdsOnLeave = {};
+      }
+      Map<String, Set<String>> historyStaffIdsOnLeave = {};
+      try {
+        historyStaffIdsOnLeave =
+            await _leaveService.getStaffIdsOnApprovedLeaveForRange(
+          startDate: _selectedHistoryWeekStart,
+          endDate: _selectedHistoryWeekStart.add(const Duration(days: 6)),
+        );
+      } catch (_) {
+        historyStaffIdsOnLeave = {};
+      }
       final latestMoodLabels = <String, String>{};
       for (final doc in allStudents) {
         final label = await _latestMoodLabel(moodService, 'student', doc.id);
@@ -131,20 +203,83 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
           )
           .toList();
 
+      // Summary population respects the class filter for students (matching
+      // what the class chips above are already understood to scope) but not
+      // the search box — the same scope the old service-computed
+      // Students/Staff/Total/Present/Absent counts used. Present/Absent/Not
+      // Marked are now resolved per entity via the same
+      // resolveAttendanceDisplayStatus pipeline the rows/history use, rather
+      // than a second "Total - Present - Absent" calculation — so Total =
+      // Present + Absent + On Leave + Not Marked holds by construction, for
+      // both Students and Staff, instead of silently double-counting an
+      // approved leave as Not Marked.
+      final summaryStudents = allStudents.where((doc) {
+        final data = doc.data();
+        if (data['isActive'] != true) return false;
+        if (_selectedClassIds.isNotEmpty &&
+            !_selectedClassIds.contains(data['classId']?.toString() ?? '')) {
+          return false;
+        }
+        return true;
+      }).toList();
+
+      var presentCount = 0;
+      var absentCount = 0;
+      var notMarkedCount = 0;
+      for (final doc in summaryStudents) {
+        final record = attendanceMap[_attendanceKey('student', doc.id)];
+        final display = resolveAttendanceDisplayStatus(
+          rawStatus: _rawStatus(record),
+          isOnApprovedLeave: studentIdsOnLeave.contains(doc.id),
+        );
+        switch (display) {
+          case 'present':
+            presentCount++;
+          case 'absent':
+            absentCount++;
+          case 'on_leave':
+            break;
+          default:
+            notMarkedCount++;
+        }
+      }
+      for (final user in staff) {
+        final record = attendanceMap[_attendanceKey('staff', user.id)];
+        final display = resolveAttendanceDisplayStatus(
+          rawStatus: _rawStatus(record),
+          isOnApprovedLeave: staffIdsOnLeave.contains(user.id),
+        );
+        switch (display) {
+          case 'present':
+            presentCount++;
+          case 'absent':
+            absentCount++;
+          case 'on_leave':
+            break;
+          default:
+            notMarkedCount++;
+        }
+      }
+
       if (!mounted) return;
       setState(() {
         _classes = classes;
         _allStudents = allStudents;
         _students = visibleStudents;
         _staff = filteredStaff;
+        _allStaff = staff;
         _attendanceMap = attendanceMap;
         _historyAttendanceMap = historyAttendanceMap;
+        _studentIdsOnLeave = studentIdsOnLeave;
+        _staffIdsOnLeave = staffIdsOnLeave;
+        _historyStudentIdsOnLeave = historyStudentIdsOnLeave;
+        _historyStaffIdsOnLeave = historyStaffIdsOnLeave;
         _classNames = classNames;
-        _studentCount = overview.studentCount;
-        _staffCount = overview.staffCount;
-        _presentCount = overview.presentCount;
-        _absentCount = overview.absentCount;
-        _notMarkedCount = notMarked;
+        _studentCount = summaryStudents.length;
+        _staffCount = staff.length;
+        _presentCount = presentCount;
+        _absentCount = absentCount;
+        _notMarkedCount = notMarkedCount;
         _latestMoodLabels
           ..clear()
           ..addAll(latestMoodLabels);
@@ -190,13 +325,38 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     return '-';
   }
 
-  String _statusLabel(Map<String, dynamic>? record) {
-    if (record == null) return 'Not Marked';
+  String _rawStatus(Map<String, dynamic>? record) {
+    if (record == null) return 'not_marked';
     final status = (record['status']?.toString() ?? '').toLowerCase();
     final hasPhoto = _attendancePhotoUrl(record).isNotEmpty;
-    if (status == 'absent') return 'Absent';
-    if (status == 'present' || (status.isEmpty && hasPhoto)) return 'Present';
-    return 'Not Marked';
+    if (status == 'absent') return 'absent';
+    if (status == 'present' || (status.isEmpty && hasPhoto)) return 'present';
+    return 'not_marked';
+  }
+
+  /// Resolves the display label for a row, folding in the Student Leave ->
+  /// Attendance integration via the same pure [resolveAttendanceDisplayStatus]
+  /// helper AdminAttendanceManagementScreen uses — an existing Present/Absent
+  /// record is a real fact about today and is never overridden by an
+  /// approved leave; only the "nothing recorded yet" case is.
+  String _statusLabel(
+    Map<String, dynamic>? record, {
+    bool isOnApprovedLeave = false,
+  }) {
+    final display = resolveAttendanceDisplayStatus(
+      rawStatus: _rawStatus(record),
+      isOnApprovedLeave: isOnApprovedLeave,
+    );
+    switch (display) {
+      case 'present':
+        return 'Present';
+      case 'absent':
+        return 'Absent';
+      case 'on_leave':
+        return 'On Leave';
+      default:
+        return 'Not Marked';
+    }
   }
 
   String _attendancePhotoUrl(Map<String, dynamic>? record) {
@@ -260,25 +420,38 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     _loadData();
   }
 
-  Widget _historyCell(
-    String studentId,
-    DateTime date,
-    Map<String, Map<String, dynamic>> historyAttendanceMap,
-  ) {
+  /// Resolves one History cell for [entityType]/[entityId] on [date] — an
+  /// existing attendance record (Present/Absent) is a real fact about that
+  /// date and always wins; only a date with no record at all falls through
+  /// to [historyIdsOnLeave] for that exact date. Reuses the same
+  /// [_rawStatus] + [resolveAttendanceDisplayStatus] pipeline the Today tab
+  /// uses — and is shared between Students and Staff via [entityType]
+  /// rather than duplicated per entity type.
+  Widget _historyCell({
+    required String entityType,
+    required String entityId,
+    required DateTime date,
+    required Map<String, Map<String, dynamic>> historyAttendanceMap,
+    required Map<String, Set<String>> historyIdsOnLeave,
+  }) {
     final dateKey = DateFormat('yyyy-MM-dd').format(date);
-    final record = historyAttendanceMap['student_${studentId}_$dateKey'];
-    if (record == null) {
-      return Text('-', style: TextStyle(color: Colors.grey.shade600));
+    final record = historyAttendanceMap['${entityType}_${entityId}_$dateKey'];
+    final isOnApprovedLeave =
+        historyIdsOnLeave[dateKey]?.contains(entityId) ?? false;
+    final display = resolveAttendanceDisplayStatus(
+      rawStatus: _rawStatus(record),
+      isOnApprovedLeave: isOnApprovedLeave,
+    );
+    switch (display) {
+      case 'present':
+        return const Icon(Icons.check_circle, color: Colors.green, size: 20);
+      case 'absent':
+        return const Icon(Icons.cancel, color: Colors.red, size: 20);
+      case 'on_leave':
+        return const _HistoryOnLeavePill();
+      default:
+        return Text('-', style: TextStyle(color: Colors.grey.shade600));
     }
-    final status = (record['status']?.toString() ?? '').toLowerCase();
-    final hasPhoto = _attendancePhotoUrl(record).isNotEmpty;
-    if (status == 'present' || (status.isEmpty && hasPhoto)) {
-      return const Icon(Icons.check_circle, color: Colors.green, size: 20);
-    }
-    if (status == 'absent') {
-      return const Icon(Icons.cancel, color: Colors.red, size: 20);
-    }
-    return Text('-', style: TextStyle(color: Colors.grey.shade600));
   }
 
   Future<String?> _latestMoodLabel(
@@ -299,6 +472,8 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         return Colors.green.shade50;
       case 'Absent':
         return Colors.red.shade50;
+      case 'On Leave':
+        return Colors.blue.shade50;
       default:
         return Colors.grey.shade200;
     }
@@ -310,6 +485,8 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         return Colors.green.shade700;
       case 'Absent':
         return Colors.red.shade700;
+      case 'On Leave':
+        return Colors.blue.shade700;
       default:
         return Colors.grey.shade700;
     }
@@ -628,7 +805,10 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                   final data = doc.data();
                   final record =
                       _attendanceMap[_attendanceKey('student', doc.id)];
-                  final status = _statusLabel(record);
+                  final status = _statusLabel(
+                    record,
+                    isOnApprovedLeave: _studentIdsOnLeave.contains(doc.id),
+                  );
                   final photoUrl = _attendancePhotoUrl(record);
                   return _AttendanceCard(
                     name: data['name']?.toString() ?? '',
@@ -677,7 +857,10 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                   final staff = staffRows[index];
                   final record =
                       _attendanceMap[_attendanceKey('staff', staff.id)];
-                  final status = _statusLabel(record);
+                  final status = _statusLabel(
+                    record,
+                    isOnApprovedLeave: _staffIdsOnLeave.contains(staff.id),
+                  );
                   final photoUrl = _attendancePhotoUrl(record);
                   final displayName = staff.name?.isNotEmpty == true
                       ? staff.name!
@@ -727,13 +910,24 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     final activeStudents = _allStudents
         .where((doc) => doc.data()['isActive'] == true)
         .map(
-          (doc) => _HistoryStudentRow(
+          (doc) => _HistoryRow(
             id: doc.id,
             name: doc.data()['name']?.toString() ?? '',
           ),
         )
         .toList();
-    if (activeStudents.isEmpty) {
+    // _allStaff is already active-only (UserService.getAttendanceStaffUsers
+    // filters isActive == true server-side), matching how the Today tab's
+    // own Staff section is already scoped.
+    final activeStaff = _allStaff
+        .map(
+          (user) => _HistoryRow(
+            id: user.id,
+            name: user.name?.isNotEmpty == true ? user.name! : user.phone,
+          ),
+        )
+        .toList();
+    if (activeStudents.isEmpty && activeStaff.isEmpty) {
       return const Center(child: Text('No attendance history available.'));
     }
     final weekEnd = _selectedHistoryWeekStart.add(const Duration(days: 6));
@@ -774,56 +968,119 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 12),
-        Card(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                columns: [
-                  const DataColumn(label: Text('Student')),
-                  for (var i = 0; i < weekDays.length; i++)
-                    DataColumn(
-                      label: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(dayLabels[i]),
-                          Text(
-                            DateFormat('dd').format(weekDays[i]),
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ],
+        const SizedBox(height: 20),
+        Text('Students', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        _historyTable(
+          context,
+          entityType: 'student',
+          entityColumnLabel: 'Student',
+          rows: activeStudents,
+          weekDays: weekDays,
+          dayLabels: dayLabels,
+          historyIdsOnLeave: _historyStudentIdsOnLeave,
+          // Unprefixed — the format every existing caller/test already
+          // keys off; changing it would be a silent breaking change for
+          // anything addressing a student cell by key.
+          keyPrefix: 'history-cell_',
+          emptyMessage: 'No student attendance history available.',
+        ),
+        const SizedBox(height: 24),
+        Text('Staff', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        _historyTable(
+          context,
+          entityType: 'staff',
+          entityColumnLabel: 'Staff Member',
+          rows: activeStaff,
+          weekDays: weekDays,
+          dayLabels: dayLabels,
+          historyIdsOnLeave: _historyStaffIdsOnLeave,
+          keyPrefix: 'history-cell-staff_',
+          emptyMessage: 'No staff attendance history available.',
+        ),
+      ],
+    );
+  }
+
+  /// One History week table — used for both Students and Staff so the two
+  /// sections share exactly the same visual language (same Card, same
+  /// DataTable, same day columns, same cell-resolution pipeline) instead of
+  /// Staff getting a separately-designed UI. [keyPrefix] lets each
+  /// section's cells carry distinct, addressable keys.
+  Widget _historyTable(
+    BuildContext context, {
+    required String entityType,
+    required String entityColumnLabel,
+    required List<_HistoryRow> rows,
+    required List<DateTime> weekDays,
+    required List<String> dayLabels,
+    required Map<String, Set<String>> historyIdsOnLeave,
+    required String keyPrefix,
+    required String emptyMessage,
+  }) {
+    if (rows.isEmpty) {
+      return Text(emptyMessage, style: TextStyle(color: Colors.grey.shade600));
+    }
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            columns: [
+              DataColumn(label: Text(entityColumnLabel)),
+              for (var i = 0; i < weekDays.length; i++)
+                DataColumn(
+                  label: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(dayLabels[i]),
+                      Text(
+                        DateFormat('dd').format(weekDays[i]),
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
-                    ),
-                ],
-                rows: activeStudents.map((student) {
-                  return DataRow(
-                    cells: [
-                      DataCell(Text(student.name)),
-                      ...weekDays.map(
-                        (date) => DataCell(
-                          Center(
-                            child: _historyCell(
-                              student.id,
-                              date,
-                              _historyAttendanceMap,
-                            ),
+                    ],
+                  ),
+                ),
+            ],
+            rows: rows.map((row) {
+              return DataRow(
+                cells: [
+                  DataCell(Text(row.name)),
+                  ...weekDays.map(
+                    (date) => DataCell(
+                      Center(
+                        // Keyed so tests can locate exactly this
+                        // entity/date cell — DataCell itself isn't a Widget
+                        // subtype, so it can't be found via find.byType,
+                        // and DataTable gives no other structural way to
+                        // address one cell by column.
+                        child: KeyedSubtree(
+                          key: ValueKey(
+                            '$keyPrefix${row.id}_${DateFormat('yyyy-MM-dd').format(date)}',
+                          ),
+                          child: _historyCell(
+                            entityType: entityType,
+                            entityId: row.id,
+                            date: date,
+                            historyAttendanceMap: _historyAttendanceMap,
+                            historyIdsOnLeave: historyIdsOnLeave,
                           ),
                         ),
                       ),
-                    ],
-                  );
-                }).toList(),
-              ),
-            ),
+                    ),
+                  ),
+                ],
+              );
+            }).toList(),
           ),
         ),
-      ],
+      ),
     );
   }
 
@@ -1032,6 +1289,7 @@ class _AttendanceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isMarked = status == 'Present' || status == 'Absent';
+    final isOnLeave = status == 'On Leave';
     final moodLabel = latestMoodLabel;
     final hasPhoto = photoUrl.isNotEmpty;
     return Card(
@@ -1158,12 +1416,18 @@ class _AttendanceCard extends StatelessWidget {
                         ),
                       ),
                       Tooltip(
-                        message: 'Mark absent',
+                        message: isOnLeave
+                            ? (entityType == 'staff'
+                                ? 'This staff member is on approved leave for this date.'
+                                : 'On approved leave — cannot mark absent')
+                            : 'Mark absent',
                         child: Material(
                           color: Colors.red.shade500,
                           shape: const CircleBorder(),
                           child: IconButton(
-                            onPressed: status == 'Absent' ? null : onAbsent,
+                            onPressed: (status == 'Absent' || isOnLeave)
+                                ? null
+                                : onAbsent,
                             icon: const Icon(Icons.person_off),
                             color: Colors.white,
                           ),
@@ -1243,8 +1507,44 @@ class _MoodPill extends StatelessWidget {
   }
 }
 
-class _HistoryStudentRow {
-  _HistoryStudentRow({required this.id, required this.name});
+/// Compact History-cell indicator for a date with no attendance record but
+/// an Approved Student Leave covering it. Reuses the exact same blue pair
+/// (`Colors.blue.shade50`/`Colors.blue.shade700`) as the Today tab's "On
+/// Leave" status pill, sized down to fit the narrow History date cells —
+/// the table's own horizontal scroll (see `_buildHistoryTab`) already
+/// accommodates a slightly wider column the same way it does for long
+/// student names, so this never overflows.
+class _HistoryOnLeavePill extends StatelessWidget {
+  const _HistoryOnLeavePill();
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'On Leave',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        decoration: BoxDecoration(
+          color: Colors.blue.shade50,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          'On Leave',
+          style: TextStyle(
+            color: Colors.blue.shade700,
+            fontWeight: FontWeight.w600,
+            fontSize: 10,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A single row in a History table — one entity (student or staff) and its
+/// display name. Shared between the Students and Staff History sections
+/// (see [_historyTable]) rather than duplicated per entity type.
+class _HistoryRow {
+  _HistoryRow({required this.id, required this.name});
 
   final String id;
   final String name;
