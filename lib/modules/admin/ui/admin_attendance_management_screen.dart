@@ -10,6 +10,7 @@ import '../../auth/providers/auth_provider.dart';
 import '../../classes/providers/class_provider.dart';
 import '../../finance/widgets/finance_status_chip.dart';
 import '../../finance/widgets/finance_summary_card.dart';
+import '../../leave/services/leave_service.dart';
 import '../../students/providers/student_provider.dart';
 import 'admin_layout.dart';
 
@@ -27,8 +28,28 @@ import 'admin_layout.dart';
   );
 }
 
+/// Pure decision for the Student Leave -> Attendance integration: a student
+/// with an Approved leave request covering the selected date displays as
+/// "on_leave" instead of "not_marked". An already-explicit record (Present
+/// or Absent) is a real fact about that date and is never overridden by an
+/// approved leave — only the "nothing recorded yet" case is. No Firestore
+/// access, so — like [computeAttendanceSummary] — it's public and unit
+/// tested directly rather than only through the full widget.
+String resolveAttendanceDisplayStatus({
+  required String rawStatus,
+  required bool isOnApprovedLeave,
+}) {
+  if (rawStatus == 'not_marked' && isOnApprovedLeave) return 'on_leave';
+  return rawStatus;
+}
+
 class AdminAttendanceManagementScreen extends ConsumerStatefulWidget {
-  const AdminAttendanceManagementScreen({super.key});
+  const AdminAttendanceManagementScreen({super.key, this.leaveService});
+
+  /// Overridable only so tests can inject a fake-Firestore-backed
+  /// LeaveService — the same DI seam every service here already exposes on
+  /// its own constructor. Production callers never pass this.
+  final LeaveService? leaveService;
 
   @override
   ConsumerState<AdminAttendanceManagementScreen> createState() =>
@@ -37,6 +58,7 @@ class AdminAttendanceManagementScreen extends ConsumerStatefulWidget {
 
 class _AdminAttendanceManagementScreenState
     extends ConsumerState<AdminAttendanceManagementScreen> {
+  late final _leaveService = widget.leaveService ?? LeaveService();
   DateTime _selectedDate = DateTime.now().toLocal();
   bool _loading = true;
   String? _errorMessage;
@@ -46,6 +68,11 @@ class _AdminAttendanceManagementScreenState
   Map<String, Map<String, dynamic>> _attendanceMap = {};
   final Set<String> _selectedClassIds = {};
   final Map<String, String> _draftStatuses = {};
+  /// Student ids with an Approved leave request covering `_selectedDate`
+  /// exactly — recomputed on every `_loadData` (i.e. whenever the selected
+  /// date changes), so a student's leave on any other date never appears
+  /// here.
+  Set<String> _studentIdsOnLeave = {};
   String _selectedScope = 'student';
 
   @override
@@ -75,6 +102,27 @@ class _AdminAttendanceManagementScreenState
             'not_marked');
   }
 
+  /// Whether [entityId] (a student) has an Approved leave request covering
+  /// the currently selected date — the summary/KPI counts above intentionally
+  /// keep using [_statusFor] directly (unaffected by leave), so "On Leave"
+  /// is purely a per-row display/action concern, not a new attendance
+  /// category in the totals.
+  bool _isOnApprovedLeave(String entityType, String entityId) {
+    return entityType == 'student' && _studentIdsOnLeave.contains(entityId);
+  }
+
+  /// The status actually shown on a row: an on-leave student with no
+  /// existing explicit record displays as "On Leave" instead of "Not
+  /// Marked". A student already recorded Present (e.g. they attended
+  /// despite the approved leave) keeps showing that real record rather
+  /// than being overridden.
+  String _displayStatusFor(String entityType, String entityId) {
+    return resolveAttendanceDisplayStatus(
+      rawStatus: _statusFor(entityType, entityId),
+      isOnApprovedLeave: _isOnApprovedLeave(entityType, entityId),
+    );
+  }
+
   Future<void> _loadData() async {
     setState(() {
       _loading = true;
@@ -92,6 +140,16 @@ class _AdminAttendanceManagementScreenState
       final attendanceMap = await attendanceService.getAttendanceByDate(
         date: _selectedDate,
       );
+      // Best-effort: a failure to resolve on-leave students must not block
+      // attendance from loading — it just means the On Leave indicator is
+      // temporarily unavailable for this date.
+      Set<String> studentIdsOnLeave = {};
+      try {
+        studentIdsOnLeave =
+            await _leaveService.getStudentIdsOnApprovedLeave(_selectedDate);
+      } catch (_) {
+        studentIdsOnLeave = {};
+      }
 
       final draft = <String, String>{};
       for (final student in students) {
@@ -115,6 +173,7 @@ class _AdminAttendanceManagementScreenState
         _students = students;
         _staff = staff;
         _attendanceMap = attendanceMap;
+        _studentIdsOnLeave = studentIdsOnLeave;
         _draftStatuses
           ..clear()
           ..addAll(draft);
@@ -144,6 +203,16 @@ class _AdminAttendanceManagementScreenState
     final matches = _classes.where((doc) => doc.id == classId);
     if (matches.isEmpty) return '-';
     return matches.first.data()['name']?.toString() ?? '-';
+  }
+
+  void _showOnLeaveBlockedMessage(String studentName) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '$studentName has an approved leave for this date and cannot be marked absent.',
+        ),
+      ),
+    );
   }
 
   bool get _canSave => _draftStatuses.isNotEmpty;
@@ -350,7 +419,9 @@ class _AdminAttendanceManagementScreenState
                 : Column(
                     children: filteredStudents.map((student) {
                       final data = student.data();
-                      final status = _statusFor('student', student.id);
+                      final status = _displayStatusFor('student', student.id);
+                      final onLeave = _isOnApprovedLeave('student', student.id);
+                      final name = data['name']?.toString() ?? '';
                       final subtitle = [
                         data['admissionNo']?.toString() ?? '',
                         _classNameFor(data),
@@ -358,11 +429,17 @@ class _AdminAttendanceManagementScreenState
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 10),
                         child: _AttendanceRow(
-                          name: data['name']?.toString() ?? '',
+                          name: name,
                           subtitle: subtitle,
                           status: status,
                           onPresent: () => setState(() => _draftStatuses[student.id] = 'present'),
-                          onAbsent: () => setState(() => _draftStatuses[student.id] = 'absent'),
+                          // An approved leave covering this exact date must
+                          // never be overridden by a new Absent mark — the
+                          // tap is intercepted with an explanation instead
+                          // of writing 'absent' to the draft.
+                          onAbsent: onLeave
+                              ? () => _showOnLeaveBlockedMessage(name)
+                              : () => setState(() => _draftStatuses[student.id] = 'absent'),
                           onClear: () => setState(() => _draftStatuses[student.id] = 'not_marked'),
                         ),
                       );
@@ -477,6 +554,7 @@ class _AttendanceRow extends StatelessWidget {
   ({String label, Color color}) get _statusPresentation => switch (status) {
         'present' => (label: 'PRESENT', color: AppColors.secondary),
         'absent' => (label: 'ABSENT', color: const Color(0xFFD32F2F)),
+        'on_leave' => (label: 'ON LEAVE', color: const Color(0xFF1565C0)),
         _ => (label: 'NOT MARKED', color: Colors.grey),
       };
 

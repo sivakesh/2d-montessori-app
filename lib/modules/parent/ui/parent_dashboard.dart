@@ -8,6 +8,7 @@ import '../../../core/layout/sidebar.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_sizes.dart';
 import '../../admin/students/models/admin_student_model.dart';
+import '../../calendar/ui/calendar_view.dart';
 import '../../admin/notifications/data/admin_notification_service.dart';
 import '../../admin/notifications/models/admin_notification_model.dart';
 import '../../attendance/data/attendance_service.dart';
@@ -15,7 +16,13 @@ import '../../auth/providers/auth_provider.dart';
 import '../../classes/data/class_service.dart';
 import '../../fees/models/student_fee_assignment_model.dart';
 import '../../fees/services/fee_service.dart';
+import '../../fees/ui/parent_fee_history_view.dart';
 import '../../finance/widgets/finance_status_chip.dart';
+import '../../leave/models/leave_request_model.dart';
+import '../../leave/services/leave_service.dart';
+import '../../leave/ui/dialogs/student_leave_request_dialog.dart';
+import '../../leave/ui/parent_leave_view.dart';
+import '../../leave/ui/widgets/student_leave_card.dart';
 import '../../mood_checkin/models/mood_checkin_model.dart';
 import '../../mood_checkin/models/mood_option_model.dart';
 import '../../mood_checkin/services/mood_checkin_service.dart';
@@ -41,6 +48,7 @@ class ParentDashboard extends ConsumerStatefulWidget {
     this.notificationService,
     this.classService,
     this.moodCheckinService,
+    this.leaveService,
   });
 
   /// Overridable only so tests can inject fake-Firestore-backed services —
@@ -52,17 +60,16 @@ class ParentDashboard extends ConsumerStatefulWidget {
   final AdminNotificationService? notificationService;
   final ClassService? classService;
   final MoodCheckinService? moodCheckinService;
+  final LeaveService? leaveService;
 
   @override
   ConsumerState<ParentDashboard> createState() => _ParentDashboardState();
 }
 
 class _ParentDashboardState extends ConsumerState<ParentDashboard> {
-  // AppSidebar/AppBottomNav are already role-aware and only ever offer
-  // "Dashboard" (index 0) for role == 'parent', so this never changes today
-  // — kept as real state (not a literal 0) so the shell wiring is identical
-  // to DashboardScreen's and needs no rework if Parent ever gains a second
-  // destination.
+  // Index into the `tabs` list built in `build` — AppSidebar/AppBottomNav
+  // are role-aware and offer exactly [Dashboard, Calendar, Leave, Fees] for
+  // role == 'parent', in that order.
   int selectedIndex = 0;
 
   late final _parentService = widget.parentService ?? ParentService();
@@ -74,6 +81,7 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
   late final _classService = widget.classService ?? ClassService();
   late final _moodCheckinService =
       widget.moodCheckinService ?? MoodCheckinService();
+  late final _leaveService = widget.leaveService ?? LeaveService();
 
   bool _loading = true;
   List<AdminStudentModel> _children = const [];
@@ -95,6 +103,14 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
   /// though both children belong to the same parent account.
   List<AdminNotificationModel> _parentNotifications = const [];
   bool _notificationsError = false;
+
+  /// Every linked child's leave history, resolved server-side by
+  /// LeaveService.getStudentRequestsForParent (never trusts a client-
+  /// supplied student id) — filtered down to the *currently selected*
+  /// child at build time, the same "fetch once for the account, filter per
+  /// selected child at build" shape `_parentNotifications` already uses.
+  List<LeaveRequestModel> _studentLeaveRequests = const [];
+  bool _leaveRequestsError = false;
 
   @override
   void initState() {
@@ -133,6 +149,18 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
       notificationsError = true;
     }
 
+    // Fetched the same defensive way as notifications above — a transient
+    // failure here only degrades the Student Leave section, never blocks
+    // the rest of the dashboard.
+    List<LeaveRequestModel> studentLeaveRequests = const [];
+    var leaveRequestsError = false;
+    try {
+      studentLeaveRequests =
+          await _leaveService.getStudentRequestsForParent(userId);
+    } catch (_) {
+      leaveRequestsError = true;
+    }
+
     if (!mounted) return;
     setState(() {
       _children = children;
@@ -140,6 +168,8 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
       _classAcademicYears = classAcademicYears;
       _parentNotifications = parentNotifications;
       _notificationsError = notificationsError;
+      _studentLeaveRequests = studentLeaveRequests;
+      _leaveRequestsError = leaveRequestsError;
       _selectedChildId = children.isNotEmpty ? children.first.id : '';
       _loading = false;
     });
@@ -168,6 +198,30 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
     if (studentId == _selectedChildId) return;
     setState(() => _selectedChildId = studentId);
     _loadChildDetail(studentId);
+  }
+
+  Future<void> _openRequestLeave() async {
+    final user = ref.read(currentUserProvider);
+    if (user == null || _children.isEmpty) return;
+    final submitted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => StudentLeaveRequestDialog(
+        requesterId: user.id,
+        requesterName: user.name?.isNotEmpty == true ? user.name! : user.phone,
+        requesterRole: LeaveRequesterRole.parent,
+        linkedStudents: _children,
+        service: _leaveService,
+      ),
+    );
+    if (submitted == true) {
+      await _loadDashboard();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Leave request submitted')),
+        );
+      }
+    }
   }
 
   void _openAllNotifications() {
@@ -292,6 +346,16 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
                       loading: _loadingChildDetail,
                       assignments: _feeAssignments,
                     ),
+                    const SizedBox(height: 20),
+                    _StudentLeaveSection(
+                      loading: _loading,
+                      hasError: _leaveRequestsError,
+                      requests: _studentLeaveRequests
+                          .where((r) => r.studentId == selectedChild!.id)
+                          .toList(),
+                      onRequestLeave: _openRequestLeave,
+                      onRetry: _loadDashboard,
+                    ),
                   ],
                   const SizedBox(height: 20),
                   _NotificationsSection(
@@ -304,6 +368,34 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
               ),
             ),
           );
+
+    // AppSidebar/AppBottomNav's destination order for role 'parent' is
+    // [Dashboard, Calendar, Leave, Fees] on both desktop and mobile — this
+    // single tabs list (same pattern as DashboardScreen's) is the one source
+    // of truth for title/body per index, so sidebar/bottom-nav selection,
+    // page title, and body content can never drift out of sync the way the
+    // old duplicated-switch Staff nav once did.
+    final tabs = [
+      (title: 'Dashboard', body: () => dashboardContent),
+      (title: 'Calendar', body: () => const CalendarView()),
+      (
+        title: 'Leave',
+        body: () => ParentLeaveView(
+          leaveService: _leaveService,
+          parentService: _parentService,
+        ),
+      ),
+      (
+        title: 'Fees',
+        body: () => ParentFeeHistoryView(
+          feeService: _feeService,
+          parentService: _parentService,
+        ),
+      ),
+    ];
+    final safeIndex = selectedIndex >= 0 && selectedIndex < tabs.length ? selectedIndex : 0;
+    final currentTitle = tabs[safeIndex].title;
+    final currentBody = tabs[safeIndex].body();
 
     Widget logoutAction() => IconButton(
       icon: const Icon(Icons.logout),
@@ -327,10 +419,10 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
         backgroundColor: Colors.grey[50],
         appBar: AppBar(
           centerTitle: false,
-          title: const Text('Dashboard'),
+          title: Text(currentTitle),
           actions: [logoutAction()],
         ),
-        body: SafeArea(child: dashboardContent),
+        body: SafeArea(child: currentBody),
         bottomNavigationBar: AppBottomNav(
           selectedIndex: selectedIndex,
           onItemTapped: (index) => setState(() => selectedIndex = index),
@@ -348,10 +440,10 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
               child: Column(
                 children: [
                   AppBar(
-                    title: const Text('Dashboard'),
+                    title: Text(currentTitle),
                     actions: [logoutAction()],
                   ),
-                  Expanded(child: dashboardContent),
+                  Expanded(child: currentBody),
                 ],
               ),
             ),
@@ -877,6 +969,94 @@ class _ParentMoodSectionState extends State<_ParentMoodSection> {
                 ),
               ],
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// New, self-contained card — additive only, doesn't touch _ChildCard or
+/// any other existing widget. Shows the *currently selected* child's leave
+/// history (via LeaveService.getStudentRequestsForParent, already scoped
+/// server-side to this parent's linked children) and a "Request Leave"
+/// button that opens StudentLeaveRequestDialog pre-populated with every
+/// linked child to choose from.
+class _StudentLeaveSection extends StatelessWidget {
+  const _StudentLeaveSection({
+    required this.loading,
+    required this.hasError,
+    required this.requests,
+    required this.onRequestLeave,
+    required this.onRetry,
+  });
+
+  final bool loading;
+  final bool hasError;
+  final List<LeaveRequestModel> requests;
+  final VoidCallback onRequestLeave;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 0,
+      color: AppColors.card,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Leave Requests',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: onRequestLeave,
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Request Leave'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (loading)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            else if (hasError)
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      "Couldn't load leave requests.",
+                      style: TextStyle(color: AppColors.textSecondary),
+                    ),
+                  ),
+                  TextButton(onPressed: onRetry, child: const Text('Retry')),
+                ],
+              )
+            else if (requests.isEmpty)
+              const Text(
+                'No leave requests for this child yet.',
+                style: TextStyle(color: AppColors.textSecondary),
+              )
+            else
+              for (final request in requests) ...[
+                StudentLeaveCard(request: request),
+                const SizedBox(height: 10),
+              ],
           ],
         ),
       ),

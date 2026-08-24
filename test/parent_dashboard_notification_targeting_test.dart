@@ -44,6 +44,7 @@ import 'package:montessori_app/modules/auth/providers/auth_provider.dart';
 import 'package:montessori_app/modules/classes/data/class_service.dart';
 import 'package:montessori_app/modules/mood_checkin/services/mood_checkin_service.dart';
 import 'package:montessori_app/modules/fees/services/fee_service.dart';
+import 'package:montessori_app/modules/leave/services/leave_service.dart';
 import 'package:montessori_app/modules/notifications/ui/notification_relevance.dart';
 import 'package:montessori_app/modules/parent/data/parent_service.dart';
 import 'package:montessori_app/modules/parent/ui/parent_dashboard.dart';
@@ -283,6 +284,7 @@ void main() {
               firestore: firestore,
               storage: MockFirebaseStorage(),
             ),
+            leaveService: LeaveService(firestore: firestore),
           ),
         ),
       );

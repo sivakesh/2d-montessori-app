@@ -64,6 +64,7 @@ void main() {
       (tester) async {
         await pumpDesktopLayout(tester);
 
+        await tester.ensureVisible(find.text('Reports'));
         await tester.tap(find.text('Reports'));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
@@ -79,6 +80,7 @@ void main() {
       (tester) async {
         await pumpDesktopLayout(tester);
 
+        await tester.ensureVisible(find.text('Settings'));
         await tester.tap(find.text('Settings'));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));

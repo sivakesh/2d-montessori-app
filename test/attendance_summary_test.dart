@@ -41,4 +41,40 @@ void main() {
       expect((summary.present, summary.absent, summary.notMarked, summary.total), (0, 0, 0, 0));
     });
   });
+
+  // Coverage for the Student Leave -> Attendance integration's display
+  // decision — a pure function over an already-resolved raw status and an
+  // already-resolved "is this student on approved leave for the selected
+  // date" flag, no Firestore access. `getStudentIdsOnApprovedLeave`'s own
+  // date-range logic is covered separately in
+  // student_leave_attendance_integration_test.dart.
+  group('resolveAttendanceDisplayStatus', () {
+    test('not_marked + on approved leave displays as on_leave', () {
+      expect(
+        resolveAttendanceDisplayStatus(rawStatus: 'not_marked', isOnApprovedLeave: true),
+        'on_leave',
+      );
+    });
+
+    test('not_marked + not on leave stays not_marked', () {
+      expect(
+        resolveAttendanceDisplayStatus(rawStatus: 'not_marked', isOnApprovedLeave: false),
+        'not_marked',
+      );
+    });
+
+    test('an already-Present record is never overridden by an approved leave', () {
+      expect(
+        resolveAttendanceDisplayStatus(rawStatus: 'present', isOnApprovedLeave: true),
+        'present',
+      );
+    });
+
+    test('an already-Absent record is never overridden by an approved leave', () {
+      expect(
+        resolveAttendanceDisplayStatus(rawStatus: 'absent', isOnApprovedLeave: true),
+        'absent',
+      );
+    });
+  });
 }

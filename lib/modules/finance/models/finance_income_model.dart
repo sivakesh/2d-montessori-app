@@ -23,11 +23,22 @@ class FinanceIncomeModel {
     required this.createdAt,
     required this.updatedAt,
     required this.createdBy,
+    this.sourceModule = '',
+    this.isDeleted = false,
   });
   final String id, title, categoryId, categoryName, programType, studentId, studentName, classId, className, paymentMode, accountId, accountName, referenceNo, remarks, ledgerEntryId, createdBy;
   final double amount;
   final DateTime? incomeDate, createdAt, updatedAt;
   final List<String> attachmentUrls;
+  /// Raw Firestore field already written by FinanceService.createFeeIncomeEntry
+  /// ('fees') — never written by the plain createIncome path, where it's
+  /// absent and defaults to ''. Used by the Finance UI to detect and lock
+  /// editing/voiding of a Fee-Collection-generated entry (see
+  /// FinanceService.updateIncome/voidIncome's doc comments for why).
+  final String sourceModule;
+  /// Raw Firestore field already written by FinanceService's void/reversal
+  /// paths (_voidIncomeDoc). Not present on an active entry.
+  final bool isDeleted;
   factory FinanceIncomeModel.fromMap(String id, Map<String, dynamic> data) {
     DateTime? p(dynamic v) => v is Timestamp ? v.toDate() : v is DateTime ? v : null;
     double n(dynamic v) => v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0;
@@ -53,6 +64,8 @@ class FinanceIncomeModel {
       createdAt: p(data['createdAt']),
       updatedAt: p(data['updatedAt']),
       createdBy: data['createdBy']?.toString() ?? '',
+      sourceModule: data['sourceModule']?.toString() ?? '',
+      isDeleted: data['isDeleted'] == true,
     );
   }
 

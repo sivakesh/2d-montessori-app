@@ -7,6 +7,9 @@ import 'package:intl/intl.dart';
 import '../../../core/theme/app_sizes.dart';
 import '../../../services/user_session_log_service.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../calendar/models/calendar_event_model.dart';
+import '../../calendar/services/calendar_service.dart';
+import '../../calendar/ui/admin_calendar_screen.dart';
 import '../../fees/services/fee_service.dart';
 import '../../fees/ui/admin_fees_screen.dart';
 import '../../finance/ui/admin_finance_screen.dart';
@@ -17,6 +20,17 @@ import 'admin_documents_screen.dart';
 import 'admin_layout.dart';
 import 'admin_notifications_screen.dart';
 import 'admin_users_screen.dart';
+
+/// Pure text formatting for the Admin Dashboard's compact Calendar summary —
+/// no Firestore access, so (like `computeAttendanceSummary` in
+/// admin_attendance_management_screen.dart) it's public and unit tested
+/// directly rather than only through the full screen.
+String formatUpcomingEventsSummary(List<CalendarEventModel> events) {
+  if (events.isEmpty) return 'No upcoming events';
+  return events
+      .map((e) => '${e.title} (${DateFormat('MMM d').format(e.date)})')
+      .join(', ');
+}
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -124,6 +138,26 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return assignments.where((a) => a.balanceAmount > 0).length;
   }
 
+  // Published items only — a Draft calendar item isn't really "upcoming"
+  // from the school's perspective yet, so it's excluded the same way the
+  // Parent/Staff calendar feeds already exclude it.
+  Future<List<CalendarEventModel>> _loadUpcomingEvents() async {
+    try {
+      final events = await CalendarService().getAllEvents();
+      final today = DateTime.now();
+      final todayOnly = DateTime(today.year, today.month, today.day);
+      final upcoming = events
+          .where((e) =>
+              e.status == CalendarEventStatus.published &&
+              !e.date.isBefore(todayOnly))
+          .toList();
+      upcoming.sort((a, b) => a.date.compareTo(b.date));
+      return upcoming.take(3).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
   Future<List<_ActivityItem>> _recentFromCollection({
     required String collection,
     required String titleField,
@@ -213,6 +247,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         subtitle: 'Document uploaded',
         limit: 3,
       ),
+      _loadUpcomingEvents(),
     ]);
 
     return _DashboardData(
@@ -225,6 +260,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       recentActivity: results[6] as List<_ActivityItem>,
       recentNotifications: results[7] as List<_ActivityItem>,
       recentDocuments: results[8] as List<_ActivityItem>,
+      upcomingEvents: results[9] as List<CalendarEventModel>,
     );
   }
 
@@ -298,6 +334,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                     child: _TodayOperations(
                                       recentNotifications: data.recentNotifications,
                                       recentDocuments: data.recentDocuments,
+                                      upcomingEvents: data.upcomingEvents,
                                       onMarkAttendance: () => _openScreen(
                                         const AdminAttendanceManagementScreen(),
                                       ),
@@ -306,6 +343,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                       ),
                                       onFinanceEntry: () => _openScreen(
                                         const AdminFinanceScreen(),
+                                      ),
+                                      onOpenCalendar: () => _openScreen(
+                                        const AdminCalendarScreen(),
                                       ),
                                     ),
                                   ),
@@ -322,6 +362,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                   _TodayOperations(
                                     recentNotifications: data.recentNotifications,
                                     recentDocuments: data.recentDocuments,
+                                    upcomingEvents: data.upcomingEvents,
                                     onMarkAttendance: () => _openScreen(
                                       const AdminAttendanceManagementScreen(),
                                     ),
@@ -330,6 +371,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                     ),
                                     onFinanceEntry: () => _openScreen(
                                       const AdminFinanceScreen(),
+                                    ),
+                                    onOpenCalendar: () => _openScreen(
+                                      const AdminCalendarScreen(),
                                     ),
                                   ),
                                   const SizedBox(height: 16),
@@ -439,6 +483,7 @@ class _DashboardData {
     required this.recentActivity,
     required this.recentNotifications,
     required this.recentDocuments,
+    required this.upcomingEvents,
   });
 
   final int totalStudents;
@@ -450,6 +495,7 @@ class _DashboardData {
   final List<_ActivityItem> recentActivity;
   final List<_ActivityItem> recentNotifications;
   final List<_ActivityItem> recentDocuments;
+  final List<CalendarEventModel> upcomingEvents;
 }
 
 class _ActivityItem {
@@ -734,16 +780,20 @@ class _TodayOperations extends StatelessWidget {
   const _TodayOperations({
     required this.recentNotifications,
     required this.recentDocuments,
+    required this.upcomingEvents,
     required this.onMarkAttendance,
     required this.onFeeCollection,
     required this.onFinanceEntry,
+    required this.onOpenCalendar,
   });
 
   final List<_ActivityItem> recentNotifications;
   final List<_ActivityItem> recentDocuments;
+  final List<CalendarEventModel> upcomingEvents;
   final VoidCallback onMarkAttendance;
   final VoidCallback onFeeCollection;
   final VoidCallback onFinanceEntry;
+  final VoidCallback onOpenCalendar;
 
   @override
   Widget build(BuildContext context) {
@@ -757,6 +807,13 @@ class _TodayOperations extends StatelessWidget {
             value: 'Mark today\'s attendance',
             icon: Icons.fact_check_outlined,
             onTap: onMarkAttendance,
+          ),
+          const SizedBox(height: 12),
+          _MiniSummaryCard(
+            title: 'Calendar',
+            value: formatUpcomingEventsSummary(upcomingEvents),
+            icon: Icons.calendar_month_outlined,
+            onTap: onOpenCalendar,
           ),
           const SizedBox(height: 12),
           _MiniSummaryCard(

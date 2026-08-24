@@ -13,6 +13,8 @@ import '../students/ui/admin_students_screen.dart';
 import 'mobile_nav_item.dart';
 import 'admin_sidebar.dart';
 import '../../../admin/screens/admin_session_logs_screen.dart';
+import '../../calendar/ui/admin_calendar_screen.dart';
+import '../../leave/ui/admin_leave_screen.dart';
 
 class AdminLayout extends ConsumerWidget {
   const AdminLayout({
@@ -68,7 +70,41 @@ class AdminLayout extends ConsumerWidget {
       MobileNavItem(label: 'More', icon: Icons.more_horiz, route: 'more'),
     ];
 
+    // Ordered by operational relevance, matching AdminSidebar's desktop
+    // order for these same items (screenIndex values are unchanged — only
+    // list/display order moved) — Attendance/Calendar/Leave Requests are
+    // now core daily operations, so they lead the "More Modules" sheet,
+    // followed by Finance, then the roster/setup screens, then the
+    // least-frequently-used admin-config items.
     final secondaryItems = <MobileNavItem>[
+      MobileNavItem(
+        label: 'Attendance',
+        icon: Icons.fact_check_outlined,
+        route: 'attendance',
+        screenIndex: 8,
+        builder: (_) => const AdminAttendanceManagementScreen(),
+      ),
+      MobileNavItem(
+        label: 'Calendar',
+        icon: Icons.calendar_month_outlined,
+        route: 'calendar',
+        screenIndex: 12,
+        builder: (_) => const AdminCalendarScreen(),
+      ),
+      MobileNavItem(
+        label: 'Leave Requests',
+        icon: Icons.event_available_outlined,
+        route: 'leave_requests',
+        screenIndex: 13,
+        builder: (_) => const AdminLeaveScreen(),
+      ),
+      MobileNavItem(
+        label: 'Finance',
+        icon: Icons.account_balance_wallet_outlined,
+        route: 'finance',
+        screenIndex: 7,
+        builder: (_) => const AdminFinanceScreen(),
+      ),
       MobileNavItem(
         label: 'Users',
         icon: Icons.people_outline,
@@ -89,20 +125,6 @@ class AdminLayout extends ConsumerWidget {
         route: 'documents',
         screenIndex: 4,
         builder: (_) => const AdminDocumentsScreen(),
-      ),
-      MobileNavItem(
-        label: 'Finance',
-        icon: Icons.account_balance_wallet_outlined,
-        route: 'finance',
-        screenIndex: 7,
-        builder: (_) => const AdminFinanceScreen(),
-      ),
-      MobileNavItem(
-        label: 'Attendance',
-        icon: Icons.fact_check_outlined,
-        route: 'attendance',
-        screenIndex: 8,
-        builder: (_) => const AdminAttendanceManagementScreen(),
       ),
       MobileNavItem(
         label: 'Login Logs',
@@ -230,6 +252,8 @@ class AdminLayout extends ConsumerWidget {
                       7 => const AdminFinanceScreen(),
                       8 => const AdminAttendanceManagementScreen(),
                       9 => const AdminSessionLogsScreen(),
+                      12 => const AdminCalendarScreen(),
+                      13 => const AdminLeaveScreen(),
                       _ => body,
                     };
                     Navigator.of(context).pushReplacement(

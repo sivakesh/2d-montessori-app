@@ -84,9 +84,18 @@ class FinanceService {
         );
   }
 
+  // Client-side isDeleted filter (not a `.where()` query) so pre-existing
+  // docs that never had the field written at all still count as active —
+  // Firestore's `!=`/`isNotEqualTo` excludes documents missing the field
+  // entirely, which would have hidden every income entry created before
+  // voiding existed. Same convention FeeService.getAssignments/getReceipts
+  // already use for their own isDeleted filtering.
   Stream<List<FinanceIncomeModel>> watchIncome() {
     return _income.orderBy('createdAt', descending: true).snapshots().map(
-          (snap) => snap.docs.map((d) => FinanceIncomeModel.fromMap(d.id, d.data())).toList(),
+          (snap) => snap.docs
+              .where((d) => d.data()['isDeleted'] != true)
+              .map((d) => FinanceIncomeModel.fromMap(d.id, d.data()))
+              .toList(),
         );
   }
 
@@ -512,19 +521,22 @@ class FinanceService {
     return incomeRef.id;
   }
 
-  Future<void> reverseFeeIncomeByCollectionId(String feeCollectionId) async {
-    final existing = await _income
-        .where('sourceModule', isEqualTo: 'fees')
-        .where('sourceId', isEqualTo: feeCollectionId)
-        .limit(1)
-        .get();
-    if (existing.docs.isEmpty) return;
-    final doc = existing.docs.first;
-    final data = doc.data();
-    if (data['isDeleted'] == true) return;
+  /// Core void mechanics shared by [reverseFeeIncomeByCollectionId] (looked
+  /// up by the originating Fee Collection's id) and [voidIncome] (looked up
+  /// by the income entry's own id) — exactly one reversal implementation,
+  /// two lookup entry points, so there is no second reversal architecture.
+  /// Marks the income doc voided (soft-delete via `isDeleted`, preserving
+  /// every original field for audit/history), cancels its linked ledger
+  /// mirror (the same `status: 'cancelled'` flag [cancelLedgerEntry]
+  /// already uses and [watchDashboardSummary] already filters on), and
+  /// reverses the amount out of the linked account's running balance.
+  Future<void> _voidIncomeDoc(
+    DocumentReference<Map<String, dynamic>> ref,
+    Map<String, dynamic> data,
+  ) async {
     final amount = (data['amount'] as num?)?.toDouble() ?? 0.0;
     final accountId = data['accountId']?.toString() ?? '';
-    await doc.reference.set({
+    await ref.set({
       'isDeleted': true,
       'deletedAt': FieldValue.serverTimestamp(),
       'deletedBy': _createdBy,
@@ -542,6 +554,240 @@ class FinanceService {
       final current = (accountSnap.data()?['currentBalance'] as num?)?.toDouble() ?? 0.0;
       await accountRef.set({'currentBalance': current - amount}, SetOptions(merge: true));
     }
+  }
+
+  Future<void> reverseFeeIncomeByCollectionId(String feeCollectionId) async {
+    final existing = await _income
+        .where('sourceModule', isEqualTo: 'fees')
+        .where('sourceId', isEqualTo: feeCollectionId)
+        .limit(1)
+        .get();
+    if (existing.docs.isEmpty) return;
+    final doc = existing.docs.first;
+    final data = doc.data();
+    if (data['isDeleted'] == true) return;
+    await _voidIncomeDoc(doc.reference, data);
+  }
+
+  /// Voids a Finance income entry directly — the Finance UI's own Void
+  /// action, keyed by the entry's own document id (as opposed to
+  /// [reverseFeeIncomeByCollectionId]'s lookup by the originating Fee
+  /// Collection's id), but sharing the exact same [_voidIncomeDoc]
+  /// reversal mechanics.
+  ///
+  /// Refuses to void a Fee-Collection-sourced entry (`sourceModule ==
+  /// 'fees'`): that entry's lifecycle is owned by its Fee Collection —
+  /// voiding it here independently would leave the Fee Collection still
+  /// showing as collected while Finance shows it voided, exactly the
+  /// conflicting state a Finance edit/void must not create. Voiding the
+  /// Fee Collection itself (in the Fees module) already reverses this
+  /// entry via [reverseFeeIncomeByCollectionId].
+  ///
+  /// Also refuses a double-void, unlike [reverseFeeIncomeByCollectionId]'s
+  /// silent no-op — that method is an idempotent internal safety net
+  /// called from FeeService's own void path; this one is a direct,
+  /// user-initiated action and should surface a clear error instead of
+  /// silently doing nothing.
+  Future<void> voidIncome(String id) async {
+    final snap = await _income.doc(id).get();
+    if (!snap.exists || snap.data() == null) {
+      throw StateError('Income entry not found');
+    }
+    final data = snap.data()!;
+    if (data['sourceModule']?.toString() == 'fees') {
+      throw StateError(
+        'This entry was generated from a Fee Collection. Void the Fee '
+        'Collection in the Fees module instead — it will reverse this '
+        'entry automatically.',
+      );
+    }
+    if (data['isDeleted'] == true) {
+      throw StateError('This income entry has already been voided.');
+    }
+    await _voidIncomeDoc(snap.reference, data);
+  }
+
+  /// Edits an existing, non-Fee-sourced income entry's fields in place.
+  /// The account is intentionally left un-editable here — changing which
+  /// account the money landed in retroactively would need its own
+  /// reversal-then-reapply logic beyond what this method does, so the
+  /// account stays fixed from creation. Refuses to edit a
+  /// Fee-Collection-sourced entry for the same reason [voidIncome]
+  /// refuses to void one.
+  ///
+  /// Updates the income doc, its linked ledger mirror, and the account's
+  /// running balance by the amount delta, all inside one Firestore
+  /// transaction — the same atomic pattern [createIncome] already uses.
+  Future<void> updateIncome({
+    required String id,
+    required String title,
+    required String categoryId,
+    required String categoryName,
+    required double amount,
+    required DateTime date,
+    required String paymentMode,
+    required String referenceNo,
+    required String remarks,
+  }) async {
+    final incomeRef = _income.doc(id);
+    final snap = await incomeRef.get();
+    if (!snap.exists || snap.data() == null) {
+      throw StateError('Income entry not found');
+    }
+    final current = snap.data()!;
+    if (current['sourceModule']?.toString() == 'fees') {
+      throw StateError(
+        'This entry was generated from a Fee Collection. Edit the Fee '
+        'Collection in the Fees module instead — it will update this '
+        'entry automatically.',
+      );
+    }
+    if (current['isDeleted'] == true) {
+      throw StateError('This income entry has been voided and can no longer be edited.');
+    }
+    if (amount <= 0) {
+      throw StateError('Amount must be greater than 0');
+    }
+    final oldAmount = (current['amount'] as num?)?.toDouble() ?? 0.0;
+    final accountId = current['accountId']?.toString() ?? '';
+    final ledgerId = current['ledgerEntryId']?.toString() ?? '';
+
+    final ledgerRef = ledgerId.isNotEmpty ? _ledger.doc(ledgerId) : null;
+    final accountRef = accountId.isNotEmpty ? _accounts.doc(accountId) : null;
+
+    // Reads its own full current data for every doc it touches and writes
+    // a complete merged map back (spread + overrides) rather than relying
+    // on Transaction.set(..., SetOptions(merge: true)) — that merge option
+    // is not honored correctly by fake_cloud_firestore's transaction mock
+    // (it silently drops every field not in the payload instead of
+    // merging), so this avoids depending on it at all. Strictly more
+    // robust against real Firestore too, since it never depends on merge
+    // semantics succeeding.
+    await _firestore.runTransaction((txn) async {
+      final ledgerSnap = ledgerRef != null ? await txn.get(ledgerRef) : null;
+      final accountSnap = accountRef != null ? await txn.get(accountRef) : null;
+      final currentBalance = (accountSnap?.data()?['currentBalance'] as num?)?.toDouble() ?? 0.0;
+
+      txn.set(incomeRef, {
+        ...current,
+        'title': title,
+        'categoryId': categoryId,
+        'categoryName': categoryName,
+        'amount': amount,
+        'incomeDate': date,
+        'paymentMode': paymentMode,
+        'referenceNo': referenceNo,
+        'remarks': remarks,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      if (ledgerRef != null && ledgerSnap != null && ledgerSnap.data() != null) {
+        txn.set(ledgerRef, {
+          ...ledgerSnap.data()!,
+          'title': title,
+          'categoryId': categoryId,
+          'categoryName': categoryName,
+          'amount': amount,
+          'transactionDate': date,
+          'paymentMode': paymentMode,
+          'referenceNo': referenceNo,
+          'description': remarks,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      if (accountRef != null && accountSnap != null && accountSnap.data() != null) {
+        txn.set(accountRef, {
+          ...accountSnap.data()!,
+          'currentBalance': currentBalance + (amount - oldAmount),
+        });
+      }
+    });
+  }
+
+  /// Pushes a Fee Collection's corrected amount/date/paymentMode/
+  /// referenceNo/remarks into its already-linked Finance income entry
+  /// (plus that entry's ledger mirror and the account's running balance),
+  /// found via the exact same `sourceModule == 'fees' + sourceId` lookup
+  /// [createFeeIncomeEntry]/[reverseFeeIncomeByCollectionId] already use —
+  /// reusing the existing relationship rather than creating a new one.
+  /// This is an in-place field update on the SAME document, which is
+  /// exactly what avoids [createFeeIncomeEntry]'s dedup-by-sourceId guard:
+  /// that guard only ever matters when *creating* a new entry, and this
+  /// method never does that.
+  ///
+  /// If no linked entry exists (Finance wasn't configured when the fee
+  /// was originally collected) or it was already voided, this is a silent
+  /// no-op — a voided linked entry can't normally happen from
+  /// FeeService.updateCollection's caller (a voided collection is refused
+  /// for edit before this is ever reached), so this is a defensive
+  /// guard, not an expected path.
+  ///
+  /// Called from FeeService.updateCollection *after* its own Fees-side
+  /// batch has already committed. True cross-service atomicity between
+  /// that batch and this transaction is not achievable without merging
+  /// FeeService and FinanceService into one write path (out of scope —
+  /// see FeeService.updateCollection's doc comment for how a failure here
+  /// is surfaced rather than hidden).
+  Future<void> updateFeeIncomeEntry({
+    required String feeCollectionId,
+    required double amount,
+    required DateTime date,
+    required String paymentMode,
+    required String referenceNo,
+    required String remarks,
+  }) async {
+    final existing = await _income
+        .where('sourceModule', isEqualTo: 'fees')
+        .where('sourceId', isEqualTo: feeCollectionId)
+        .limit(1)
+        .get();
+    if (existing.docs.isEmpty) return;
+    final doc = existing.docs.first;
+    final data = doc.data();
+    if (data['isDeleted'] == true) return;
+    final oldAmount = (data['amount'] as num?)?.toDouble() ?? 0.0;
+    final accountId = data['accountId']?.toString() ?? '';
+    final ledgerId = data['ledgerEntryId']?.toString() ?? '';
+    final incomeRef = _income.doc(doc.id);
+    final ledgerRef = ledgerId.isNotEmpty ? _ledger.doc(ledgerId) : null;
+    final accountRef = accountId.isNotEmpty ? _accounts.doc(accountId) : null;
+
+    // Reads full current data for every doc and writes a complete merged
+    // map back (spread + overrides) instead of relying on
+    // Transaction.set(..., SetOptions(merge: true)) — see updateIncome's
+    // doc comment for why: fake_cloud_firestore's transaction mock does
+    // not honor that merge option (it silently drops every field not in
+    // the payload), so this avoids depending on it at all.
+    await _firestore.runTransaction((txn) async {
+      final ledgerSnap = ledgerRef != null ? await txn.get(ledgerRef) : null;
+      final accountSnap = accountRef != null ? await txn.get(accountRef) : null;
+      final currentBalance = (accountSnap?.data()?['currentBalance'] as num?)?.toDouble() ?? 0.0;
+
+      txn.set(incomeRef, {
+        ...data,
+        'amount': amount,
+        'incomeDate': date,
+        'paymentMode': paymentMode,
+        'referenceNo': referenceNo,
+        'remarks': remarks,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      if (ledgerRef != null && ledgerSnap != null && ledgerSnap.data() != null) {
+        txn.set(ledgerRef, {
+          ...ledgerSnap.data()!,
+          'amount': amount,
+          'transactionDate': date,
+          'paymentMode': paymentMode,
+          'referenceNo': referenceNo,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      if (accountRef != null && accountSnap != null && accountSnap.data() != null) {
+        txn.set(accountRef, {
+          ...accountSnap.data()!,
+          'currentBalance': currentBalance + (amount - oldAmount),
+        });
+      }
+    });
   }
 
   Future<void> ensureDefaults() async {

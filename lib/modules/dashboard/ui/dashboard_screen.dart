@@ -13,10 +13,14 @@ import '../../auth/models/app_user.dart';
 import '../../auth/data/user_service.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../../services/user_session_log_service.dart';
+import '../../admin/students/data/admin_student_service.dart';
 import '../../attendance/providers/attendance_provider.dart';
 import '../../attendance/ui/attendance_screen.dart';
+import '../../calendar/ui/calendar_view.dart';
+import '../../classes/data/class_service.dart';
 import '../../classes/providers/class_provider.dart';
 import '../../classes/ui/class_list_screen.dart';
+import '../../leave/ui/my_leave_view.dart';
 import '../../mood_checkin/models/mood_checkin_model.dart';
 import '../../mood_checkin/models/mood_option_model.dart';
 import '../../mood_checkin/providers/mood_checkin_provider.dart';
@@ -27,7 +31,28 @@ import '../../students/providers/student_provider.dart';
 import '../../students/ui/student_list_screen.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
-  const DashboardScreen({super.key});
+  const DashboardScreen({
+    super.key,
+    this.userService,
+    this.userSessionLogService,
+    this.adminStudentService,
+    this.classService,
+  });
+
+  /// Overridable only so tests can inject fake-Firestore-backed services —
+  /// the same DI seam every service here already exposes on its own
+  /// constructor. Production callers never pass these. Without this seam
+  /// DashboardScreen could not be constructed in a widget test at all:
+  /// UserSessionLogService/UserService default to real Firebase singletons,
+  /// and UserSessionLogService.logSessionOpened is called unconditionally
+  /// from initState, so an un-injected instance throws before the widget
+  /// ever finishes mounting. adminStudentService/classService are passed
+  /// through to the Students/Classes tabs for the same reason — those
+  /// screens construct their own services eagerly too.
+  final UserService? userService;
+  final UserSessionLogService? userSessionLogService;
+  final AdminStudentService? adminStudentService;
+  final ClassService? classService;
 
   @override
   ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
@@ -43,10 +68,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   final _classListKey = GlobalKey<ClassListScreenState>();
   final _studentListKey = GlobalKey<StudentListScreenState>();
 
+  late final _userService = widget.userService ?? UserService();
+  late final _userSessionLogService =
+      widget.userSessionLogService ?? UserSessionLogService();
+
   @override
   void initState() {
     super.initState();
-    UserSessionLogService().logSessionOpened(source: 'dashboard');
+    _userSessionLogService.logSessionOpened(source: 'dashboard');
     _loadDashboardData();
   }
 
@@ -57,11 +86,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       final moodService = ref.read(moodCheckinServiceProvider);
       final studentService = ref.read(studentServiceProvider);
       final classService = ref.read(classServiceProvider);
-      final userService = UserService();
 
       final classes = await classService.getClasses();
       final students = await studentService.getAllStudents();
-      final staff = await userService.getStaffUsers();
+      final staff = await _userService.getStaffUsers();
       final attendanceMap = await attendanceService.getTodayAttendanceMap();
       final overview = await attendanceService.getAttendanceOverview();
       final moodCount = await moodService.getTodayMoodCheckinCount();
@@ -397,7 +425,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   }
 
   Future<AppUser?> _selectStaff() async {
-    final users = await UserService().getStaffUsers();
+    final users = await _userService.getStaffUsers();
     if (!mounted) return null;
     String query = '';
     return showDialog<AppUser>(
@@ -491,30 +519,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     }
 
     final isAdmin = user.role.toLowerCase() == 'admin';
-    // Mirrors AppBottomNav/AppSidebar's destination order (Dashboard,
-    // Classes, Students, Attendance) so the title always names the screen
-    // that's actually on screen instead of staying stuck on "Dashboard".
-    const tabTitles = ['Dashboard', 'Classes', 'Students', 'Attendance'];
-    final currentTitle = selectedIndex >= 0 && selectedIndex < tabTitles.length
-        ? tabTitles[selectedIndex]
-        : tabTitles[0];
-    final Widget? fab = !isAdmin
-        ? null
-        : selectedIndex == 1
-        ? FloatingActionButton(
-            backgroundColor: const Color(0xFF2E7D32),
-            elevation: 4,
-            onPressed: () => _classListKey.currentState?.openAddClass(),
-            child: const Icon(Icons.add, color: Colors.white),
-          )
-        : selectedIndex == 2
-        ? FloatingActionButton(
-            backgroundColor: const Color(0xFF2E7D32),
-            elevation: 4,
-            onPressed: () => _studentListKey.currentState?.openAddStudent(),
-            child: const Icon(Icons.add, color: Colors.white),
-          )
-        : null;
 
     final dashboardContent = SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
@@ -584,18 +588,24 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       : constraints.maxWidth >= 600
                       ? 2
                       : 1;
+                  // index 1 = Attendance — must match the `tabs` list built
+                  // later in build() (Dashboard=0, Attendance=1, ...), which
+                  // is itself defined in the same order as AppSidebar/
+                  // AppBottomNav's destinations. Can't reference `tabs`
+                  // directly here since it's declared after
+                  // dashboardContent (whose construction this is part of).
                   final actions = [
                     _QuickActionCard(
                       icon: Icons.fact_check_outlined,
                       title: 'Mark Student Attendance',
                       subtitle: 'Go to attendance screen',
-                      onTap: () => setState(() => selectedIndex = 3),
+                      onTap: () => setState(() => selectedIndex = 1),
                     ),
                     _QuickActionCard(
                       icon: Icons.badge_outlined,
                       title: 'Mark Staff Attendance',
                       subtitle: 'Go to attendance screen',
-                      onTap: () => setState(() => selectedIndex = 3),
+                      onTap: () => setState(() => selectedIndex = 1),
                     ),
                     _QuickActionCard(
                       icon: Icons.favorite_border,
@@ -644,6 +654,63 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       ),
     );
 
+    // Single source of truth for "what does tab N mean" — title and body
+    // are defined together, per entry, in the exact order AppSidebar/
+    // AppBottomNav render their destinations (Dashboard, Attendance,
+    // Calendar, Leave, Students, Classes). Title and body used to be two
+    // independently-hardcoded switch statements (one per mobile/web
+    // layout) that could drift out of sync with each other and with this
+    // order — which is exactly what happened after the destinations were
+    // reordered: the web layout's switch was never updated, so e.g.
+    // "Attendance" kept showing the old index-1 screen (Classes) under
+    // the new label. Deriving both from one list makes that class of bug
+    // structurally impossible: there is nowhere left for title and body
+    // to disagree.
+    final tabs = [
+      (
+        title: 'Dashboard',
+        body: () => RefreshIndicator(onRefresh: _loadDashboardData, child: dashboardContent),
+      ),
+      (title: 'Attendance', body: () => const AttendanceScreen()),
+      (title: 'Calendar', body: () => const CalendarView()),
+      (title: 'Leave', body: () => const MyLeaveView()),
+      (
+        title: 'Students',
+        body: () => StudentListScreen(
+          key: _studentListKey,
+          adminService: widget.adminStudentService,
+        ),
+      ),
+      (
+        title: 'Classes',
+        body: () => ClassListScreen(
+          key: _classListKey,
+          readOnly: !isAdmin,
+          service: widget.classService,
+        ),
+      ),
+    ];
+    final safeIndex = selectedIndex >= 0 && selectedIndex < tabs.length ? selectedIndex : 0;
+    final currentTitle = tabs[safeIndex].title;
+    final currentBody = tabs[safeIndex].body();
+    final Widget? fab = !isAdmin
+        ? null
+        : currentTitle == 'Students'
+        ? FloatingActionButton(
+            backgroundColor: const Color(0xFF2E7D32),
+            elevation: 4,
+            onPressed: () => _studentListKey.currentState?.openAddStudent(),
+            child: const Icon(Icons.add, color: Colors.white),
+          )
+        : currentTitle == 'Classes'
+        ? FloatingActionButton(
+            backgroundColor: const Color(0xFF2E7D32),
+            elevation: 4,
+            onPressed: () => _classListKey.currentState?.openAddClass(),
+            child: const Icon(Icons.add, color: Colors.white),
+          )
+        : null;
+
     return ResponsiveLayout(
       mobile: Scaffold(
         backgroundColor: Colors.grey[50],
@@ -683,21 +750,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             ),
           ],
         ),
-        body: SafeArea(
-          child: switch (selectedIndex) {
-            0 => RefreshIndicator(
-              onRefresh: _loadDashboardData,
-              child: dashboardContent,
-            ),
-            1 => ClassListScreen(key: _classListKey, readOnly: !isAdmin),
-            2 => StudentListScreen(key: _studentListKey),
-            3 => const AttendanceScreen(),
-            _ => RefreshIndicator(
-              onRefresh: _loadDashboardData,
-              child: dashboardContent,
-            ),
-          },
-        ),
+        body: SafeArea(child: currentBody),
         bottomNavigationBar: AppBottomNav(
           selectedIndex: selectedIndex,
           onItemTapped: (index) => setState(() => selectedIndex = index),
@@ -753,21 +806,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       ),
                     ],
                   ),
-                  Expanded(
-                    child: switch (selectedIndex) {
-                      0 => RefreshIndicator(
-                        onRefresh: _loadDashboardData,
-                        child: dashboardContent,
-                      ),
-                      1 => ClassListScreen(key: _classListKey, readOnly: !isAdmin),
-                      2 => StudentListScreen(key: _studentListKey),
-                      3 => const AttendanceScreen(),
-                      _ => RefreshIndicator(
-                        onRefresh: _loadDashboardData,
-                        child: dashboardContent,
-                      ),
-                    },
-                  ),
+                  Expanded(child: currentBody),
                 ],
               ),
             ),

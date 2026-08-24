@@ -17,6 +17,12 @@ class AppBottomNav extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final role = ref.watch(currentUserProvider)?.role ?? 'parent';
+    // Same operational-relevance order as AppSidebar (see its comment) —
+    // Dashboard, then the daily-use destinations, then the lower-frequency
+    // roster/setup screens, then Parent's own read-only Fees. For Parent
+    // this yields exactly [Dashboard, Calendar, Leave, Fees] — four direct
+    // NavigationBar items, matching the desktop sidebar one-for-one rather
+    // than folding any of them behind a "More" affordance.
     final destinations = <NavigationDestination>[
       const NavigationDestination(
         icon: Icon(Icons.dashboard_outlined),
@@ -25,21 +31,39 @@ class AppBottomNav extends ConsumerWidget {
       ),
       if (role != 'parent') ...[
         const NavigationDestination(
-          icon: Icon(Icons.class_outlined),
-          selectedIcon: Icon(Icons.class_),
-          label: 'Classes',
+          icon: Icon(Icons.check_circle_outline),
+          selectedIcon: Icon(Icons.check_circle),
+          label: 'Attendance',
         ),
+      ],
+      const NavigationDestination(
+        icon: Icon(Icons.calendar_month_outlined),
+        selectedIcon: Icon(Icons.calendar_month),
+        label: 'Calendar',
+      ),
+      const NavigationDestination(
+        icon: Icon(Icons.event_available_outlined),
+        selectedIcon: Icon(Icons.event_available),
+        label: 'Leave',
+      ),
+      if (role != 'parent') ...[
         const NavigationDestination(
           icon: Icon(Icons.people_outline),
           selectedIcon: Icon(Icons.people),
           label: 'Students',
         ),
         const NavigationDestination(
-          icon: Icon(Icons.check_circle_outline),
-          selectedIcon: Icon(Icons.check_circle),
-          label: 'Attendance',
+          icon: Icon(Icons.class_outlined),
+          selectedIcon: Icon(Icons.class_),
+          label: 'Classes',
         ),
       ],
+      if (role == 'parent')
+        const NavigationDestination(
+          icon: Icon(Icons.receipt_long_outlined),
+          selectedIcon: Icon(Icons.receipt_long),
+          label: 'Fees',
+        ),
       if (role == 'admin')
         const NavigationDestination(
           icon: Icon(Icons.admin_panel_settings_outlined),

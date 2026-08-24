@@ -26,14 +26,16 @@ import 'dialogs/add_salary_payment_dialog.dart';
 import 'dialogs/add_vendor_dialog.dart';
 
 class AdminFinanceScreen extends StatefulWidget {
-  const AdminFinanceScreen({super.key});
+  const AdminFinanceScreen({super.key, FinanceService? service}) : _service = service;
+
+  final FinanceService? _service;
 
   @override
   State<AdminFinanceScreen> createState() => _AdminFinanceScreenState();
 }
 
 class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
-  final _service = FinanceService();
+  late final _service = widget._service ?? FinanceService();
   int _tab = 0;
 
   @override
@@ -45,6 +47,66 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
   Future<void> _launch(String url) async {
     if (url.isEmpty) return;
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _openEditIncome(FinanceIncomeModel income) async {
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AddIncomeDialog(initial: income),
+    );
+  }
+
+  /// Void-specific confirmation, distinct from a generic delete dialog:
+  /// explains the actual effect (excluded from totals, record preserved)
+  /// rather than "cannot be undone" — matching the wording convention
+  /// established for Fee Collection void in the Fees module.
+  Future<bool> _confirmVoidIncome(FinanceIncomeModel income) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Void Income Entry'),
+        content: Text(
+          'Void "${income.title.isEmpty ? 'this entry' : income.title}" of '
+          '₹${income.amount.toStringAsFixed(0)}? This will remove it from '
+          'active Finance totals and reverse it out of the '
+          '${income.accountName.isEmpty ? 'linked' : income.accountName} '
+          'account balance. The original record is preserved for audit — '
+          'it will no longer count as active income, but is not '
+          'permanently deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Void'),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
+  Future<void> _voidIncome(FinanceIncomeModel income) async {
+    if (!await _confirmVoidIncome(income)) return;
+    try {
+      await _service.voidIncome(income.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Income entry voided')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to void income entry: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _showPayInvoice(FinanceInvoiceModel invoice) async {
@@ -162,6 +224,8 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
           service: _service,
           launchUrlFn: _launch,
           onAddIncome: () => showDialog(context: context, barrierDismissible: false, builder: (_) => const AddIncomeDialog()),
+          onEdit: _openEditIncome,
+          onVoid: _voidIncome,
         );
       case 2:
         return _ExpenseTab(
@@ -488,10 +552,18 @@ class _FinanceEmptyState extends StatelessWidget {
 /// with the existing `programType != 'invoice'` filter that excludes
 /// invoice-payment records that also live in the same collection.
 class _IncomeTab extends StatelessWidget {
-  const _IncomeTab({required this.service, required this.launchUrlFn, required this.onAddIncome});
+  const _IncomeTab({
+    required this.service,
+    required this.launchUrlFn,
+    required this.onAddIncome,
+    required this.onEdit,
+    required this.onVoid,
+  });
   final FinanceService service;
   final Future<void> Function(String) launchUrlFn;
   final VoidCallback onAddIncome;
+  final ValueChanged<FinanceIncomeModel> onEdit;
+  final ValueChanged<FinanceIncomeModel> onVoid;
 
   @override
   Widget build(BuildContext context) {
@@ -555,7 +627,7 @@ class _IncomeTab extends StatelessWidget {
                 children: items
                     .map((i) => Padding(
                           padding: const EdgeInsets.only(bottom: 10),
-                          child: _IncomeEntryCard(income: i),
+                          child: _IncomeEntryCard(income: i, onEdit: onEdit, onVoid: onVoid),
                         ))
                     .toList(),
               ),
@@ -570,11 +642,14 @@ class _IncomeTab extends StatelessWidget {
 /// [LedgerEntryCard]'s visual language (icon circle, title, category •
 /// account meta line, formatted date, prominent signed amount).
 class _IncomeEntryCard extends StatelessWidget {
-  const _IncomeEntryCard({required this.income});
+  const _IncomeEntryCard({required this.income, required this.onEdit, required this.onVoid});
   final FinanceIncomeModel income;
+  final ValueChanged<FinanceIncomeModel> onEdit;
+  final ValueChanged<FinanceIncomeModel> onVoid;
 
   @override
   Widget build(BuildContext context) {
+    final isFeeSourced = income.sourceModule == 'fees';
     final metaLine = [income.categoryName, income.accountName].where((v) => v.trim().isNotEmpty).join(' • ');
     final dateLine = income.incomeDate != null ? DateFormat('dd MMM yyyy').format(income.incomeDate!) : '';
     return Container(
@@ -598,11 +673,27 @@ class _IncomeEntryCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  income.title.trim().isEmpty ? 'Income' : income.title.trim(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: AppColors.textPrimary),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        income.title.trim().isEmpty ? 'Income' : income.title.trim(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: AppColors.textPrimary),
+                      ),
+                    ),
+                    if (isFeeSourced) ...[
+                      const SizedBox(width: 6),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        child: Text(
+                          'From Fees',
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
                 if (metaLine.isNotEmpty) ...[
                   const SizedBox(height: 3),
@@ -625,6 +716,19 @@ class _IncomeEntryCard extends StatelessWidget {
             '+₹${income.amount.toStringAsFixed(0)}',
             style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: AppColors.primary),
           ),
+          IconButton(
+            tooltip: 'Edit',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.edit_outlined, size: 20),
+            onPressed: () => onEdit(income),
+          ),
+          if (!isFeeSourced)
+            IconButton(
+              tooltip: 'Void',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.block, size: 20, color: Colors.red),
+              onPressed: () => onVoid(income),
+            ),
         ],
       ),
     );

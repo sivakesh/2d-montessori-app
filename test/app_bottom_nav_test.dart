@@ -1,9 +1,12 @@
 // Regression coverage for the AppBottomNav crash fix: Material's
 // NavigationBar hard-asserts destinations.length >= 2, which a
-// single-destination role (currently only Parent) violated. Verifies the
-// single-destination fallback renders without throwing and still shows the
-// real destination, and that roles with 2+ destinations (Staff, Admin) keep
-// using the real NavigationBar untouched.
+// single-destination role (previously only Parent, before the School
+// Calendar feature gave Parent a second "Calendar" destination) violated.
+// The single-destination fallback widget (_SingleDestinationNavBar) is kept
+// in bottom_nav.dart as defensive code for any future role that ends up
+// with exactly one destination, but no live role exercises it today — Parent
+// now has 2 destinations (Dashboard, Calendar) and uses the real
+// NavigationBar like every other role, which is what this file now verifies.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -39,13 +42,14 @@ Future<void> _pumpAppBottomNav(WidgetTester tester, String role) async {
 
 void main() {
   testWidgets(
-    'parent (single destination) renders without the NavigationBar assertion',
+    'parent (Dashboard + Calendar) renders the real NavigationBar without the length>=2 assertion firing',
     (tester) async {
       await _pumpAppBottomNav(tester, 'parent');
 
       expect(tester.takeException(), isNull);
-      expect(find.byType(NavigationBar), findsNothing);
+      expect(find.byType(NavigationBar), findsOneWidget);
       expect(find.text('Dashboard'), findsOneWidget);
+      expect(find.text('Calendar'), findsOneWidget);
     },
   );
 

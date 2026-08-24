@@ -16,6 +16,15 @@ class AppSidebar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final role = ref.watch(currentUserProvider)?.role ?? 'parent';
+    // Ordered by operational relevance rather than by when each destination
+    // was added: Dashboard (home) first, then the destinations used daily
+    // (Attendance, Calendar, Leave), then the lower-frequency setup/roster
+    // screens (Students, Classes), then Parent's own read-only Fees. Mirrors
+    // AppBottomNav's order exactly, and each dashboard screen's tabs list is
+    // kept in sync with this same order. For Parent this yields exactly
+    // [Dashboard, Calendar, Leave, Fees] — Leave here opens the parent's own
+    // student-leave workflow (ParentLeaveView), never the Admin Leave
+    // management screen.
     final destinations = <NavigationRailDestination>[
       const NavigationRailDestination(
         icon: Icon(Icons.dashboard_outlined),
@@ -24,21 +33,38 @@ class AppSidebar extends ConsumerWidget {
       ),
       if (role != 'parent') ...[
         const NavigationRailDestination(
-          icon: Icon(Icons.class_outlined),
-          selectedIcon: Icon(Icons.class_),
-          label: Text('Classes'),
+          icon: Icon(Icons.check_circle_outline),
+          selectedIcon: Icon(Icons.check_circle),
+          label: Text('Attendance'),
         ),
+      ],
+      const NavigationRailDestination(
+        icon: Icon(Icons.calendar_month_outlined),
+        selectedIcon: Icon(Icons.calendar_month),
+        label: Text('Calendar'),
+      ),
+      const NavigationRailDestination(
+        icon: Icon(Icons.event_available_outlined),
+        selectedIcon: Icon(Icons.event_available),
+        label: Text('Leave'),
+      ),
+      if (role != 'parent') ...[
         const NavigationRailDestination(
           icon: Icon(Icons.people_outline),
           selectedIcon: Icon(Icons.people),
           label: Text('Students'),
         ),
-      ],
-      if (role != 'parent') ...[
         const NavigationRailDestination(
-          icon: Icon(Icons.check_circle_outline),
-          selectedIcon: Icon(Icons.check_circle),
-          label: Text('Attendance'),
+          icon: Icon(Icons.class_outlined),
+          selectedIcon: Icon(Icons.class_),
+          label: Text('Classes'),
+        ),
+      ],
+      if (role == 'parent') ...[
+        const NavigationRailDestination(
+          icon: Icon(Icons.receipt_long_outlined),
+          selectedIcon: Icon(Icons.receipt_long),
+          label: Text('Fees'),
         ),
       ],
       if (role == 'admin') ...[

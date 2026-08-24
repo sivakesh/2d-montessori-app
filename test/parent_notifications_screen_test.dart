@@ -90,9 +90,12 @@ void main() {
       await tester.pump();
 
       expect(tester.takeException(), isNull);
-      expect(find.byType(NavigationBar), findsNothing);
+      // Parent now has 2 shell destinations (Dashboard, Calendar — added by
+      // the School Calendar feature), so the shared shell renders the real
+      // NavigationBar instead of the single-destination fallback.
+      expect(find.byType(NavigationBar), findsOneWidget);
       expect(find.text('Notifications'), findsOneWidget); // AppBar title
-      expect(find.text('Dashboard'), findsOneWidget); // single nav destination
+      expect(find.text('Dashboard'), findsOneWidget); // nav destination
     },
   );
 

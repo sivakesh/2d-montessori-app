@@ -1,11 +1,18 @@
 import 'package:flutter/material.dart';
 import '../../../../core/widgets/responsive_dialog_shell.dart';
+import '../../models/fee_receipt_model.dart';
 import '../../models/student_fee_assignment_model.dart';
 import '../../services/fee_service.dart';
 
 class FeeCollectionDialog extends StatefulWidget {
-  const FeeCollectionDialog({super.key, required this.assignment});
+  const FeeCollectionDialog({super.key, required this.assignment, this.receipt});
   final StudentFeeAssignmentModel assignment;
+
+  /// Non-null to edit this existing collection instead of recording a new
+  /// one. Same optional-parameter/branch-on-null pattern as
+  /// FeeStructureDialog's `structure` param and FeeAssignmentDialog's
+  /// `assignment` param.
+  final FeeReceiptModel? receipt;
 
   @override
   State<FeeCollectionDialog> createState() => _FeeCollectionDialogState();
@@ -16,11 +23,13 @@ class _FeeCollectionDialogState extends State<FeeCollectionDialog> {
   final _amount = TextEditingController();
   final _ref = TextEditingController();
   final _remarks = TextEditingController();
-  final DateTime _date = DateTime.now();
+  DateTime _date = DateTime.now();
   String _mode = 'cash';
   bool _saving = false;
   bool _loadingAssignment = true;
   StudentFeeAssignmentModel? _latestAssignment;
+
+  bool get _isEdit => widget.receipt != null;
 
   @override
   void initState() {
@@ -38,16 +47,44 @@ class _FeeCollectionDialogState extends State<FeeCollectionDialog> {
 
   Future<void> _loadLatestAssignment() async {
     final latest = await _service.getAssignmentById(widget.assignment.id);
+    final receipt = widget.receipt;
+    // Editing an existing collection: prefill from the receipt (amount,
+    // date, mode, reference) plus its paired transaction (remarks — the
+    // receipt itself has no remarks field, see FeeTransactionModel vs
+    // FeeReceiptModel).
+    String remarks = '';
+    if (receipt != null && receipt.transactionId.isNotEmpty) {
+      final tx = await _service.getTransactionById(receipt.transactionId);
+      remarks = tx?.remarks ?? '';
+    }
     if (!mounted) return;
     final assignment = latest ?? widget.assignment;
     setState(() {
       _latestAssignment = assignment;
-      _mode = _mode.isNotEmpty ? _mode : 'cash';
-      _amount.text = assignment.balanceAmount > 0
-          ? assignment.balanceAmount.toStringAsFixed(0)
-          : '';
+      if (receipt != null) {
+        _amount.text = receipt.amount.toStringAsFixed(0);
+        _mode = receipt.paymentMode.isNotEmpty ? receipt.paymentMode : 'cash';
+        _ref.text = receipt.referenceNo;
+        _remarks.text = remarks;
+        _date = receipt.paymentDate ?? DateTime.now();
+      } else {
+        _mode = _mode.isNotEmpty ? _mode : 'cash';
+        _amount.text = assignment.balanceAmount > 0
+            ? assignment.balanceAmount.toStringAsFixed(0)
+            : '';
+      }
       _loadingAssignment = false;
     });
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      initialDate: _date,
+    );
+    if (picked != null) setState(() => _date = picked);
   }
 
   Future<void> _save() async {
@@ -58,23 +95,37 @@ class _FeeCollectionDialogState extends State<FeeCollectionDialog> {
       );
       return;
     }
-    final currentBalance = _latestAssignment?.balanceAmount ?? widget.assignment.balanceAmount;
-    if (amount > currentBalance) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Amount cannot exceed assignment balance')),
-      );
-      return;
+    final receipt = widget.receipt;
+    if (receipt == null) {
+      final currentBalance = _latestAssignment?.balanceAmount ?? widget.assignment.balanceAmount;
+      if (amount > currentBalance) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Amount cannot exceed assignment balance')),
+        );
+        return;
+      }
     }
     setState(() => _saving = true);
     try {
-      await _service.collectFee(
-        assignmentId: widget.assignment.id,
-        amount: amount,
-        paymentDate: _date,
-        paymentMode: _mode,
-        referenceNo: _ref.text.trim(),
-        remarks: _remarks.text.trim(),
-      );
+      if (receipt != null) {
+        await _service.updateCollection(
+          receiptId: receipt.id,
+          amount: amount,
+          paymentDate: _date,
+          paymentMode: _mode,
+          referenceNo: _ref.text.trim(),
+          remarks: _remarks.text.trim(),
+        );
+      } else {
+        await _service.collectFee(
+          assignmentId: widget.assignment.id,
+          amount: amount,
+          paymentDate: _date,
+          paymentMode: _mode,
+          referenceNo: _ref.text.trim(),
+          remarks: _remarks.text.trim(),
+        );
+      }
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (mounted) {
@@ -91,12 +142,17 @@ class _FeeCollectionDialogState extends State<FeeCollectionDialog> {
   Widget build(BuildContext context) {
     final assignment = _latestAssignment ?? widget.assignment;
     final balance = assignment.balanceAmount;
-    final fullyCollected = balance <= 0;
+    // Only blocks recording a *new* collection against an already-settled
+    // assignment — editing a past collection must stay available even
+    // after the assignment it belongs to is fully paid.
+    final fullyCollected = !_isEdit && balance <= 0;
 
     return ResponsiveDialogShell.form(
       desktopWidth: 540,
       desktopHeight: 520,
-      title: 'Collect Fee - ${widget.assignment.studentName}',
+      title: _isEdit
+          ? 'Edit Collection - ${widget.assignment.studentName}'
+          : 'Collect Fee - ${widget.assignment.studentName}',
       content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -119,13 +175,30 @@ class _FeeCollectionDialogState extends State<FeeCollectionDialog> {
                 decoration: const InputDecoration(labelText: 'Amount'),
                 keyboardType: TextInputType.number,
               ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Payment Date'),
+                subtitle: Text(_date.toIso8601String().split('T').first),
+                trailing: TextButton(
+                  onPressed: fullyCollected ? null : _pickDate,
+                  child: const Text('Change'),
+                ),
+              ),
               DropdownButtonFormField<String>(
                 initialValue: _mode,
                 items: const ['cash', 'upi', 'bank_transfer', 'cheque', 'other'].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-                onChanged: (v) => setState(() => _mode = v ?? _mode),
+                onChanged: fullyCollected ? null : (v) => setState(() => _mode = v ?? _mode),
               ),
-              TextField(controller: _ref, decoration: const InputDecoration(labelText: 'Reference No')),
-              TextField(controller: _remarks, decoration: const InputDecoration(labelText: 'Remarks')),
+              TextField(
+                controller: _ref,
+                enabled: !fullyCollected,
+                decoration: const InputDecoration(labelText: 'Reference No'),
+              ),
+              TextField(
+                controller: _remarks,
+                enabled: !fullyCollected,
+                decoration: const InputDecoration(labelText: 'Remarks'),
+              ),
             ],
           ),
       actions: [

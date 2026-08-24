@@ -30,6 +30,7 @@ import 'package:montessori_app/modules/auth/providers/auth_provider.dart';
 import 'package:montessori_app/modules/classes/data/class_service.dart';
 import 'package:montessori_app/modules/fees/services/fee_service.dart';
 import 'package:montessori_app/modules/finance/widgets/finance_status_chip.dart';
+import 'package:montessori_app/modules/leave/services/leave_service.dart';
 import 'package:montessori_app/modules/mood_checkin/models/mood_checkin_model.dart';
 import 'package:montessori_app/modules/mood_checkin/models/mood_option_model.dart';
 import 'package:montessori_app/modules/mood_checkin/services/mood_checkin_service.dart';
@@ -332,6 +333,7 @@ void main() {
                   firestore: firestore,
                   storage: MockFirebaseStorage(),
                 ),
+            leaveService: LeaveService(firestore: firestore),
           ),
         ),
       );

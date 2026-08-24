@@ -16,14 +16,16 @@ import 'dialogs/fee_receipt_view_dialog.dart';
 import 'dialogs/fee_structure_dialog.dart';
 
 class AdminFeesScreen extends StatefulWidget {
-  const AdminFeesScreen({super.key});
+  const AdminFeesScreen({super.key, FeeService? service}) : _service = service;
+
+  final FeeService? _service;
 
   @override
   State<AdminFeesScreen> createState() => _AdminFeesScreenState();
 }
 
 class _AdminFeesScreenState extends State<AdminFeesScreen> {
-  final _service = FeeService();
+  late final _service = widget._service ?? FeeService();
   int _tab = 0;
   bool _loading = true;
   String? _deletingId;
@@ -58,14 +60,30 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
     await _load();
   }
 
-  Future<void> _openAssignment() async {
-    await showDialog(context: context, barrierDismissible: false, builder: (_) => const FeeAssignmentDialog());
+  Future<void> _openAssignment({StudentFeeAssignmentModel? assignment}) async {
+    await showDialog(context: context, barrierDismissible: false, builder: (_) => FeeAssignmentDialog(assignment: assignment));
     await _load();
   }
 
-  Future<void> _openCollection(StudentFeeAssignmentModel assignment) async {
-    await showDialog(context: context, barrierDismissible: false, builder: (_) => FeeCollectionDialog(assignment: assignment));
+  Future<void> _openCollection(StudentFeeAssignmentModel assignment, {FeeReceiptModel? receipt}) async {
+    await showDialog(context: context, barrierDismissible: false, builder: (_) => FeeCollectionDialog(assignment: assignment, receipt: receipt));
     await _load();
+  }
+
+  /// Opens the Edit Collection dialog for [receipt] — looks up its parent
+  /// assignment first (FeeCollectionDialog requires one for balance
+  /// context), scoped to only that one assignment by id.
+  Future<void> _openEditCollection(FeeReceiptModel receipt) async {
+    final assignment = await _service.getAssignmentById(receipt.assignmentId);
+    if (assignment == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not find the assignment for this collection.')),
+        );
+      }
+      return;
+    }
+    await _openCollection(assignment, receipt: receipt);
   }
 
   Future<void> _openPdf(String url) async {
@@ -139,21 +157,55 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
     }
   }
 
-  Future<void> _deleteReceipt(FeeReceiptModel receipt) async {
-    if (!await _confirmDelete()) return;
+  /// Void-specific confirmation, distinct from the generic [_confirmDelete]
+  /// used elsewhere in this screen: explains the actual effect (balance
+  /// recalculated, record preserved) rather than the generic destructive
+  /// "cannot be undone" wording, since voiding a payment is not the same
+  /// operation as deleting a structure/assignment.
+  Future<bool> _confirmVoid(FeeReceiptModel receipt) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Void Payment'),
+        content: Text(
+          'Void the payment of ₹${receipt.amount.toStringAsFixed(0)} for '
+          '${receipt.studentName}? This will remove it from the collected '
+          'total and add ₹${receipt.amount.toStringAsFixed(0)} back to the '
+          "assignment's outstanding balance. The original payment record is "
+          'preserved for audit — it will no longer count as a valid payment, '
+          'but is not permanently deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Void'),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
+  Future<void> _voidReceipt(FeeReceiptModel receipt) async {
+    if (!await _confirmVoid(receipt)) return;
     setState(() => _deletingId = receipt.id);
     try {
-      await _service.deleteReceipt(receipt.id);
+      await _service.voidReceipt(receipt.id);
       await _load();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Receipt deleted')),
+          const SnackBar(content: Text('Payment voided')),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to delete receipt: $e')),
+          SnackBar(content: Text('Failed to void payment: $e')),
         );
       }
     } finally {
@@ -307,17 +359,28 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
               '${a.className} • ${a.feeStructureName}',
               'Balance: ${a.balanceAmount.toStringAsFixed(0)}',
             ],
-            trailing: IconButton(
-              tooltip: 'Delete',
-              visualDensity: VisualDensity.compact,
-              icon: _deletingId == a.id
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.delete_outline, size: 20, color: Colors.red),
-              onPressed: _deletingId == a.id ? null : () => _deleteAssignment(a),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: 'Edit',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.edit_outlined, size: 20),
+                  onPressed: () => _openAssignment(assignment: a),
+                ),
+                IconButton(
+                  tooltip: 'Delete',
+                  visualDensity: VisualDensity.compact,
+                  icon: _deletingId == a.id
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+                  onPressed: _deletingId == a.id ? null : () => _deleteAssignment(a),
+                ),
+              ],
             ),
           );
         },
@@ -384,14 +447,17 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
                   case 'view':
                     showDialog(context: context, builder: (_) => FeeReceiptViewDialog(receipt: r));
                     break;
+                  case 'edit':
+                    _openEditCollection(r);
+                    break;
                   case 'open_pdf':
                     _openPdf(r.pdfUrl);
                     break;
                   case 'generate_pdf':
                     showDialog(context: context, builder: (_) => FeeReceiptViewDialog(receipt: r));
                     break;
-                  case 'delete':
-                    _deleteReceipt(r);
+                  case 'void':
+                    _voidReceipt(r);
                     break;
                 }
               },
@@ -399,6 +465,10 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
                 const PopupMenuItem(
                   value: 'view',
                   child: ListTile(leading: Icon(Icons.visibility_outlined), title: Text('View'), contentPadding: EdgeInsets.zero),
+                ),
+                const PopupMenuItem(
+                  value: 'edit',
+                  child: ListTile(leading: Icon(Icons.edit_outlined), title: Text('Edit'), contentPadding: EdgeInsets.zero),
                 ),
                 PopupMenuItem(
                   value: 'open_pdf',
@@ -411,10 +481,10 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
                   child: const ListTile(leading: Icon(Icons.picture_as_pdf_outlined), title: Text('Generate PDF'), contentPadding: EdgeInsets.zero),
                 ),
                 const PopupMenuItem(
-                  value: 'delete',
+                  value: 'void',
                   child: ListTile(
-                    leading: Icon(Icons.delete_outline, color: Colors.red),
-                    title: Text('Delete', style: TextStyle(color: Colors.red)),
+                    leading: Icon(Icons.block, color: Colors.red),
+                    title: Text('Void', style: TextStyle(color: Colors.red)),
                     contentPadding: EdgeInsets.zero,
                   ),
                 ),

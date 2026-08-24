@@ -14,7 +14,12 @@ import '../../finance/widgets/finance_status_chip.dart';
 import '../providers/student_provider.dart';
 
 class StudentListScreen extends ConsumerStatefulWidget {
-  const StudentListScreen({super.key});
+  const StudentListScreen({super.key, this.adminService});
+
+  /// Overridable only so tests can inject a fake-Firestore-backed
+  /// AdminStudentService — the same DI seam every service here already
+  /// exposes on its own constructor. Production callers never pass this.
+  final AdminStudentService? adminService;
 
   @override
   ConsumerState<StudentListScreen> createState() => StudentListScreenState();
@@ -23,7 +28,7 @@ class StudentListScreen extends ConsumerStatefulWidget {
 class StudentListScreenState extends ConsumerState<StudentListScreen> {
   final _searchController = TextEditingController();
   final Set<String> _selectedClassIds = {};
-  final _adminService = AdminStudentService();
+  late final _adminService = widget.adminService ?? AdminStudentService();
 
   bool get _isAdmin =>
       (ref.read(currentUserProvider)?.role ?? '').toLowerCase() == 'admin';

@@ -14,16 +14,22 @@ class ClassListScreen extends StatefulWidget {
   const ClassListScreen({
     super.key,
     this.readOnly = false,
+    this.service,
   });
 
   final bool readOnly;
+
+  /// Overridable only so tests can inject a fake-Firestore-backed
+  /// ClassService — the same DI seam every service here already exposes
+  /// on its own constructor. Production callers never pass this.
+  final ClassService? service;
 
   @override
   State<ClassListScreen> createState() => ClassListScreenState();
 }
 
 class ClassListScreenState extends State<ClassListScreen> {
-  final _service = ClassService();
+  late final _service = widget.service ?? ClassService();
   final _searchController = TextEditingController();
 
   @override
