@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/theme/app_colors.dart';
@@ -14,6 +15,13 @@ import 'dialogs/fee_assignment_dialog.dart';
 import 'dialogs/fee_collection_dialog.dart';
 import 'dialogs/fee_receipt_view_dialog.dart';
 import 'dialogs/fee_structure_dialog.dart';
+
+/// Indian Rupee display formatting for the Fees Dashboard metric cards
+/// (e.g. 173900 -> "₹1,73,900"). Display-only — never applied to a stored
+/// or calculated value, only to the string shown on a card.
+final _currencyFormat = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
+
+String _formatCurrency(num? value) => _currencyFormat.format(value ?? 0);
 
 class AdminFeesScreen extends StatefulWidget {
   const AdminFeesScreen({super.key, FeeService? service}) : _service = service;
@@ -232,62 +240,85 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : LayoutBuilder(
-                builder: (context, constraints) {
-                  final cardWidth = constraints.maxWidth >= 1200
-                      ? (constraints.maxWidth - 32) / 3
-                      : constraints.maxWidth >= 800
-                          ? (constraints.maxWidth - 16) / 2
-                          : constraints.maxWidth;
-              return SingleChildScrollView(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Fees', style: Theme.of(context).textTheme.headlineSmall),
-                        const SizedBox(height: 24),
-                        Wrap(
-                          spacing: 16,
-                          runSpacing: 16,
-                          children: [
-                            FeeSummaryCard(label: 'Total Expected', value: _summary['totalExpected']?.toStringAsFixed(0) ?? '0', icon: Icons.receipt_long),
-                            FeeSummaryCard(label: 'Total Collected', value: _summary['totalCollected']?.toStringAsFixed(0) ?? '0', icon: Icons.payments),
-                            FeeSummaryCard(label: 'Outstanding', value: _summary['outstanding']?.toStringAsFixed(0) ?? '0', icon: Icons.warning, color: Colors.orange),
-                            FeeSummaryCard(label: 'Collection %', value: '${_summary['collectionPercent']?.toStringAsFixed(1) ?? '0'}%', icon: Icons.show_chart),
-                            FeeSummaryCard(label: 'Overdue Students', value: '${_summary['overdueStudents'] ?? 0}', icon: Icons.schedule, color: Colors.red),
-                            FeeSummaryCard(label: 'Today\'s Collection', value: _summary['todayCollection']?.toStringAsFixed(0) ?? '0', icon: Icons.today),
-                          ]
-                              .map((card) => SizedBox(width: cardWidth, child: card))
-                              .toList(),
-                        ),
-                        const SizedBox(height: 24),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: const [
-                            'Structures',
-                            'Assignments',
-                            'Collections',
-                            'Receipts',
-                            'Dues',
-                          ].asMap().entries.map((e) {
-                            return ChoiceChip(
-                              label: Text(e.value),
-                              selected: _tab == e.key,
-                              onSelected: (_) => setState(() => _tab = e.key),
-                            );
-                          }).toList(),
-                        ),
-                        const SizedBox(height: 16),
-                        _buildTab(),
-                        // Reserves clearance so the last row can scroll
-                        // fully clear of the floating "Add" FAB.
-                        const SizedBox(height: 24 + AppSizes.fabScrollClearance),
-                      ],
-                    ),
-                  );
-                },
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Fees', style: Theme.of(context).textTheme.headlineSmall),
+                  const SizedBox(height: 24),
+                  _MetricSection(
+                    title: 'Collection Overview',
+                    caption: 'All recorded fee assignments',
+                    cards: [
+                      FeeSummaryCard(
+                        label: 'Total Expected',
+                        value: _formatCurrency(_summary['totalExpected'] as num?),
+                        icon: Icons.receipt_long,
+                      ),
+                      FeeSummaryCard(
+                        label: 'Total Collected',
+                        value: _formatCurrency(_summary['totalCollected'] as num?),
+                        icon: Icons.payments,
+                      ),
+                      FeeSummaryCard(
+                        label: 'Outstanding',
+                        value: _formatCurrency(_summary['outstanding'] as num?),
+                        icon: Icons.warning,
+                        color: Colors.orange,
+                      ),
+                      FeeSummaryCard(
+                        label: 'Collection %',
+                        value: '${(_summary['collectionPercent'] as num?)?.toStringAsFixed(1) ?? '0'}%',
+                        icon: Icons.show_chart,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  _MetricSection(
+                    title: 'Activity & Attention',
+                    caption: 'As of ${DateFormat('MMM d, yyyy').format(DateTime.now())}',
+                    cards: [
+                      FeeSummaryCard(
+                        label: 'Overdue Students',
+                        value: '${_summary['overdueStudents'] ?? 0}',
+                        icon: Icons.schedule,
+                        color: Colors.red,
+                      ),
+                      FeeSummaryCard(
+                        label: 'Today\'s Collection',
+                        value: _formatCurrency(_summary['todayCollection'] as num?),
+                        icon: Icons.today,
+                        subtitle: DateFormat('MMM d, yyyy').format(DateTime.now()),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: const [
+                      'Structures',
+                      'Assignments',
+                      'Collections',
+                      'Receipts',
+                      'Dues',
+                    ].asMap().entries.map((e) {
+                      return ChoiceChip(
+                        label: Text(e.value),
+                        selected: _tab == e.key,
+                        onSelected: (_) => setState(() => _tab = e.key),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildTab(),
+                  // Reserves clearance so the last row can scroll
+                  // fully clear of the floating "Add" FAB.
+                  const SizedBox(height: 24 + AppSizes.fabScrollClearance),
+                ],
               ),
+            ),
     );
   }
 
@@ -524,6 +555,67 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
           );
         },
       );
+  }
+}
+
+/// A titled group of Fees Dashboard metric cards, laid out in a compact
+/// responsive grid: 3 columns on wide desktop, 2 on tablet, 1 on mobile —
+/// matching the breakpoints this screen already used for its metric row.
+/// Grouping only changes presentation; every card still shows the exact
+/// same pre-computed value it always did.
+class _MetricSection extends StatelessWidget {
+  const _MetricSection({
+    required this.title,
+    required this.caption,
+    required this.cards,
+  });
+
+  final String title;
+  final String caption;
+  final List<FeeSummaryCard> cards;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+              ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          caption,
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+        ),
+        const SizedBox(height: 12),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth;
+            final columns = width >= 1200
+                ? 3
+                : width >= 800
+                    ? 2
+                    : 1;
+            return GridView.builder(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: columns,
+                mainAxisSpacing: 16,
+                crossAxisSpacing: 16,
+                mainAxisExtent: 112,
+              ),
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: cards.length,
+              itemBuilder: (context, i) => cards[i],
+            );
+          },
+        ),
+      ],
+    );
   }
 }
 
