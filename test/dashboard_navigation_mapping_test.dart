@@ -246,7 +246,10 @@ void main() {
   });
 
   group('Staff — mobile (AppBottomNav) navigation mapping — same destination, same screen as desktop', () {
-    testWidgets('the bottom nav has exactly the same 6 destinations, in the same order as the sidebar', (tester) async {
+    testWidgets('the bottom nav shows the first 4 sidebar destinations plus More (mobile 5-item cap)', (tester) async {
+      // Staff's 6 desktop destinations exceed the mobile bottom nav's
+      // 5-item cap, so Students/Classes move behind "More" on mobile only
+      // — the sidebar (asserted elsewhere in this file) is unaffected.
       final firestore = FakeFirebaseFirestore();
       await _pumpMobile(tester, _buildStaffDashboard(firestore));
 
@@ -254,7 +257,7 @@ void main() {
           .widgetList<NavigationDestination>(find.byType(NavigationDestination))
           .map((d) => d.label)
           .toList();
-      expect(labels, ['Dashboard', 'Attendance', 'Calendar', 'Leave', 'Students', 'Classes']);
+      expect(labels, ['Dashboard', 'Attendance', 'Calendar', 'Leave', 'More']);
     });
 
     testWidgets('Attendance opens the Attendance screen on mobile too', (tester) async {
@@ -279,10 +282,11 @@ void main() {
       expect(find.byType(AttendanceScreen), findsNothing);
     });
 
-    testWidgets('Classes opens ClassListScreen on mobile too', (tester) async {
+    testWidgets('Classes opens ClassListScreen on mobile too, via the More sheet', (tester) async {
       final firestore = FakeFirebaseFirestore();
       await _pumpMobile(tester, _buildStaffDashboard(firestore));
 
+      await _tapAndSettle(tester, find.text('More'));
       await _tapAndSettle(tester, find.text('Classes'));
 
       expect(find.widgetWithText(AppBar, 'Classes'), findsOneWidget);

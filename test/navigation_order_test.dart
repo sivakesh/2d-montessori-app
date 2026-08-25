@@ -92,16 +92,24 @@ void main() {
       expect(order, ['Dashboard', 'Calendar', 'Leave', 'Fees']);
     });
 
-    testWidgets('AppBottomNav (mobile) uses the exact same order as AppSidebar (desktop) for staff', (tester) async {
+    testWidgets('AppBottomNav (mobile) leads with the same first 4 destinations as AppSidebar (desktop) for staff, then More', (tester) async {
+      // Staff has 6 total destinations — over the 5-item mobile cap (CAL-04
+      // follow-up UX rule) — so the bottom nav shows only its first 4,
+      // followed by a "More" overflow entry, rather than the sidebar's full
+      // list. The full staff More-menu behavior (Students/Classes reachable
+      // from it) is covered in app_bottom_nav_more_menu_test.dart.
       final sidebarOrder = await _sidebarOrder(tester, 'staff');
       final bottomOrder = await _bottomNavOrder(tester, 'staff');
-      expect(bottomOrder, sidebarOrder);
+      expect(bottomOrder, [...sidebarOrder.take(4), 'More']);
     });
 
-    testWidgets('AppBottomNav (mobile) uses the exact same order as AppSidebar (desktop) for admin', (tester) async {
+    testWidgets('AppBottomNav (mobile) leads with the same first 4 destinations as AppSidebar (desktop) for admin, then More', (tester) async {
+      // Admin has 7 total destinations — same 5-item mobile cap applies.
+      // Students/Classes/Admin all move behind "More" on mobile; desktop's
+      // AppSidebar is unaffected and still shows all 7 directly.
       final sidebarOrder = await _sidebarOrder(tester, 'admin');
       final bottomOrder = await _bottomNavOrder(tester, 'admin');
-      expect(bottomOrder, sidebarOrder);
+      expect(bottomOrder, [...sidebarOrder.take(4), 'More']);
     });
 
     testWidgets('reordering did not add or remove any staff destination', (tester) async {

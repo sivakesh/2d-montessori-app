@@ -61,8 +61,13 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.byType(NavigationBar), findsOneWidget);
     expect(find.text('Dashboard'), findsOneWidget);
-    expect(find.text('Classes'), findsOneWidget);
     expect(find.text('Attendance'), findsOneWidget);
+    // Staff has 6 total destinations, over the 5-item mobile cap, so
+    // Classes now lives behind "More" rather than directly on the bar —
+    // see app_bottom_nav_more_menu_test.dart for the full CAL-04-style
+    // overflow coverage.
+    expect(find.text('Classes'), findsNothing);
+    expect(find.text('More'), findsOneWidget);
   });
 
   testWidgets('admin (multiple destinations, including Admin) still uses the real NavigationBar', (
@@ -72,7 +77,11 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.byType(NavigationBar), findsOneWidget);
-    expect(find.text('Admin'), findsOneWidget);
+    // Admin has 7 total destinations, over the 5-item mobile cap, so Admin
+    // now lives behind "More" rather than directly on the bar — see
+    // app_bottom_nav_more_menu_test.dart for the full overflow coverage.
+    expect(find.text('Admin'), findsNothing);
+    expect(find.text('More'), findsOneWidget);
   });
 
   group('parent nav bar at required mobile widths', () {

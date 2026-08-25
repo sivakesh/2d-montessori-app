@@ -254,6 +254,35 @@ void main() {
     expect(find.text('No calendar items yet.'), findsOneWidget);
   });
 
+  testWidgets('10. Week navigation changes the visible day-column dates, and Today returns to the current week', (tester) async {
+    final firestore = FakeFirebaseFirestore();
+    final service = CalendarService(firestore: firestore);
+    await _seedEvent(
+      service,
+      title: 'Something',
+      date: DateTime.now(),
+      audience: 'Public',
+      status: CalendarEventStatus.published,
+    );
+    await tester.pumpWidget(_withRole('parent', CalendarView(service: service)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Week'));
+    await tester.pumpAndSettle();
+
+    final today = DateTime.now();
+    expect(find.text('${today.day}'), findsOneWidget);
+
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.chevron_right));
+    await tester.pumpAndSettle();
+    final nextWeekSameDay = today.add(const Duration(days: 7));
+    expect(find.text('${nextWeekSameDay.day}'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.text('Today'));
+    await tester.pumpAndSettle();
+    expect(find.text('${today.day}'), findsOneWidget);
+  });
+
   testWidgets('9b. Admin still sees Draft/Archived items, and the status chip reflects each', (tester) async {
     final firestore = FakeFirebaseFirestore();
     final service = CalendarService(firestore: firestore);
