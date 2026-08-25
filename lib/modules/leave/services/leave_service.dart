@@ -81,6 +81,17 @@ class LeaveService {
     if (endDate.isBefore(startDate)) {
       throw ArgumentError('End date cannot be before start date.');
     }
+    final workingDays = countWorkingDays(startDate, endDate);
+    if (workingDays == 0) {
+      throw ArgumentError(
+        'Staff leave must include at least one working day (Monday-Friday).',
+      );
+    }
+    if (workingDays > StaffLeavePolicy.maxWorkingDays) {
+      throw ArgumentError(
+        'Staff leave cannot exceed ${StaffLeavePolicy.maxWorkingDays} working days.',
+      );
+    }
     final doc = _requests.doc();
     await doc.set({
       'requesterId': requesterId,
@@ -220,10 +231,15 @@ class LeaveService {
     if (endDate.isBefore(startDate)) {
       throw ArgumentError('End date cannot be before start date.');
     }
-    final inclusiveDays = endDate.difference(startDate).inDays + 1;
-    if (inclusiveDays > StudentLeavePolicy.maxDays) {
+    final workingDays = countWorkingDays(startDate, endDate);
+    if (workingDays == 0) {
       throw ArgumentError(
-        'Student leave cannot exceed ${StudentLeavePolicy.maxDays} calendar days.',
+        'Student leave must include at least one working day (Monday-Friday).',
+      );
+    }
+    if (workingDays > StudentLeavePolicy.maxWorkingDays) {
+      throw ArgumentError(
+        'Student leave cannot exceed ${StudentLeavePolicy.maxWorkingDays} working days.',
       );
     }
     if (requesterRole == LeaveRequesterRole.parent) {

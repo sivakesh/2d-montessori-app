@@ -461,8 +461,8 @@ void main() {
         requesterId: 'staff-2',
         requesterName: 'Ravi',
         leaveType: LeaveType.earned,
-        startDate: DateTime(2026, 9, 5),
-        endDate: DateTime(2026, 9, 6),
+        startDate: DateTime(2026, 9, 3),
+        endDate: DateTime(2026, 9, 4),
         reason: 'Family function',
       );
       await service.submitStudentLeaveRequest(

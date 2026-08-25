@@ -260,7 +260,15 @@ void main() {
       final firestore = FakeFirebaseFirestore();
       await _seedStaff(firestore, 'staff-2', 'Malini');
       final leaveService = _leaveService(firestore);
-      final farFuture = DateTime.now().toLocal().add(const Duration(days: 60));
+      // 60 days out, nudged onto a weekday if it lands on a weekend — the
+      // Staff Leave 5-working-day cap rejects a weekend-only request, and
+      // this date only needs to be "in the future", not any specific day.
+      var farFuture = DateTime.now().toLocal().add(const Duration(days: 60));
+      if (farFuture.weekday == DateTime.saturday) {
+        farFuture = farFuture.add(const Duration(days: 2));
+      } else if (farFuture.weekday == DateTime.sunday) {
+        farFuture = farFuture.add(const Duration(days: 1));
+      }
       final id = await leaveService.submitLeaveRequest(
         requesterId: 'staff-2',
         requesterName: 'Malini',

@@ -67,6 +67,25 @@ class _LeaveRequestDialogState extends State<LeaveRequestDialog> {
       );
       return;
     }
+    final workingDays = countWorkingDays(_startDate, _endDate);
+    if (workingDays == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Leave must include at least one working day (Monday-Friday).'),
+        ),
+      );
+      return;
+    }
+    if (workingDays > StaffLeavePolicy.maxWorkingDays) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Staff leave cannot exceed ${StaffLeavePolicy.maxWorkingDays} working days.',
+          ),
+        ),
+      );
+      return;
+    }
 
     setState(() => _saving = true);
     try {

@@ -70,27 +70,19 @@ class _StudentLeaveRequestDialogState extends State<StudentLeaveRequestDialog> {
     super.dispose();
   }
 
-  // The end date's picker is capped at start + (maxDays - 1) so the 5-day
-  // limit is discoverable up front, rather than only surfacing as a
-  // rejection after the user has already picked a longer range.
-  DateTime get _maxEndDate =>
-      _startDate.add(const Duration(days: StudentLeavePolicy.maxDays - 1));
-
   Future<void> _pickDate({required bool isStart}) async {
     final initial = isStart ? _startDate : _endDate;
     final picked = await showDatePicker(
       context: context,
       initialDate: initial,
       firstDate: isStart ? DateTime(2020) : _startDate,
-      lastDate: isStart ? DateTime(2100) : _maxEndDate,
+      lastDate: DateTime(2100),
     );
     if (picked == null) return;
     setState(() {
       if (isStart) {
         _startDate = picked;
-        if (_endDate.isBefore(_startDate) || _endDate.isAfter(_maxEndDate)) {
-          _endDate = _startDate;
-        }
+        if (_endDate.isBefore(_startDate)) _endDate = _startDate;
       } else {
         _endDate = picked;
       }
@@ -193,12 +185,20 @@ class _StudentLeaveRequestDialogState extends State<StudentLeaveRequestDialog> {
       );
       return;
     }
-    final inclusiveDays = _endDate.difference(_startDate).inDays + 1;
-    if (inclusiveDays > StudentLeavePolicy.maxDays) {
+    final workingDays = countWorkingDays(_startDate, _endDate);
+    if (workingDays == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Leave must include at least one working day (Monday-Friday).'),
+        ),
+      );
+      return;
+    }
+    if (workingDays > StudentLeavePolicy.maxWorkingDays) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Student leave cannot exceed ${StudentLeavePolicy.maxDays} calendar days.',
+            'Student leave cannot exceed ${StudentLeavePolicy.maxWorkingDays} working days.',
           ),
         ),
       );

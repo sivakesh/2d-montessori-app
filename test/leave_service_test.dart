@@ -83,8 +83,8 @@ void main() {
         requesterId: 'staff-2',
         requesterName: 'Ravi',
         leaveType: LeaveType.earned,
-        startDate: DateTime(2026, 9, 5),
-        endDate: DateTime(2026, 9, 6),
+        startDate: DateTime(2026, 9, 3),
+        endDate: DateTime(2026, 9, 4),
         reason: 'Family function',
       );
 
@@ -109,8 +109,8 @@ void main() {
         requesterId: 'staff-2',
         requesterName: 'Ravi',
         leaveType: LeaveType.earned,
-        startDate: DateTime(2026, 9, 5),
-        endDate: DateTime(2026, 9, 6),
+        startDate: DateTime(2026, 9, 3),
+        endDate: DateTime(2026, 9, 4),
         reason: 'Family function',
       );
 
@@ -241,6 +241,208 @@ void main() {
         ),
         throwsArgumentError,
       );
+    });
+  });
+
+  // countWorkingDays is the single source of truth Staff Leave's 5-day cap
+  // is built on — it must count only Monday-Friday, never Saturday/Sunday,
+  // regardless of how the range happens to be shaped.
+  group('countWorkingDays', () {
+    test('Mon-Fri is 5 working days', () {
+      expect(
+        countWorkingDays(DateTime(2026, 9, 7), DateTime(2026, 9, 11)),
+        5,
+      );
+    });
+
+    test('Mon-Sat is 5 working days (Saturday not counted)', () {
+      expect(
+        countWorkingDays(DateTime(2026, 9, 7), DateTime(2026, 9, 12)),
+        5,
+      );
+    });
+
+    test('Mon-Sun is 5 working days (Saturday and Sunday not counted)', () {
+      expect(
+        countWorkingDays(DateTime(2026, 9, 7), DateTime(2026, 9, 13)),
+        5,
+      );
+    });
+
+    test('Fri-Tue is 3 working days (weekend in the middle skipped)', () {
+      expect(
+        countWorkingDays(DateTime(2026, 9, 11), DateTime(2026, 9, 15)),
+        3,
+      );
+    });
+
+    test('Mon to the following Mon is 6 working days', () {
+      expect(
+        countWorkingDays(DateTime(2026, 9, 7), DateTime(2026, 9, 14)),
+        6,
+      );
+    });
+
+    test('a weekend-only range is 0 working days', () {
+      expect(
+        countWorkingDays(DateTime(2026, 9, 12), DateTime(2026, 9, 13)),
+        0,
+      );
+    });
+
+    test('a range spanning multiple weekends counts only the weekdays in it', () {
+      // Mon Sep 7 -> Tue Sep 22: three partial/full weeks, two weekends
+      // (Sep 12-13 and Sep 19-20) sitting inside the range.
+      expect(
+        countWorkingDays(DateTime(2026, 9, 7), DateTime(2026, 9, 22)),
+        12,
+      );
+    });
+  });
+
+  group('LeaveService.submitLeaveRequest — 5-working-day cap', () {
+    test('Mon-Fri (5 working days) is accepted', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      final id = await service.submitLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Asha',
+        leaveType: LeaveType.earned,
+        startDate: DateTime(2026, 9, 7),
+        endDate: DateTime(2026, 9, 11),
+        reason: 'Full working week off',
+      );
+      expect(id, isNotEmpty);
+    });
+
+    test('Mon-Sat (5 working days, weekend spillover) is accepted', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      final id = await service.submitLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Asha',
+        leaveType: LeaveType.earned,
+        startDate: DateTime(2026, 9, 7),
+        endDate: DateTime(2026, 9, 12),
+        reason: 'Week off running into Saturday',
+      );
+      expect(id, isNotEmpty);
+    });
+
+    test('Mon-Sun (5 working days, full weekend spillover) is accepted', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      final id = await service.submitLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Asha',
+        leaveType: LeaveType.earned,
+        startDate: DateTime(2026, 9, 7),
+        endDate: DateTime(2026, 9, 13),
+        reason: 'Week off running into the full weekend',
+      );
+      expect(id, isNotEmpty);
+    });
+
+    test('Fri-Tue (3 working days) is accepted', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      final id = await service.submitLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Asha',
+        leaveType: LeaveType.casual,
+        startDate: DateTime(2026, 9, 11),
+        endDate: DateTime(2026, 9, 15),
+        reason: 'Long weekend trip',
+      );
+      expect(id, isNotEmpty);
+    });
+
+    test('Mon to the following Mon (6 working days) is rejected', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      expect(
+        () => service.submitLeaveRequest(
+          requesterId: 'staff-1',
+          requesterName: 'Asha',
+          leaveType: LeaveType.earned,
+          startDate: DateTime(2026, 9, 7),
+          endDate: DateTime(2026, 9, 14),
+          reason: 'Two work weeks',
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('a weekend-only range (0 working days) is rejected', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      expect(
+        () => service.submitLeaveRequest(
+          requesterId: 'staff-1',
+          requesterName: 'Asha',
+          leaveType: LeaveType.casual,
+          startDate: DateTime(2026, 9, 12),
+          endDate: DateTime(2026, 9, 13),
+          reason: 'Weekend only',
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('a range spanning multiple weekends but exceeding 5 working days is rejected', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      expect(
+        () => service.submitLeaveRequest(
+          requesterId: 'staff-1',
+          requesterName: 'Asha',
+          leaveType: LeaveType.earned,
+          startDate: DateTime(2026, 9, 7),
+          endDate: DateTime(2026, 9, 22),
+          reason: 'Extended trip across three weeks',
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('a rejected over-cap request writes nothing to Firestore', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      try {
+        await service.submitLeaveRequest(
+          requesterId: 'staff-1',
+          requesterName: 'Asha',
+          leaveType: LeaveType.earned,
+          startDate: DateTime(2026, 9, 7),
+          endDate: DateTime(2026, 9, 14),
+          reason: 'Two work weeks',
+        );
+      } catch (_) {}
+
+      final snap = await firestore.collection('staff_leave_requests').get();
+      expect(snap.docs, isEmpty);
+    });
+
+    // Regression: short, everyday leave requests (well within the cap)
+    // submit and can still be taken through the full Pending -> Approved
+    // lifecycle exactly as before this rule was added.
+    test('regression: an ordinary short leave request still submits and can be approved', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      final id = await service.submitLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Asha',
+        leaveType: LeaveType.sick,
+        startDate: DateTime(2026, 9, 8),
+        endDate: DateTime(2026, 9, 9),
+        reason: 'Fever',
+      );
+
+      await service.approveLeaveRequest(id, reviewedBy: 'admin-1');
+
+      final all = await service.getAllRequests();
+      final approved = all.singleWhere((r) => r.id == id);
+      expect(approved.status, LeaveStatus.approved);
     });
   });
 }

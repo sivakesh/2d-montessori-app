@@ -149,7 +149,7 @@ void main() {
       requesterName: 'A Staff Member With A Reasonably Long Display Name',
       leaveType: 'Earned Leave',
       startDate: DateTime(2026, 9, 1),
-      endDate: DateTime(2026, 9, 10),
+      endDate: DateTime(2026, 9, 7),
       reason:
           'Travelling out of town for a family wedding and will not be reachable for the full duration of this leave request.',
     );
@@ -199,7 +199,7 @@ void main() {
       requesterName: 'A Staff Member With A Reasonably Long Display Name',
       leaveType: 'Earned Leave',
       startDate: DateTime(2026, 9, 1),
-      endDate: DateTime(2026, 9, 10),
+      endDate: DateTime(2026, 9, 7),
       reason: 'Travelling out of town for a family wedding for the full duration of this leave request.',
     );
 

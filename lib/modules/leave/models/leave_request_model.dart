@@ -39,12 +39,50 @@ class LeaveRequesterRole {
   static const parent = 'parent';
 }
 
-/// A student leave request may span at most this many calendar days
-/// (inclusive of both the start and end date) — enforced in both
-/// [LeaveService.submitStudentLeaveRequest] and the submission dialog, so
-/// neither a UI slip nor a direct service call can create a longer one.
+/// A student leave request may span at most this many *working* days
+/// (Monday-Friday) — the same rule, cap, and [countWorkingDays]
+/// calculation as [StaffLeavePolicy]. Enforced in
+/// [LeaveService.submitStudentLeaveRequest] — the single place every
+/// Student Leave request (submission dialog or direct service call) is
+/// created — so the rule can't be bypassed by a client skipping the
+/// dialog's own check.
 class StudentLeavePolicy {
-  static const maxDays = 5;
+  static const maxWorkingDays = 5;
+}
+
+/// Counts the Monday-through-Friday days within the inclusive `[start,
+/// end]` range — the single source of truth for "working days" so both
+/// Staff Leave's and Student Leave's maximum-duration rules (see
+/// [StaffLeavePolicy] and [StudentLeavePolicy]) are computed identically
+/// wherever a leave request can be created, rather than each caller
+/// re-deriving it (and risking counting Saturday/Sunday as leave days, as a
+/// naive calendar-day count would). Only the date components of
+/// [start]/[end] are used, so any time-of-day component is ignored.
+int countWorkingDays(DateTime start, DateTime end) {
+  final startDay = DateTime(start.year, start.month, start.day);
+  final endDay = DateTime(end.year, end.month, end.day);
+  var count = 0;
+  for (var day = startDay;
+      !day.isAfter(endDay);
+      day = day.add(const Duration(days: 1))) {
+    if (day.weekday != DateTime.saturday && day.weekday != DateTime.sunday) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/// A staff leave request may span at most this many *working* days
+/// (Monday-Friday). The date range itself may still include weekends —
+/// they simply aren't counted toward the limit — so e.g. a Monday-to-Sunday
+/// request is 5 working days and is allowed, while a Monday-to-following-
+/// Monday request is 6 working days and is rejected. Enforced in
+/// [LeaveService.submitLeaveRequest] — the single place every Staff Leave
+/// request (submission dialog or direct service call) is created — via
+/// [countWorkingDays], so the rule can't be bypassed by a client skipping
+/// the dialog's own check.
+class StaffLeavePolicy {
+  static const maxWorkingDays = 5;
 }
 
 class LeaveRequestModel {

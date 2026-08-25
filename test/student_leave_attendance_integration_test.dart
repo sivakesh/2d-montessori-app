@@ -3,7 +3,8 @@
 //    whose Approved leave range covers the queried date — not a day
 //    before/after the range, not a Pending/Rejected request, and not a
 //    Staff-subject request.
-//  - The 5-calendar-day cap on student leave requests, enforced in
+//  - The 5-working-day cap on student leave requests (shared with Staff
+//    Leave via countWorkingDays), enforced in
 //    LeaveService.submitStudentLeaveRequest (the UI's own dialog-level
 //    validation is exercised in calendar_leave_responsive_test.dart /
 //    parent_student_leave_test.dart via the actual submit flow).
@@ -335,8 +336,11 @@ void main() {
     });
   });
 
-  group('LeaveService.submitStudentLeaveRequest — 5-calendar-day cap', () {
-    test('exactly 5 inclusive days is accepted', () async {
+  // Student Leave now shares the exact same 5-working-day policy (and the
+  // same countWorkingDays calculation) as Staff Leave — it no longer counts
+  // calendar days, so Saturday/Sunday never count toward the limit.
+  group('LeaveService.submitStudentLeaveRequest — 5-working-day cap', () {
+    test('Mon-Fri (5 working days) is accepted', () async {
       final firestore = FakeFirebaseFirestore();
       final service = _service(firestore);
       final id = await service.submitStudentLeaveRequest(
@@ -346,14 +350,65 @@ void main() {
         studentId: 'student-1',
         studentName: 'Aarav',
         leaveType: LeaveType.earned,
-        startDate: DateTime(2026, 9, 1),
-        endDate: DateTime(2026, 9, 5),
+        startDate: DateTime(2026, 9, 7),
+        endDate: DateTime(2026, 9, 11),
         reason: 'Family travel',
       );
       expect(id, isNotEmpty);
     });
 
-    test('6 inclusive days is rejected', () async {
+    test('Mon-Sat (5 working days, weekend spillover) is accepted', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      final id = await service.submitStudentLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Teacher Priya',
+        requesterRole: LeaveRequesterRole.staff,
+        studentId: 'student-1',
+        studentName: 'Aarav',
+        leaveType: LeaveType.earned,
+        startDate: DateTime(2026, 9, 7),
+        endDate: DateTime(2026, 9, 12),
+        reason: 'Family travel running into Saturday',
+      );
+      expect(id, isNotEmpty);
+    });
+
+    test('Mon-Sun (5 working days, full weekend spillover) is accepted', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      final id = await service.submitStudentLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Teacher Priya',
+        requesterRole: LeaveRequesterRole.staff,
+        studentId: 'student-1',
+        studentName: 'Aarav',
+        leaveType: LeaveType.earned,
+        startDate: DateTime(2026, 9, 7),
+        endDate: DateTime(2026, 9, 13),
+        reason: 'Family travel running into the full weekend',
+      );
+      expect(id, isNotEmpty);
+    });
+
+    test('Fri-Tue (3 working days) is accepted', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      final id = await service.submitStudentLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Teacher Priya',
+        requesterRole: LeaveRequesterRole.staff,
+        studentId: 'student-1',
+        studentName: 'Aarav',
+        leaveType: LeaveType.casual,
+        startDate: DateTime(2026, 9, 11),
+        endDate: DateTime(2026, 9, 15),
+        reason: 'Long weekend trip',
+      );
+      expect(id, isNotEmpty);
+    });
+
+    test('Mon to the following Mon (6 working days) is rejected', () async {
       final firestore = FakeFirebaseFirestore();
       final service = _service(firestore);
       expect(
@@ -364,9 +419,47 @@ void main() {
           studentId: 'student-1',
           studentName: 'Aarav',
           leaveType: LeaveType.earned,
-          startDate: DateTime(2026, 9, 1),
-          endDate: DateTime(2026, 9, 6),
-          reason: 'Family travel',
+          startDate: DateTime(2026, 9, 7),
+          endDate: DateTime(2026, 9, 14),
+          reason: 'Two work weeks',
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('a weekend-only range (0 working days) is rejected', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      expect(
+        () => service.submitStudentLeaveRequest(
+          requesterId: 'staff-1',
+          requesterName: 'Teacher Priya',
+          requesterRole: LeaveRequesterRole.staff,
+          studentId: 'student-1',
+          studentName: 'Aarav',
+          leaveType: LeaveType.casual,
+          startDate: DateTime(2026, 9, 12),
+          endDate: DateTime(2026, 9, 13),
+          reason: 'Weekend only',
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('a range spanning multiple weekends but exceeding 5 working days is rejected', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      expect(
+        () => service.submitStudentLeaveRequest(
+          requesterId: 'staff-1',
+          requesterName: 'Teacher Priya',
+          requesterRole: LeaveRequesterRole.staff,
+          studentId: 'student-1',
+          studentName: 'Aarav',
+          leaveType: LeaveType.earned,
+          startDate: DateTime(2026, 9, 7),
+          endDate: DateTime(2026, 9, 22),
+          reason: 'Extended trip across three weeks',
         ),
         throwsArgumentError,
       );
@@ -389,7 +482,7 @@ void main() {
       expect(id, isNotEmpty);
     });
 
-    test('a rejected over-limit request writes nothing to Firestore', () async {
+    test('a rejected over-cap request writes nothing to Firestore', () async {
       final firestore = FakeFirebaseFirestore();
       final service = _service(firestore);
       try {
@@ -400,9 +493,9 @@ void main() {
           studentId: 'student-1',
           studentName: 'Aarav',
           leaveType: LeaveType.earned,
-          startDate: DateTime(2026, 9, 1),
-          endDate: DateTime(2026, 9, 20),
-          reason: 'Long trip',
+          startDate: DateTime(2026, 9, 7),
+          endDate: DateTime(2026, 9, 14),
+          reason: 'Two work weeks',
         );
       } catch (_) {}
 
@@ -410,18 +503,52 @@ void main() {
       expect(snap.docs, isEmpty);
     });
 
-    test('the 5-day cap does not apply to Staff Leave (only Student Leave)', () async {
+    test(
+        'a range that would have exceeded the old 5-calendar-day cap is now '
+        'accepted under the shared 5-working-day policy', () async {
       final firestore = FakeFirebaseFirestore();
       final service = _service(firestore);
-      final id = await service.submitLeaveRequest(
+      // Wed Sep 2 -> Tue Sep 8, 2026: 7 calendar days (over the old Student
+      // Leave calendar-day cap) but only 5 working days (Wed-Fri, then
+      // Mon-Tue, skipping the Sep 5-6 weekend) — accepted now that Student
+      // Leave shares Staff Leave's working-day policy.
+      final id = await service.submitStudentLeaveRequest(
         requesterId: 'staff-1',
         requesterName: 'Teacher Priya',
+        requesterRole: LeaveRequesterRole.staff,
+        studentId: 'student-1',
+        studentName: 'Aarav',
         leaveType: LeaveType.earned,
-        startDate: DateTime(2026, 9, 1),
-        endDate: DateTime(2026, 9, 20),
-        reason: 'Long personal trip',
+        startDate: DateTime(2026, 9, 2),
+        endDate: DateTime(2026, 9, 8),
+        reason: 'Family travel spanning a weekend',
       );
       expect(id, isNotEmpty);
+    });
+
+    // Regression: an ordinary short Student Leave request (well within the
+    // cap) still submits and can be taken through the full
+    // Pending -> Approved lifecycle exactly as before this rule changed.
+    test('regression: an ordinary short student leave request still submits and can be approved', () async {
+      final firestore = FakeFirebaseFirestore();
+      final service = _service(firestore);
+      final id = await service.submitStudentLeaveRequest(
+        requesterId: 'staff-1',
+        requesterName: 'Teacher Priya',
+        requesterRole: LeaveRequesterRole.staff,
+        studentId: 'student-1',
+        studentName: 'Aarav',
+        leaveType: LeaveType.sick,
+        startDate: DateTime(2026, 9, 8),
+        endDate: DateTime(2026, 9, 9),
+        reason: 'Fever',
+      );
+
+      await service.approveLeaveRequest(id, reviewedBy: 'admin-1');
+
+      final all = await service.getAllStudentLeaveRequests();
+      final approved = all.singleWhere((r) => r.id == id);
+      expect(approved.status, LeaveStatus.approved);
     });
   });
 }
