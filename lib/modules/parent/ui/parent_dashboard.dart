@@ -7,6 +7,9 @@ import '../../../core/layout/responsive_layout.dart';
 import '../../../core/layout/sidebar.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_sizes.dart';
+import '../../admin/settings/models/academic_year_matching.dart';
+import '../../admin/settings/models/school_settings_model.dart' show kDefaultSchoolId;
+import '../../admin/settings/providers/academic_year_provider.dart';
 import '../../admin/students/models/admin_student_model.dart';
 import '../../calendar/ui/calendar_view.dart';
 import '../../admin/notifications/data/admin_notification_service.dart';
@@ -128,9 +131,31 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
     final classNames = <String, String>{
       for (final doc in classes) doc.id: doc.data()['name']?.toString() ?? '-',
     };
+    // AY-IMPLEMENT-02-B: resolved through the canonical `academicYearId`
+    // when a Class has one — via the same shared AcademicYearService every
+    // other Academic-Year-aware screen already reads — falling back to the
+    // legacy `academicYear` string for a Class that hasn't been migrated
+    // yet. Fetched once for the whole dashboard load, not per child/class.
+    // Defensive the same way notifications/leave requests below already
+    // are: a transient failure here only degrades the displayed academic
+    // year back to each Class's own legacy string — it never blocks the
+    // rest of the dashboard from loading.
+    var academicYearNamesById = const <String, String>{};
+    try {
+      final academicYearService = ref.read(academicYearServiceProvider);
+      final academicYears = await academicYearService.getAllAcademicYears(schoolId: kDefaultSchoolId);
+      academicYearNamesById = {for (final year in academicYears) year.id: year.name};
+    } catch (_) {
+      // academicYearNamesById stays empty — resolveClassAcademicYearLabel
+      // falls back to each Class's own academicYear string.
+    }
     final classAcademicYears = <String, String>{
       for (final doc in classes)
-        doc.id: doc.data()['academicYear']?.toString() ?? '',
+        doc.id: resolveClassAcademicYearLabel(
+          academicYearId: doc.data()['academicYearId']?.toString() ?? '',
+          academicYear: doc.data()['academicYear']?.toString() ?? '',
+          academicYearNamesById: academicYearNamesById,
+        ),
     };
 
     // Notifications are fetched separately from children/attendance/fees so

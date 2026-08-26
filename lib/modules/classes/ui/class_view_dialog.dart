@@ -1,25 +1,35 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/widgets/responsive_dialog_shell.dart';
 import '../../admin/models/admin_class_model.dart';
+import '../../admin/settings/models/academic_year_matching.dart';
+import '../../admin/settings/providers/academic_year_provider.dart';
 import '../data/class_service.dart';
 
-class ClassViewDialog extends StatefulWidget {
+class ClassViewDialog extends ConsumerStatefulWidget {
   const ClassViewDialog({super.key, required this.classId});
 
   final String classId;
 
   @override
-  State<ClassViewDialog> createState() => _ClassViewDialogState();
+  ConsumerState<ClassViewDialog> createState() => _ClassViewDialogState();
 }
 
-class _ClassViewDialogState extends State<ClassViewDialog> {
+class _ClassViewDialogState extends ConsumerState<ClassViewDialog> {
   final _service = ClassService();
   int _tab = 0;
 
   @override
   Widget build(BuildContext context) {
+    // AY-IMPLEMENT-02-B: loaded once via the same shared provider every
+    // other Academic-Year-aware screen already reads — never a second,
+    // dialog-specific Academic Year query.
+    final academicYearNamesById = <String, String>{
+      for (final year in ref.watch(academicYearsProvider).valueOrNull ?? const [])
+        year.id: year.name,
+    };
     return ResponsiveDialogShell(
       desktopWidth: 820,
       desktopHeight: 680,
@@ -29,11 +39,21 @@ class _ClassViewDialogState extends State<ClassViewDialog> {
             if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
             final data = snapshot.data!.data() ?? const <String, dynamic>{};
             final model = AdminClassModel.fromMap(widget.classId, data);
+            final resolvedAcademicYear = resolveClassAcademicYearLabel(
+              academicYearId: model.academicYearId,
+              academicYear: model.academicYear,
+              academicYearNamesById: academicYearNamesById,
+            );
+            // Same "id set but unresolved" vs. "nothing at all" distinction
+            // as class_list_screen.dart's own row — never an invented name.
+            final academicYearLabel = resolvedAcademicYear.isNotEmpty
+                ? resolvedAcademicYear
+                : (model.academicYearId.isNotEmpty ? 'Unresolved' : '-');
             return Column(
               children: [
                 ListTile(
                   title: Text(model.name),
-                  subtitle: Text(model.academicYear.isEmpty ? '-' : model.academicYear),
+                  subtitle: Text(academicYearLabel),
                   trailing: IconButton(
                     icon: const Icon(Icons.close),
                     onPressed: () => Navigator.pop(context),
@@ -54,7 +74,7 @@ class _ClassViewDialogState extends State<ClassViewDialog> {
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: switch (_tab) {
-                      0 => _buildOverview(model),
+                      0 => _buildOverview(model, academicYearLabel),
                       _ => _buildStudents(),
                     },
                   ),
@@ -66,12 +86,12 @@ class _ClassViewDialogState extends State<ClassViewDialog> {
     );
   }
 
-  Widget _buildOverview(AdminClassModel model) {
+  Widget _buildOverview(AdminClassModel model, String academicYearLabel) {
     return ListView(
       children: [
         _row('Class Name', model.name),
         _row('Section', model.section.isEmpty ? '-' : model.section),
-        _row('Academic Year', model.academicYear.isEmpty ? '-' : model.academicYear),
+        _row('Academic Year', academicYearLabel),
         _row('Capacity', model.capacity?.toString() ?? '-'),
         FutureBuilder<int>(
           future: _service.getStudentCountByClassId(widget.classId),

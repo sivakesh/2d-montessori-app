@@ -15,6 +15,7 @@ import 'admin_sidebar.dart';
 import '../../../admin/screens/admin_session_logs_screen.dart';
 import '../../calendar/ui/admin_calendar_screen.dart';
 import '../../leave/ui/admin_leave_screen.dart';
+import '../settings/ui/admin_settings_screen.dart';
 
 class AdminLayout extends ConsumerWidget {
   const AdminLayout({
@@ -142,6 +143,8 @@ class AdminLayout extends ConsumerWidget {
         label: 'Settings',
         icon: Icons.settings_outlined,
         route: 'settings',
+        screenIndex: 11,
+        builder: (_) => const AdminSettingsScreen(),
       ),
     ];
 
@@ -232,12 +235,13 @@ class AdminLayout extends ConsumerWidget {
                   selectedIndex: selectedIndex,
                   onDestinationSelected: (index) {
                     if (index == selectedIndex) return;
-                    // Reports and Settings have no screen yet, matching the
-                    // mobile "More Modules" sheet's placeholder behavior.
-                    if (index == 10 || index == 11) {
-                      final label = index == 10 ? 'Reports' : 'Settings';
+                    // Reports has no screen yet, matching the mobile "More
+                    // Modules" sheet's placeholder behavior. Settings now
+                    // has a real screen (see below) — only Reports keeps
+                    // this placeholder.
+                    if (index == 10) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('$label is coming soon')),
+                        const SnackBar(content: Text('Reports is coming soon')),
                       );
                       return;
                     }
@@ -252,6 +256,7 @@ class AdminLayout extends ConsumerWidget {
                       7 => const AdminFinanceScreen(),
                       8 => const AdminAttendanceManagementScreen(),
                       9 => const AdminSessionLogsScreen(),
+                      11 => const AdminSettingsScreen(),
                       12 => const AdminCalendarScreen(),
                       13 => const AdminLeaveScreen(),
                       _ => body,

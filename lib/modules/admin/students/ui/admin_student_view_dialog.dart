@@ -8,6 +8,7 @@ import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../ui/admin_fab.dart';
 import '../data/admin_student_service.dart';
 import '../models/admin_student_model.dart';
+import 'academic_history_section.dart';
 
 class AdminStudentViewDialog extends StatefulWidget {
   const AdminStudentViewDialog({
@@ -41,7 +42,7 @@ class _AdminStudentViewDialogState extends State<AdminStudentViewDialog>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _loadStudent();
     _loadLinkedParents();
   }
@@ -380,6 +381,7 @@ class _AdminStudentViewDialogState extends State<AdminStudentViewDialog>
                     Tab(text: 'Profile'),
                     Tab(text: 'Parents'),
                     Tab(text: 'Documents'),
+                    Tab(text: 'Academic History'),
                   ],
                 ),
               ),
@@ -390,6 +392,7 @@ class _AdminStudentViewDialogState extends State<AdminStudentViewDialog>
                     _buildProfileTab(student),
                     _buildParentsTab(student),
                     _buildDocumentsTab(student),
+                    _buildAcademicHistoryTab(student),
                   ],
                 ),
               ),
@@ -595,6 +598,23 @@ class _AdminStudentViewDialogState extends State<AdminStudentViewDialog>
           ],
         ],
       ),
+    );
+  }
+
+  /// A student's full enrollment history plus the "Assign to Academic
+  /// Year" action — delegates entirely to [AcademicHistorySection] (its
+  /// own [ConsumerWidget], independently testable) rather than converting
+  /// this whole (already Firestore-heavy, tab-crash-prone — see
+  /// admin_student_form_class_dropdown_test.dart) `StatefulWidget` into a
+  /// `ConsumerStatefulWidget`, so this addition can't affect the
+  /// Profile/Parents/Documents tabs' existing behavior at all.
+  Widget _buildAcademicHistoryTab(AdminStudentModel student) {
+    return AcademicHistorySection(
+      studentId: widget.studentId,
+      currentClassId: student.classId,
+      classNames: _classNames,
+      readOnly: widget.readOnly,
+      onAssigned: _refresh,
     );
   }
 

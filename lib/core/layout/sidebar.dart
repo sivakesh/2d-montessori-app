@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:montessori_app/modules/admin/ui/admin_dashboard.dart';
 import 'package:montessori_app/modules/auth/providers/auth_provider.dart';
+import '../widgets/school_brand_mark.dart';
 
 class AppSidebar extends ConsumerWidget {
   final int selectedIndex;
@@ -84,18 +85,9 @@ class AppSidebar extends ConsumerWidget {
       child: Column(
         children: [
           const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(
-              children: [
-                Image.asset('assets/logo.png', height: 64),
-                const SizedBox(height: 8),
-                Text(
-                  '2D Montessori',
-                  style: Theme.of(context).textTheme.labelMedium,
-                ),
-              ],
-            ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: SchoolBrandMark(logoHeight: 64, spacing: 8),
           ),
           const SizedBox(height: 16),
           const Divider(),

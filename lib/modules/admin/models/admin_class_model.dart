@@ -6,6 +6,7 @@ class AdminClassModel {
     required this.name,
     required this.section,
     required this.academicYear,
+    required this.academicYearId,
     required this.capacity,
     required this.teacherId,
     required this.teacherName,
@@ -20,7 +21,23 @@ class AdminClassModel {
   final String id;
   final String name;
   final String section;
+
+  /// Legacy free-text year label (e.g. `"2026-2027"`), kept for backward
+  /// compatibility during the AY-IMPLEMENT-02-B additive migration — see
+  /// [academicYearId]'s doc comment for which one is authoritative.
   final String academicYear;
+
+  /// Canonical FK to `AcademicYearModel.id`, added in AY-IMPLEMENT-02-B.
+  /// Empty (`''`) means this Class has not been migrated yet — a legacy
+  /// document that predates this field, or one no admin has re-saved since.
+  /// Never invented on read: a legacy document with no `academicYearId` in
+  /// Firestore loads with this as `''`, not a guessed/matched id — matching
+  /// happens only in UI resolution code (`classBelongsToAcademicYear`/
+  /// `resolveClassAcademicYearLabel`), never silently inside this model.
+  /// Whenever this is non-empty, it — not [academicYear] — is the
+  /// authoritative relationship; the two are never reconciled automatically
+  /// if they disagree.
+  final String academicYearId;
   final int? capacity;
   final String teacherId;
   final String teacherName;
@@ -43,6 +60,7 @@ class AdminClassModel {
       name: data['name']?.toString() ?? '',
       section: data['section']?.toString() ?? '',
       academicYear: data['academicYear']?.toString() ?? '',
+      academicYearId: data['academicYearId']?.toString() ?? '',
       capacity: int.tryParse(data['capacity']?.toString() ?? ''),
       teacherId: data['teacherId']?.toString() ?? '',
       teacherName: data['teacherName']?.toString() ?? '',
@@ -61,6 +79,7 @@ class AdminClassModel {
       'name': name,
       'section': section,
       'academicYear': academicYear,
+      'academicYearId': academicYearId,
       'capacity': capacity,
       'teacherId': teacherId,
       'teacherName': teacherName,

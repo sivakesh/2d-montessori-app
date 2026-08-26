@@ -1,16 +1,19 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/config/app_env.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_sizes.dart';
 import '../../admin/models/admin_class_model.dart';
+import '../../admin/settings/models/academic_year_matching.dart';
+import '../../admin/settings/providers/academic_year_provider.dart';
 import '../../finance/widgets/finance_status_chip.dart';
 import '../data/class_service.dart';
 import 'class_form_dialog.dart';
 import 'class_view_dialog.dart';
 
-class ClassListScreen extends StatefulWidget {
+class ClassListScreen extends ConsumerStatefulWidget {
   const ClassListScreen({
     super.key,
     this.readOnly = false,
@@ -25,10 +28,10 @@ class ClassListScreen extends StatefulWidget {
   final ClassService? service;
 
   @override
-  State<ClassListScreen> createState() => ClassListScreenState();
+  ConsumerState<ClassListScreen> createState() => ClassListScreenState();
 }
 
-class ClassListScreenState extends State<ClassListScreen> {
+class ClassListScreenState extends ConsumerState<ClassListScreen> {
   late final _service = widget.service ?? ClassService();
   final _searchController = TextEditingController();
 
@@ -47,7 +50,7 @@ class ClassListScreenState extends State<ClassListScreen> {
     await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => ClassFormDialog(classId: classId, initialData: initialData),
+      builder: (_) => ClassFormDialog(classId: classId, initialData: initialData, service: widget.service),
     );
     if (mounted) setState(() {});
   }
@@ -83,6 +86,14 @@ class ClassListScreenState extends State<ClassListScreen> {
   @override
   Widget build(BuildContext context) {
     final query = _searchController.text.trim().toLowerCase();
+    // AY-IMPLEMENT-02-B: loaded once per build (not per row) via the same
+    // shared academicYearsProvider every other Academic-Year-aware screen
+    // already reads, so resolving each Class's display label never issues
+    // a per-row Firestore query.
+    final academicYearNamesById = <String, String>{
+      for (final year in ref.watch(academicYearsProvider).valueOrNull ?? const [])
+        year.id: year.name,
+    };
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -168,6 +179,7 @@ class ClassListScreenState extends State<ClassListScreen> {
                     final model = AdminClassModel.fromMap(doc.id, doc.data());
                     return _ClassRow(
                       model: model,
+                      academicYearNamesById: academicYearNamesById,
                       showDetails: !widget.readOnly,
                       showActions: !widget.readOnly,
                       onView: () => showDialog(
@@ -198,6 +210,7 @@ class ClassListScreenState extends State<ClassListScreen> {
 class _ClassRow extends StatelessWidget {
   const _ClassRow({
     required this.model,
+    required this.academicYearNamesById,
     required this.showDetails,
     required this.showActions,
     required this.onView,
@@ -206,6 +219,10 @@ class _ClassRow extends StatelessWidget {
   });
 
   final AdminClassModel model;
+
+  /// AcademicYear id -> display name, built once per list build — see
+  /// [resolveClassAcademicYearLabel].
+  final Map<String, String> academicYearNamesById;
   final bool showDetails;
   final bool showActions;
   final VoidCallback onView;
@@ -214,6 +231,17 @@ class _ClassRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final resolvedAcademicYear = resolveClassAcademicYearLabel(
+      academicYearId: model.academicYearId,
+      academicYear: model.academicYear,
+      academicYearNamesById: academicYearNamesById,
+    );
+    // An id that was set but didn't resolve is a distinct, worth-surfacing
+    // state from "this Class simply has no academic year at all" — never
+    // invents a name in either case.
+    final academicYearLabel = resolvedAcademicYear.isNotEmpty
+        ? resolvedAcademicYear
+        : (model.academicYearId.isNotEmpty ? 'Unresolved' : '-');
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -260,7 +288,10 @@ class _ClassRow extends StatelessWidget {
                     spacing: 16,
                     runSpacing: 4,
                     children: [
-                      Text('Academic Year ${model.academicYear.isEmpty ? '-' : model.academicYear}', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                      Text(
+                        'Academic Year $academicYearLabel',
+                        style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                      ),
                       Text('Capacity ${model.capacity?.toString() ?? '-'}', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                     ],
                   ),

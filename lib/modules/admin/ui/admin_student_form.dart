@@ -5,13 +5,22 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/config/app_env.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../auth/providers/auth_provider.dart';
+import '../settings/models/academic_year_matching.dart';
+import '../settings/models/academic_year_model.dart';
+import '../settings/models/school_settings_model.dart' show kDefaultSchoolId;
+import '../settings/providers/academic_year_provider.dart';
 import '../students/data/admin_student_service.dart';
+import '../students/data/student_enrollment_service.dart';
 import '../students/models/admin_student_model.dart';
+import '../students/models/student_enrollment_model.dart';
+import '../students/providers/student_enrollment_provider.dart';
 
 /// The exact, and only, set of values the Parents tab's "Relationship"
 /// DropdownButtonFormField ever offers as items (see its `items:` list in
@@ -75,13 +84,14 @@ List<Map<String, dynamic>> normalizeParentLinks(dynamic rawLinks) {
       .toList();
 }
 
-class AdminStudentForm extends StatefulWidget {
+class AdminStudentForm extends ConsumerStatefulWidget {
   const AdminStudentForm({
     super.key,
     this.studentId,
     this.initialData,
     this.service,
     this.firestore,
+    this.enrollmentService,
   });
 
   final String? studentId;
@@ -95,16 +105,22 @@ class AdminStudentForm extends StatefulWidget {
   final AdminStudentService? service;
   final FirebaseFirestore? firestore;
 
+  /// Same DI seam as [service], for the AY-01-R1 Academic Year + Class
+  /// integration's [StudentEnrollmentService] calls.
+  final StudentEnrollmentService? enrollmentService;
+
   @override
-  State<AdminStudentForm> createState() => _AdminStudentFormState();
+  ConsumerState<AdminStudentForm> createState() => _AdminStudentFormState();
 }
 
-class _AdminStudentFormState extends State<AdminStudentForm>
+class _AdminStudentFormState extends ConsumerState<AdminStudentForm>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
   final _formKey = GlobalKey<FormState>();
   late final _service = widget.service ?? AdminStudentService();
   late final _firestore = widget.firestore ?? FirebaseFirestore.instance;
+  late final StudentEnrollmentService _enrollmentService =
+      widget.enrollmentService ?? ref.read(studentEnrollmentServiceProvider);
   final _picker = ImagePicker();
 
   final _nameController = TextEditingController();
@@ -131,6 +147,34 @@ class _AdminStudentFormState extends State<AdminStudentForm>
   bool isUploadingDocument = false;
   bool isSavingDocuments = false;
   String? _classId;
+
+  // AY-01-R1: Academic Year + Class integration state. `_allActiveClasses`/
+  // `_archivedFallbackClass` are the full unfiltered inputs `_classes` is
+  // recomputed from whenever the selected Academic Year changes;
+  // `_enrollments` is this student's full enrollment history (Edit only —
+  // always empty for Add, since nothing exists yet). `_academicYearId ==
+  // null` after loading means no current Academic Year exists at all, in
+  // which case the whole feature is hidden and this form behaves exactly
+  // as it did before AY-01-R1 (Class only) — see
+  // `_academicYearFeatureEnabled`.
+  List<dynamic> _allActiveClasses = [];
+  DocumentSnapshot<Map<String, dynamic>>? _archivedFallbackClass;
+  List<AcademicYearModel> _academicYears = [];
+  AcademicYearModel? _currentAcademicYear;
+  List<StudentEnrollmentModel> _enrollments = [];
+  String? _academicYearId;
+  String? _createdStudentId;
+
+  bool get _academicYearFeatureEnabled => _currentAcademicYear != null;
+
+  /// The real student id once one exists in this form session — either the
+  /// id this screen was opened to edit, or (after a successful create) the
+  /// id just returned by [AdminStudentService.createStudent]. Using this
+  /// instead of `widget.studentId` directly in [_saveStudent] is what
+  /// makes a Save retry after a partial failure (student created, its
+  /// StudentEnrollment write failed) safely fall through to the *update*
+  /// path instead of creating a second, duplicate student record.
+  String? get _effectiveStudentId => widget.studentId ?? _createdStudentId;
   String _gender = 'Male';
   String _selectedBloodGroup = 'A+';
   String _profileImageUrl = '';
@@ -352,9 +396,13 @@ class _AdminStudentFormState extends State<AdminStudentForm>
     debugPrint('Loaded Documents: ${loadedDocs.length}');
   }
 
-  /// Loads the active classes for the Class dropdown, then reconciles the
-  /// student's own `_classId` (set from `initialData['classId']` in
-  /// `initState`, before this async call ever runs) against them.
+  /// Loads the active classes, reconciles the student's own `_classId`
+  /// (set from `initialData['classId']` in `initState`) against them
+  /// exactly as before AY-01-R1, then loads the Academic Year context
+  /// (active academic years, the current one, and — for Edit — this
+  /// student's full enrollment history) and, if a current Academic Year
+  /// exists, switches `_classes`/`_classId` over to the Academic-Year-
+  /// filtered view via [_resolveForYear].
   ///
   /// `getClasses()` only returns `isActive: true` classes, but a student's
   /// stored `classId` can reference a class an admin later archived
@@ -364,7 +412,12 @@ class _AdminStudentFormState extends State<AdminStudentForm>
   /// `initialValue` while it's absent from `items` is exactly what threw
   /// "There should be exactly one item with [DropdownButton]'s value:
   /// ..." here — the same class of bug the Relationship dropdown had, on
-  /// a different dropdown/field.
+  /// a different dropdown/field. [_archivedFallbackClass] preserves that
+  /// same fix inside the Academic-Year-filtered view too.
+  ///
+  /// If no current Academic Year exists at all yet, the Academic Year +
+  /// Class feature is not shown and this form behaves exactly as it did
+  /// before AY-01-R1 — see [_academicYearFeatureEnabled].
   Future<void> _loadClasses() async {
     final classes = await _service.getClasses();
     final activeIds = classes.map((c) => c.id).toSet();
@@ -381,28 +434,129 @@ class _AdminStudentFormState extends State<AdminStudentForm>
         ? await _service.getClassById(originalClassId)
         : null;
 
-    // The class no longer exists at all — don't keep a dangling id the
-    // dropdown can never resolve. Falling back to null here lets the
-    // existing "Required" validator force the admin to explicitly pick a
-    // class before saving, instead of this silently reassigning the
-    // student to an arbitrary different one.
-    final resolvedClassId =
-        isMissingFromActiveClasses && archivedClass == null
-            ? null
-            : originalClassId;
+    if (!mounted) return;
+    _allActiveClasses = classes;
+    _archivedFallbackClass = archivedClass;
+
+    final academicYearService = ref.read(academicYearServiceProvider);
+    final years = await academicYearService.getAllAcademicYears(schoolId: kDefaultSchoolId);
+    final current = await academicYearService.getCurrentAcademicYear(schoolId: kDefaultSchoolId);
+    List<StudentEnrollmentModel> enrollments = const [];
+    if (widget.studentId != null) {
+      enrollments = await _enrollmentService.getEnrollmentsForStudent(
+        schoolId: kDefaultSchoolId,
+        studentId: widget.studentId!,
+      );
+    }
 
     if (!mounted) return;
+
+    if (current == null) {
+      // The class no longer exists at all — don't keep a dangling id the
+      // dropdown can never resolve. Falling back to null here lets the
+      // existing "Required" validator force the admin to explicitly pick a
+      // class before saving, instead of this silently reassigning the
+      // student to an arbitrary different one.
+      final resolvedClassId =
+          isMissingFromActiveClasses && archivedClass == null ? null : originalClassId;
+      safeSetState(() {
+        _classes = [...classes, ?archivedClass];
+        // Only a brand-new student (no classId at all yet) defaults to the
+        // first active class — matches the pre-existing Add Student
+        // behavior. An existing student's own class assignment (active,
+        // archived-but-existing, or now cleared because it was deleted) is
+        // never silently overwritten here.
+        _classId = (originalClassId == null || originalClassId.isEmpty)
+            ? (classes.isNotEmpty ? classes.first.id : null)
+            : resolvedClassId;
+        _loading = false;
+      });
+      return;
+    }
+
     safeSetState(() {
-      _classes = [...classes, ?archivedClass];
-      // Only a brand-new student (no classId at all yet) defaults to the
-      // first active class — matches the pre-existing Add Student
-      // behavior. An existing student's own class assignment (active,
-      // archived-but-existing, or now cleared because it was deleted) is
-      // never silently overwritten here.
-      _classId = (originalClassId == null || originalClassId.isEmpty)
-          ? (classes.isNotEmpty ? classes.first.id : null)
-          : resolvedClassId;
+      _academicYears = years.where((y) => y.isActive).toList();
+      _currentAcademicYear = current;
+      _enrollments = enrollments;
+      _academicYearId = current.id;
+      final resolved = _resolveForYear(current);
+      _classes = resolved.classes;
+      _classId = resolved.classId;
       _loading = false;
+    });
+  }
+
+  /// Computes the Class dropdown's items and initial selection for
+  /// [year] — the single source of truth both [_loadClasses]' initial load
+  /// and [_onAcademicYearChanged] use, so the two can never disagree.
+  ///
+  /// Resolution order: (1) this student's own Active enrollment for
+  /// [year], if one exists — the historical/current source of truth once
+  /// AY-01 enrollments exist; (2) for the *current* year specifically,
+  /// with no enrollment yet, the existing `Student.classId` convenience
+  /// field (possibly an archived class, via [_archivedFallbackClass]) —
+  /// "preserve the existing Student.classId as the displayed current
+  /// class... allow the Admin to establish the missing enrollment"; (3)
+  /// for a brand-new student (Add Student) with nothing resolved yet, the
+  /// first class offered for [year] — matches the pre-existing Add
+  /// Student behavior of defaulting to the first active class. A
+  /// historical year with no existing enrollment resolves to no selection
+  /// at all — never fabricated — forcing the admin to explicitly choose.
+  ({List<dynamic> classes, String? classId}) _resolveForYear(AcademicYearModel year) {
+    // AY-IMPLEMENT-02-B: a Class's own `academicYearId` (once it has one)
+    // is authoritative for this filter — `classBelongsToAcademicYear` only
+    // falls back to the legacy `academicYear` string match
+    // (`classMatchesAcademicYear`) for a Class that has no id yet.
+    final classesForYear = _allActiveClasses
+        .where((c) => classBelongsToAcademicYear(
+              Map<String, dynamic>.from(c.data() as Map),
+              year,
+            ))
+        .toList();
+    final isCurrent = _currentAcademicYear?.id == year.id;
+
+    String? resolvedClassId;
+    final activeEnrollments =
+        _enrollments.where((e) => e.academicYearId == year.id && e.isActive);
+    if (activeEnrollments.isNotEmpty) {
+      resolvedClassId = activeEnrollments.first.classId;
+    } else if (isCurrent) {
+      final fallback = widget.initialData?['classId']?.toString();
+      if (fallback != null && fallback.isNotEmpty) resolvedClassId = fallback;
+    }
+
+    final classesWithFallback = [
+      ...classesForYear,
+      if (resolvedClassId != null &&
+          !classesForYear.any((c) => c.id == resolvedClassId) &&
+          _archivedFallbackClass != null &&
+          _archivedFallbackClass!.id == resolvedClassId)
+        _archivedFallbackClass!,
+    ];
+
+    var finalClassId =
+        classesWithFallback.any((c) => c.id == resolvedClassId) ? resolvedClassId : null;
+
+    if (finalClassId == null && widget.studentId == null && classesForYear.isNotEmpty) {
+      finalClassId = classesForYear.first.id;
+    }
+
+    return (classes: classesWithFallback, classId: finalClassId);
+  }
+
+  /// The Academic Year dropdown's `onChanged` — re-filters the Class
+  /// dropdown for the newly-selected year and resolves its selection via
+  /// [_resolveForYear], never carrying over a class selected under a
+  /// different year's context ("Never leave a previously selected class
+  /// from another academic year silently selected").
+  void _onAcademicYearChanged(String? newId) {
+    if (newId == null || newId == _academicYearId) return;
+    final year = _academicYears.firstWhere((y) => y.id == newId);
+    final resolved = _resolveForYear(year);
+    setState(() {
+      _academicYearId = newId;
+      _classes = resolved.classes;
+      _classId = resolved.classId;
     });
   }
 
@@ -466,6 +620,23 @@ class _AdminStudentFormState extends State<AdminStudentForm>
     final classId = _classId ?? '';
     if (classId.isEmpty) return;
 
+    // Defensive re-check — "Never save an invalid student + academicYear +
+    // class combination", even though the Class dropdown's own items are
+    // already filtered to the selected year, so a client-side race
+    // between selecting a year and picking a class can never slip a
+    // mismatched pair through.
+    if (_academicYearFeatureEnabled) {
+      if (_academicYearId == null) return;
+      if (!_classes.any((c) => c.id == classId)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Select a class that belongs to the selected academic year.'),
+          ),
+        );
+        return;
+      }
+    }
+
     safeSetState(() => isSaving = true);
 
     try {
@@ -476,7 +647,7 @@ class _AdminStudentFormState extends State<AdminStudentForm>
       final admissionNo = _admissionController.text.trim();
       final isDuplicate = await _service.isAdmissionNoTaken(
         admissionNo,
-        ignoreId: widget.studentId,
+        ignoreId: _effectiveStudentId,
       );
       if (isDuplicate) {
         if (!mounted) return;
@@ -489,11 +660,23 @@ class _AdminStudentFormState extends State<AdminStudentForm>
       final imageUrl = await _uploadImage();
       if (!mounted) return;
 
+      // Core Rule (AY-01-R1): the selected class only ever becomes the
+      // Student.classId convenience field when the selected Academic Year
+      // is the *current* one. A historical-year save updates only the
+      // StudentEnrollment for that year — Student.classId is left exactly
+      // as it already was (unchanged for Edit; still unset for a
+      // brand-new student created directly under a historical year).
+      final isCurrentYearSelected =
+          _academicYearFeatureEnabled && _academicYearId == _currentAcademicYear?.id;
+      final effectiveClassId = !_academicYearFeatureEnabled || isCurrentYearSelected
+          ? classId
+          : (widget.initialData?['classId']?.toString() ?? '');
+
       final model = AdminStudentModel(
-        id: widget.studentId ?? '',
+        id: _effectiveStudentId ?? '',
         name: _nameController.text.trim(),
         admissionNo: admissionNo,
-        classId: classId,
+        classId: effectiveClassId,
         section: _sectionController.text.trim(),
         rollNumber: _rollNumberController.text.trim(),
         dateOfBirth: _dobController.text.trim(),
@@ -532,16 +715,59 @@ class _AdminStudentFormState extends State<AdminStudentForm>
         profileImageUrl: imageUrl,
       );
 
-      final studentId = widget.studentId;
-      if (studentId == null) {
-        await _service.createStudent(student: model, createdBy: 'admin');
+      // Safe creation sequence (Phase 2): the Student record is the unit
+      // of truth for "does this student exist" — it's created/updated
+      // first, and only once that succeeds does the StudentEnrollment
+      // write happen. `_createdStudentId` is set immediately on a
+      // successful create so a Save retry after an enrollment failure
+      // below goes through the *update* branch, never creating a second
+      // student.
+      final targetStudentId = _effectiveStudentId;
+      if (targetStudentId == null) {
+        final newId = await _service.createStudent(student: model, createdBy: 'admin');
+        _createdStudentId = newId;
       } else {
-        await _service.updateStudent(
-          studentId: studentId,
-          student: model,
-        );
+        await _service.updateStudent(studentId: targetStudentId, student: model);
       }
       debugPrint('Existing documents after student save: $_documents');
+
+      if (_academicYearFeatureEnabled) {
+        // AdminStudentService/StudentEnrollmentService are independent
+        // Firestore documents in different collections with no shared
+        // transactional API exposed today — a real cross-collection
+        // transaction would mean redesigning AdminStudentService.createStudent
+        // itself, which is out of scope here ("Do NOT redesign the Student
+        // module"). Instead: the Student write above already succeeded
+        // and is never rolled back; if the enrollment write below fails,
+        // the admin is told exactly what happened and how to recover
+        // (Academic History -> Assign to Academic Year, the existing
+        // AY-01 mechanism) rather than the form silently reporting full
+        // success.
+        try {
+          final user = ref.read(currentUserProvider);
+          await _enrollmentService.assignStudentToClassForYear(
+            schoolId: kDefaultSchoolId,
+            requesterRole: (user?.role ?? '').toLowerCase(),
+            studentId: _effectiveStudentId!,
+            academicYearId: _academicYearId!,
+            classId: classId,
+            syncStudentClassId: isCurrentYearSelected,
+            actorId: user?.id ?? 'admin',
+          );
+        } catch (e) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Student saved, but the academic year assignment could not be saved: $e. '
+                'You can assign it from the Academic History tab.',
+              ),
+              duration: const Duration(seconds: 6),
+            ),
+          );
+          return;
+        }
+      }
 
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -847,10 +1073,78 @@ class _AdminStudentFormState extends State<AdminStudentForm>
                           child: _textField(controller: _admissionController),
                         ),
                       ),
+                      // Academic Year immediately before Class (AY-01-R1).
+                      // Hidden entirely when no current Academic Year
+                      // exists yet — see `_academicYearFeatureEnabled`'s
+                      // doc comment — so this form behaves exactly as it
+                      // did before AY-01-R1 in that case.
+                      if (_academicYearFeatureEnabled) ...[
+                        halfField(
+                          child: _fieldShell(
+                            label: 'Academic Year',
+                            child: DropdownButtonFormField<String>(
+                              initialValue: _academicYearId,
+                              // Long items (e.g. "2026-2027 • Current")
+                              // must never overflow this half-width field
+                              // on narrow screens — isExpanded lets the
+                              // selected item fill/constrain to the
+                              // dropdown's own width instead of sizing to
+                              // its natural (wider) content, and the Text
+                              // itself ellipsizes if still too long.
+                              isExpanded: true,
+                              items: [
+                                for (final year in _academicYears)
+                                  DropdownMenuItem(
+                                    value: year.id,
+                                    child: Text(
+                                      '${year.name} • ${year.isCurrent ? 'Current' : 'Historical'}',
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                              ],
+                              onChanged: _onAcademicYearChanged,
+                              decoration: const InputDecoration(
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              validator: (value) =>
+                                  value == null || value.isEmpty ? 'Required' : null,
+                            ),
+                          ),
+                        ),
+                        if (_academicYearId != _currentAcademicYear?.id)
+                          SizedBox(
+                            width: double.infinity,
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                'Editing historical academic-year placement',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.orange.shade800,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                       halfField(
                         child: _fieldShell(
                           label: 'Class',
+                          // Keyed on the selected Academic Year so this
+                          // dropdown is fully recreated (not just
+                          // rebuilt) whenever `_classes`/`_classId` change
+                          // together from `_onAcademicYearChanged` —
+                          // `DropdownButtonFormField.initialValue` is only
+                          // honored on first mount, and reusing the same
+                          // element with a new `initialValue` that isn't
+                          // (yet) reflected in its own internal selection
+                          // state is exactly the "There should be exactly
+                          // one item with [DropdownButton]'s value: ..."
+                          // crash this file has already been fixed for
+                          // once (see `_loadClasses`'s own doc comment).
                           child: DropdownButtonFormField<String>(
+                            key: ValueKey('class_dropdown_${_academicYearId ?? 'none'}'),
                             initialValue: _classId,
                             items: [
                               for (final c in _classes)

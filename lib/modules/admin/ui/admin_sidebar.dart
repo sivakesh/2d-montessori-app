@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/widgets/school_brand_mark.dart';
+
 class AdminSidebar extends StatefulWidget {
   const AdminSidebar({
     super.key,
@@ -133,18 +135,9 @@ class _AdminSidebarState extends State<AdminSidebar> {
         child: Column(
           children: [
             const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                children: [
-                  Image.asset('assets/logo.png', height: 56),
-                  const SizedBox(height: 6),
-                  Text(
-                    '2D Montessori',
-                    style: Theme.of(context).textTheme.labelMedium,
-                  ),
-                ],
-              ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: SchoolBrandMark(logoHeight: 56, spacing: 6),
             ),
             const SizedBox(height: 12),
             const Divider(height: 1),
