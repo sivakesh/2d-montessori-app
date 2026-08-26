@@ -11,6 +11,7 @@ class StudentFeeAssignmentModel {
     required this.feeStructureId,
     required this.feeStructureName,
     required this.academicYear,
+    required this.academicYearId,
     required this.totalFee,
     required this.discountAmount,
     required this.payableAmount,
@@ -21,6 +22,14 @@ class StudentFeeAssignmentModel {
     required this.updatedAt,
   });
   final String id, studentId, studentName, admissionNo, classId, className, feeStructureId, feeStructureName, academicYear, status;
+
+  /// Canonical FK to `AcademicYearModel.id`, added in FEES-AY-IMPLEMENT-01.
+  /// Empty (`''`) means this assignment predates this field (legacy) or was
+  /// created against a FeeStructure whose own year couldn't be resolved to
+  /// a canonical id. Never invented on read — see [academicYear]'s sibling
+  /// doc comment on `AdminClassModel.academicYearId` for the same
+  /// "authoritative when non-empty, compatibility string otherwise" rule.
+  final String academicYearId;
   final double totalFee, discountAmount, payableAmount, paidAmount, balanceAmount;
   final DateTime? assignedAt, updatedAt;
   factory StudentFeeAssignmentModel.fromMap(String id, Map<String, dynamic> data) {
@@ -39,6 +48,7 @@ class StudentFeeAssignmentModel {
       feeStructureId: data['feeStructureId']?.toString() ?? '',
       feeStructureName: data['feeStructureName']?.toString() ?? '',
       academicYear: data['academicYear']?.toString() ?? '',
+      academicYearId: data['academicYearId']?.toString() ?? '',
       totalFee: n(data['totalFee']),
       discountAmount: n(data['discountAmount']),
       payableAmount: n(data['payableAmount']),
@@ -50,6 +60,6 @@ class StudentFeeAssignmentModel {
     );
   }
   Map<String, dynamic> toMap() => {
-    'studentId': studentId,'studentName': studentName,'admissionNo': admissionNo,'classId': classId,'className': className,'feeStructureId': feeStructureId,'feeStructureName': feeStructureName,'academicYear': academicYear,'totalFee': totalFee,'discountAmount': discountAmount,'payableAmount': payableAmount,'paidAmount': paidAmount,'balanceAmount': balanceAmount,'status': status,'assignedAt': assignedAt,'updatedAt': updatedAt,
+    'studentId': studentId,'studentName': studentName,'admissionNo': admissionNo,'classId': classId,'className': className,'feeStructureId': feeStructureId,'feeStructureName': feeStructureName,'academicYear': academicYear,'academicYearId': academicYearId,'totalFee': totalFee,'discountAmount': discountAmount,'payableAmount': payableAmount,'paidAmount': paidAmount,'balanceAmount': balanceAmount,'status': status,'assignedAt': assignedAt,'updatedAt': updatedAt,
   };
 }

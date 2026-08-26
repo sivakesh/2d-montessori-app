@@ -193,17 +193,98 @@ class FeeService {
     }, SetOptions(merge: true));
   }
 
+  /// True if a live (non-deleted, not [excludeId]) assignment already
+  /// exists for `(studentId, feeStructureId, <academic year>)` —
+  /// FEES-AY-IMPLEMENT-01's compatibility-aware duplicate identity. Checks
+  /// both the canonical [academicYearId] (when non-empty) and the legacy
+  /// [academicYear] string (when non-empty) as two separate queries and
+  /// unions the results, rather than relying on either alone: a live
+  /// assignment created before this task has `academicYearId == ''` and
+  /// would never be found by an id-only query, while a newly-created one
+  /// always carries both fields. Checking only one side during this
+  /// transition period would let a duplicate slip through in whichever
+  /// direction wasn't checked — every write path below (`assignFee`,
+  /// `updateAssignment`, `syncAssignmentsForFeeStructure`,
+  /// `bulkAssignClassFees`) uses this same helper so the identity rule can
+  /// never drift between them.
+  Future<bool> _hasDuplicateAssignment({
+    required String studentId,
+    required String feeStructureId,
+    required String academicYearId,
+    required String academicYear,
+    String? excludeId,
+  }) async {
+    final candidates = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+    if (academicYearId.isNotEmpty) {
+      final byId = await _assignments
+          .where('studentId', isEqualTo: studentId)
+          .where('feeStructureId', isEqualTo: feeStructureId)
+          .where('academicYearId', isEqualTo: academicYearId)
+          .get();
+      candidates.addAll(byId.docs);
+    }
+    if (academicYear.isNotEmpty) {
+      final byString = await _assignments
+          .where('studentId', isEqualTo: studentId)
+          .where('feeStructureId', isEqualTo: feeStructureId)
+          .where('academicYear', isEqualTo: academicYear)
+          .get();
+      candidates.addAll(byString.docs);
+    }
+    final seen = <String>{};
+    for (final doc in candidates) {
+      if (!seen.add(doc.id)) continue;
+      if (excludeId != null && doc.id == excludeId) continue;
+      if (doc.data()['isDeleted'] == true) continue;
+      return true;
+    }
+    return false;
+  }
+
+  /// Same lookup as [_hasDuplicateAssignment], but returns the matching
+  /// live document (if any) instead of a bool — used by
+  /// [syncAssignmentsForFeeStructure]/[bulkAssignClassFees], which need to
+  /// update an existing assignment in place rather than merely refuse a
+  /// second one.
+  Future<QueryDocumentSnapshot<Map<String, dynamic>>?> _findExistingAssignment({
+    required String studentId,
+    required String feeStructureId,
+    required String academicYearId,
+    required String academicYear,
+  }) async {
+    if (academicYearId.isNotEmpty) {
+      final byId = await _assignments
+          .where('studentId', isEqualTo: studentId)
+          .where('feeStructureId', isEqualTo: feeStructureId)
+          .where('academicYearId', isEqualTo: academicYearId)
+          .get();
+      final live = byId.docs.where((d) => d.data()['isDeleted'] != true);
+      if (live.isNotEmpty) return live.first;
+    }
+    if (academicYear.isNotEmpty) {
+      final byString = await _assignments
+          .where('studentId', isEqualTo: studentId)
+          .where('feeStructureId', isEqualTo: feeStructureId)
+          .where('academicYear', isEqualTo: academicYear)
+          .get();
+      final live = byString.docs.where((d) => d.data()['isDeleted'] != true);
+      if (live.isNotEmpty) return live.first;
+    }
+    return null;
+  }
+
   Future<String?> assignFee(Map<String, dynamic> data) async {
     final studentId = data['studentId']?.toString() ?? '';
     final feeStructureId = data['feeStructureId']?.toString() ?? '';
+    final academicYearId = data['academicYearId']?.toString() ?? '';
     final academicYear = data['academicYear']?.toString() ?? '';
-    final dup = await _assignments
-        .where('studentId', isEqualTo: studentId)
-        .where('feeStructureId', isEqualTo: feeStructureId)
-        .where('academicYear', isEqualTo: academicYear)
-        .limit(1)
-        .get();
-    if (dup.docs.isNotEmpty) return null;
+    final isDuplicate = await _hasDuplicateAssignment(
+      studentId: studentId,
+      feeStructureId: feeStructureId,
+      academicYearId: academicYearId,
+      academicYear: academicYear,
+    );
+    if (isDuplicate) return null;
     final doc = _assignments.doc();
     await doc.set({
       ...data,
@@ -264,19 +345,23 @@ class FeeService {
     } else {
       // No payment yet — reassigning student/structure/year is safe, but
       // must not silently create a duplicate of another live assignment
-      // (the same uniqueness rule assignFee already enforces on create).
+      // (the same compatibility-aware uniqueness rule assignFee already
+      // enforces on create — see _hasDuplicateAssignment's doc comment).
       final newStudentId = data['studentId']?.toString() ?? current.studentId;
       final newFeeStructureId = data['feeStructureId']?.toString() ?? current.feeStructureId;
+      final newAcademicYearId = data['academicYearId']?.toString() ?? current.academicYearId;
       final newYear = data['academicYear']?.toString() ?? current.academicYear;
       if (newStudentId != current.studentId ||
           newFeeStructureId != current.feeStructureId ||
+          newAcademicYearId != current.academicYearId ||
           newYear != current.academicYear) {
-        final dup = await _assignments
-            .where('studentId', isEqualTo: newStudentId)
-            .where('feeStructureId', isEqualTo: newFeeStructureId)
-            .where('academicYear', isEqualTo: newYear)
-            .get();
-        final hasLiveDuplicate = dup.docs.any((d) => d.id != id && d.data()['isDeleted'] != true);
+        final hasLiveDuplicate = await _hasDuplicateAssignment(
+          studentId: newStudentId,
+          feeStructureId: newFeeStructureId,
+          academicYearId: newAcademicYearId,
+          academicYear: newYear,
+          excludeId: id,
+        );
         if (hasLiveDuplicate) {
           throw StateError('An assignment for this student, fee structure, and academic year already exists.');
         }
@@ -478,6 +563,7 @@ class FeeService {
   Future<Map<String, int>> syncAssignmentsForFeeStructure({
     required String feeStructureId,
     required String feeStructureName,
+    required String academicYearId,
     required String academicYear,
     required double totalFee,
     required String assignmentScope,
@@ -495,14 +581,13 @@ class FeeService {
     for (final student in targetStudents) {
       final studentData = student.data();
       final studentId = student.id;
-      final existingQuery = await _assignments
-          .where('studentId', isEqualTo: studentId)
-          .where('feeStructureId', isEqualTo: feeStructureId)
-          .where('academicYear', isEqualTo: academicYear)
-          .limit(1)
-          .get();
+      final existing = await _findExistingAssignment(
+        studentId: studentId,
+        feeStructureId: feeStructureId,
+        academicYearId: academicYearId,
+        academicYear: academicYear,
+      );
 
-      final existing = existingQuery.docs.isNotEmpty ? existingQuery.docs.first : null;
       final discountAmount = existing?['discountAmount'] is num ? (existing?['discountAmount'] as num).toDouble() : 0.0;
       final paidAmount = existing?['paidAmount'] is num ? (existing?['paidAmount'] as num).toDouble() : 0.0;
       final payableAmount = totalFee - discountAmount;
@@ -524,6 +609,7 @@ class FeeService {
           'className': studentData['className']?.toString() ?? studentData['classId']?.toString() ?? '',
           'feeStructureId': feeStructureId,
           'feeStructureName': feeStructureName,
+          'academicYearId': academicYearId,
           'academicYear': academicYear,
           'totalFee': totalFee,
           'discountAmount': 0,
@@ -544,6 +630,7 @@ class FeeService {
           'className': studentData['className']?.toString() ?? studentData['classId']?.toString() ?? '',
           'feeStructureId': feeStructureId,
           'feeStructureName': feeStructureName,
+          'academicYearId': academicYearId,
           'academicYear': academicYear,
           'totalFee': totalFee,
           'discountAmount': discountAmount,
@@ -576,6 +663,7 @@ class FeeService {
     required String className,
     required String feeStructureId,
     required String feeStructureName,
+    required String academicYearId,
     required String academicYear,
     required double totalFee,
     required double discountAmount,
@@ -586,13 +674,13 @@ class FeeService {
     final batch = _firestore.batch();
     for (final student in students) {
       final studentData = student.data();
-      final duplicate = await _assignments
-          .where('studentId', isEqualTo: student.id)
-          .where('feeStructureId', isEqualTo: feeStructureId)
-          .where('academicYear', isEqualTo: academicYear)
-          .limit(1)
-          .get();
-      if (duplicate.docs.isNotEmpty) {
+      final isDuplicate = await _hasDuplicateAssignment(
+        studentId: student.id,
+        feeStructureId: feeStructureId,
+        academicYearId: academicYearId,
+        academicYear: academicYear,
+      );
+      if (isDuplicate) {
         skipped++;
         continue;
       }
@@ -607,6 +695,7 @@ class FeeService {
         'className': className,
         'feeStructureId': feeStructureId,
         'feeStructureName': feeStructureName,
+        'academicYearId': academicYearId,
         'academicYear': academicYear,
         'totalFee': totalFee,
         'discountAmount': discountAmount,

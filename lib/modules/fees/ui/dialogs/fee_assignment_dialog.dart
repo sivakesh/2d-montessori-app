@@ -1,25 +1,45 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/widgets/responsive_dialog_shell.dart';
+import '../../../admin/settings/models/academic_year_matching.dart';
+import '../../../admin/settings/models/academic_year_model.dart';
+import '../../../admin/settings/models/school_settings_model.dart' show kDefaultSchoolId;
+import '../../../admin/settings/providers/academic_year_provider.dart';
 import '../../models/fee_structure_model.dart';
 import '../../models/student_fee_assignment_model.dart';
 import '../../services/fee_service.dart';
 
-class FeeAssignmentDialog extends StatefulWidget {
-  const FeeAssignmentDialog({super.key, this.assignment});
+class FeeAssignmentDialog extends ConsumerStatefulWidget {
+  const FeeAssignmentDialog({super.key, this.assignment, this.service});
 
-  /// Non-null to edit this existing assignment instead of creating a new
-  /// one. Same optional-parameter/branch-on-null pattern as
-  /// FeeStructureDialog's `structure` param.
   final StudentFeeAssignmentModel? assignment;
 
+  /// Overridable only so tests can inject a fake-Firestore-backed
+  /// FeeService — the same DI seam every other injectable Admin
+  /// dialog/service in this app already exposes. Production callers never
+  /// pass this.
+  final FeeService? service;
+
   @override
-  State<FeeAssignmentDialog> createState() => _FeeAssignmentDialogState();
+  ConsumerState<FeeAssignmentDialog> createState() => _FeeAssignmentDialogState();
 }
 
-class _FeeAssignmentDialogState extends State<FeeAssignmentDialog> {
-  final _service = FeeService();
-  final _year = TextEditingController(text: '2026-2027');
+/// Resolved Academic Year for the currently-selected Fee Structure —
+/// [year] non-null means it resolved to a canonical [AcademicYearModel]
+/// (via the structure's own `academicYearId`, or a legacy `academicYear`
+/// string match); [legacyLabel] carries the stored string only when it
+/// exists but matched nothing, so the unresolved message can show exactly
+/// what's stored, the same way ClassFormDialog's orphaned-value message
+/// does.
+class _ResolvedStructureYear {
+  const _ResolvedStructureYear({this.year, this.legacyLabel = ''});
+  final AcademicYearModel? year;
+  final String legacyLabel;
+}
+
+class _FeeAssignmentDialogState extends ConsumerState<FeeAssignmentDialog> {
+  late final _service = widget.service ?? FeeService();
   final _discount = TextEditingController(text: '0');
   final _formKey = GlobalKey<FormState>();
   String _mode = 'single';
@@ -32,10 +52,17 @@ class _FeeAssignmentDialogState extends State<FeeAssignmentDialog> {
   bool _saving = false;
   String? _resultMessage;
 
-  /// True once the assignment being edited already has a payment recorded
-  /// against it — the point past which student/fee-structure/total-fee
-  /// become unsafe to change (see [FeeService.updateAssignment]'s doc
-  /// comment). Always false when creating a new assignment.
+  // FEES-AY-IMPLEMENT-01: the Assignment's Academic Year is no longer a
+  // manually-typed field — it is always derived from the selected Fee
+  // Structure (`FeeStructure.academicYearId`/`academicYear`), never
+  // independently selectable here. `_academicYears` is loaded once (active
+  // years only, same convention as FeeStructureDialog/ClassFormDialog) so
+  // `_resolveStructureYear` can resolve the currently-selected structure's
+  // year on every rebuild — recomputed, never cached, so switching the Fee
+  // Structure always updates the displayed year immediately.
+  bool _loadingAcademicYears = true;
+  List<AcademicYearModel> _academicYears = [];
+
   bool get _identityLocked =>
       widget.assignment != null && widget.assignment!.paidAmount > 0;
 
@@ -45,21 +72,59 @@ class _FeeAssignmentDialogState extends State<FeeAssignmentDialog> {
     final a = widget.assignment;
     if (a != null) {
       _mode = 'single';
-      _year.text = a.academicYear;
       _discount.text = a.discountAmount.toStringAsFixed(0);
       _classId = a.classId;
       _studentId = a.studentId;
       _structureId = a.feeStructureId;
     }
     _loadClasses();
+    _loadAcademicYears();
+  }
+
+  Future<void> _loadAcademicYears() async {
+    final service = ref.read(academicYearServiceProvider);
+    final years = await service.getAllAcademicYears(schoolId: kDefaultSchoolId);
+    if (!mounted) return;
+    setState(() {
+      _academicYears = years.where((y) => y.isActive).toList();
+      _loadingAcademicYears = false;
+    });
+  }
+
+  /// Resolves [structure]'s Academic Year — `academicYearId` first
+  /// (authoritative when it resolves), falling back to matching the legacy
+  /// `academicYear` string (reusing the same entity-agnostic
+  /// `classMatchesAcademicYear` helper ClassFormDialog/FeeStructureDialog
+  /// already use — it only ever compares a free-text string against an
+  /// AcademicYearModel.name, nothing Class-specific). Returns a null
+  /// [_ResolvedStructureYear.year] whenever neither resolves — including
+  /// when a non-empty `academicYearId` simply doesn't match any configured
+  /// year — never inventing a value.
+  _ResolvedStructureYear _resolveStructureYear(FeeStructureModel structure) {
+    final id = structure.academicYearId.trim();
+    if (id.isNotEmpty) {
+      final match = _academicYears.where((y) => y.id == id);
+      if (match.isNotEmpty) return _ResolvedStructureYear(year: match.first);
+      return const _ResolvedStructureYear();
+    }
+    final text = structure.academicYear.trim();
+    if (text.isEmpty) return const _ResolvedStructureYear();
+    final match = _academicYears.where(
+      (y) => classMatchesAcademicYear({'academicYear': text}, y),
+    );
+    if (match.isNotEmpty) return _ResolvedStructureYear(year: match.first);
+    return _ResolvedStructureYear(legacyLabel: text);
+  }
+
+  FeeStructureModel? get _selectedStructure {
+    if (_structureId == null) return null;
+    final match = _structures.where((f) => f.id == _structureId);
+    return match.isEmpty ? null : match.first;
   }
 
   Future<void> _loadClasses() async {
     var classes = await _service.getActiveClasses();
     final a = widget.assignment;
-    // The assignment's own class may since have been deactivated — keep it
-    // selectable (see FeeService.getClassById's doc comment) rather than
-    // leaving `_classId` pointing at an item missing from the dropdown.
     if (a != null && a.classId.isNotEmpty && !classes.any((c) => c.id == a.classId)) {
       final current = await _service.getClassById(a.classId);
       if (current != null) classes = [...classes, current];
@@ -79,9 +144,6 @@ class _FeeAssignmentDialogState extends State<FeeAssignmentDialog> {
       final current = await _service.getStudentById(a.studentId);
       if (current != null) students = [...students, current];
     }
-    // Same reasoning as the class list above, applied to the fee structure:
-    // an assignment's structure may since have been deactivated via the
-    // Structures tab's own Edit dialog (which supports isActive toggling).
     final currentStructureId = a?.feeStructureId;
     final classStructures = allStructures
         .where((s) => s.isActive || s.id == currentStructureId)
@@ -102,7 +164,17 @@ class _FeeAssignmentDialogState extends State<FeeAssignmentDialog> {
     if (_classId == null || _structureId == null) return;
     final classDoc = _classes.firstWhere((e) => e.id == _classId);
     final classData = classDoc.data() as Map<String, dynamic>;
-    final selectedFee = _structures.firstWhere((f) => f.id == _structureId);
+    final selectedFee = _selectedStructure;
+    if (selectedFee == null) return;
+    final resolvedYear = _resolveStructureYear(selectedFee);
+    if (resolvedYear.year == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Select a Fee Structure with a resolvable Academic Year before saving.'),
+        ),
+      );
+      return;
+    }
     final totalFee = selectedFee.totalAmount;
     final discountAmount = double.tryParse(_discount.text) ?? 0;
     if (discountAmount < 0 || discountAmount > totalFee) return;
@@ -122,7 +194,8 @@ class _FeeAssignmentDialogState extends State<FeeAssignmentDialog> {
             'className': classData['name']?.toString() ?? '',
             'feeStructureId': selectedFee.id,
             'feeStructureName': selectedFee.name,
-            'academicYear': _year.text.trim(),
+            'academicYearId': resolvedYear.year!.id,
+            'academicYear': resolvedYear.year!.name,
             'totalFee': totalFee,
             'discountAmount': discountAmount,
           });
@@ -147,7 +220,8 @@ class _FeeAssignmentDialogState extends State<FeeAssignmentDialog> {
           'className': classData['name']?.toString() ?? '',
           'feeStructureId': selectedFee.id,
           'feeStructureName': selectedFee.name,
-          'academicYear': _year.text.trim(),
+          'academicYearId': resolvedYear.year!.id,
+          'academicYear': resolvedYear.year!.name,
           'totalFee': totalFee,
           'discountAmount': discountAmount,
           'payableAmount': totalFee - discountAmount,
@@ -162,7 +236,8 @@ class _FeeAssignmentDialogState extends State<FeeAssignmentDialog> {
           className: classData['name']?.toString() ?? '',
           feeStructureId: selectedFee.id,
           feeStructureName: selectedFee.name,
-          academicYear: _year.text.trim(),
+          academicYearId: resolvedYear.year!.id,
+          academicYear: resolvedYear.year!.name,
           totalFee: totalFee,
           discountAmount: discountAmount,
         );
@@ -175,6 +250,37 @@ class _FeeAssignmentDialogState extends State<FeeAssignmentDialog> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  Widget _buildAcademicYearInfo() {
+    final structure = _selectedStructure;
+    if (structure == null) return const SizedBox.shrink();
+    if (_loadingAcademicYears) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: LinearProgressIndicator(),
+      );
+    }
+
+    final resolved = _resolveStructureYear(structure);
+    if (resolved.year != null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: InputDecorator(
+          decoration: const InputDecoration(labelText: 'Academic Year'),
+          child: Text('${resolved.year!.name} • ${resolved.year!.isCurrent ? 'Current' : 'Historical'}'),
+        ),
+      );
+    }
+
+    final message = resolved.legacyLabel.isNotEmpty
+        ? 'This Fee Structure\'s academic year "${resolved.legacyLabel}" does not match any '
+            'configured Academic Year. Update the Fee Structure first.'
+        : 'This Fee Structure has no resolvable Academic Year. Update the Fee Structure first.';
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Text(message, style: const TextStyle(color: Colors.orange, fontSize: 12)),
+    );
   }
 
   @override
@@ -211,16 +317,20 @@ class _FeeAssignmentDialogState extends State<FeeAssignmentDialog> {
                     child: Text(
                       'This assignment already has a payment recorded against it, '
                       'so the student, fee structure, and total fee cannot be changed. '
-                      'Only academic year and discount can be edited here.',
+                      'Only the discount can be edited here.',
                       style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
                     ),
                   ),
                 DropdownButtonFormField<String>(
                   initialValue: _classId,
+                  isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Select Class *'),
                   items: _classes
                       .map<DropdownMenuItem<String>>(
-                        (e) => DropdownMenuItem<String>(value: e.id as String, child: Text(e.data()['name']?.toString() ?? '')),
+                        (e) => DropdownMenuItem<String>(
+                          value: e.id as String,
+                          child: Text(e.data()['name']?.toString() ?? '', overflow: TextOverflow.ellipsis),
+                        ),
                       )
                       .toList(),
                   onChanged: _identityLocked
@@ -234,10 +344,14 @@ class _FeeAssignmentDialogState extends State<FeeAssignmentDialog> {
                 if (_mode == 'single') ...[
                   DropdownButtonFormField<String>(
                     initialValue: _studentId,
+                    isExpanded: true,
                     decoration: const InputDecoration(labelText: 'Select Student *'),
                     items: _students
                         .map<DropdownMenuItem<String>>(
-                          (e) => DropdownMenuItem<String>(value: e.id as String, child: Text(e.data()['name']?.toString() ?? '')),
+                          (e) => DropdownMenuItem<String>(
+                            value: e.id as String,
+                            child: Text(e.data()['name']?.toString() ?? '', overflow: TextOverflow.ellipsis),
+                          ),
                         )
                         .toList(),
                     onChanged: _identityLocked ? null : (v) => setState(() => _studentId = v),
@@ -246,19 +360,24 @@ class _FeeAssignmentDialogState extends State<FeeAssignmentDialog> {
                 ],
                 DropdownButtonFormField<String>(
                   initialValue: _structureId,
+                  isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Fee Structure *'),
                   items: _structures
                       .map<DropdownMenuItem<String>>(
                         (fee) => DropdownMenuItem<String>(
                           value: fee.id,
-                          child: Text('${fee.name} - ₹${fee.totalAmount.toStringAsFixed(0)}'),
+                          child: Text(
+                            '${fee.name} - ₹${fee.totalAmount.toStringAsFixed(0)}',
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       )
                       .toList(),
                   onChanged: _identityLocked ? null : (v) => setState(() => _structureId = v),
                   validator: (v) => v == null ? 'Required' : null,
                 ),
-                TextFormField(controller: _year, decoration: const InputDecoration(labelText: 'Academic Year *'), validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null),
+                _buildAcademicYearInfo(),
+                const SizedBox(height: 16),
                 TextFormField(controller: _discount, decoration: const InputDecoration(labelText: 'Discount Amount'), keyboardType: TextInputType.number),
               ],
             ),

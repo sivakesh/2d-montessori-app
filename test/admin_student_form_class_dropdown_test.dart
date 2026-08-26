@@ -56,9 +56,14 @@
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:montessori_app/modules/admin/settings/data/academic_year_service.dart';
+import 'package:montessori_app/modules/admin/settings/providers/academic_year_provider.dart';
 import 'package:montessori_app/modules/admin/students/data/admin_student_service.dart';
+import 'package:montessori_app/modules/admin/students/data/student_enrollment_service.dart';
+import 'package:montessori_app/modules/admin/students/providers/student_enrollment_provider.dart';
 import 'package:montessori_app/modules/admin/ui/admin_student_form.dart';
 
 const _corruptedId = 'KNNDWfwhf4MP04Uixcxp';
@@ -69,16 +74,29 @@ Future<void> _pumpEditStudent(
   required String studentId,
   required Map<String, dynamic> initialData,
 }) async {
+  // AY-01-R1 made AdminStudentForm a ConsumerStatefulWidget (it now reads
+  // Academic Year/StudentEnrollment context) — every existing pump site
+  // needs a ProviderScope, with the same fake-Firestore-backed services
+  // this test already uses for AdminStudentService, so "no current
+  // academic year exists" (nothing seeded here) cleanly disables the new
+  // feature and this file's pre-existing crash-regression coverage is
+  // completely unaffected.
   await tester.pumpWidget(
-    MaterialApp(
-      home: AdminStudentForm(
-        studentId: studentId,
-        initialData: initialData,
-        service: AdminStudentService(
+    ProviderScope(
+      overrides: [
+        academicYearServiceProvider.overrideWithValue(AcademicYearService(firestore: firestore)),
+        studentEnrollmentServiceProvider.overrideWithValue(StudentEnrollmentService(firestore: firestore)),
+      ],
+      child: MaterialApp(
+        home: AdminStudentForm(
+          studentId: studentId,
+          initialData: initialData,
+          service: AdminStudentService(
+            firestore: firestore,
+            storage: MockFirebaseStorage(),
+          ),
           firestore: firestore,
-          storage: MockFirebaseStorage(),
         ),
-        firestore: firestore,
       ),
     ),
   );

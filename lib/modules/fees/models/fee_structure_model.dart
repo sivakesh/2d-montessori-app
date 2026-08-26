@@ -9,6 +9,7 @@ class FeeStructureModel {
     required this.components,
     required this.totalAmount,
     required this.academicYear,
+    required this.academicYearId,
     required this.isActive,
     required this.createdAt,
     required this.updatedAt,
@@ -20,7 +21,20 @@ class FeeStructureModel {
   final String description;
   final List<FeeComponentModel> components;
   final double totalAmount;
+
+  /// Legacy free-text year label, kept for backward compatibility during
+  /// the FEES-AY-IMPLEMENT-01 additive migration — see [academicYearId]'s
+  /// doc comment for which one is authoritative.
   final String academicYear;
+
+  /// Canonical FK to `AcademicYearModel.id`. Empty (`''`) means this
+  /// FeeStructure predates this field (a legacy document) or hasn't been
+  /// re-saved since. Never invented on read — a legacy document with no
+  /// `academicYearId` in Firestore loads with this as `''`, not a
+  /// guessed/matched id; matching only ever happens in UI resolution code,
+  /// never silently inside this model. Whenever non-empty, this — not
+  /// [academicYear] — is the authoritative relationship.
+  final String academicYearId;
   final bool isActive;
   final DateTime? createdAt;
   final DateTime? updatedAt;
@@ -39,6 +53,7 @@ class FeeStructureModel {
       components: components,
       totalAmount: double.tryParse(data['totalAmount']?.toString() ?? '') ?? 0,
       academicYear: data['academicYear']?.toString() ?? '',
+      academicYearId: data['academicYearId']?.toString() ?? '',
       isActive: data['isActive'] != false,
       createdAt: parseDate(data['createdAt']),
       updatedAt: parseDate(data['updatedAt']),
@@ -52,6 +67,7 @@ class FeeStructureModel {
         'components': components.map((e) => e.toMap()).toList(),
         'totalAmount': totalAmount,
         'academicYear': academicYear,
+        'academicYearId': academicYearId,
         'isActive': isActive,
         'createdAt': createdAt,
         'updatedAt': updatedAt,

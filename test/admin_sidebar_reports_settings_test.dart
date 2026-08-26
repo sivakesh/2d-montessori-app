@@ -1,12 +1,16 @@
-// Regression coverage for adding Reports and Settings to the desktop Admin
-// sidebar, below Login Logs, reusing the same "coming soon" placeholder
-// behavior the mobile "More Modules" sheet already uses for these two items
-// (neither has a real screen yet).
+// Regression coverage for the Reports and Settings entries on the desktop
+// Admin sidebar, below Login Logs. Reports still has no screen (kept as the
+// "coming soon" placeholder); Settings gained a real screen as of
+// SETTINGS-01 (see admin_settings_navigation_test.dart for that coverage) —
+// this file's Settings case now asserts it navigates instead.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:montessori_app/modules/admin/settings/ui/admin_settings_screen.dart';
 import 'package:montessori_app/modules/admin/ui/admin_layout.dart';
 import 'package:montessori_app/modules/admin/ui/admin_sidebar.dart';
+import 'package:montessori_app/modules/auth/models/app_user.dart';
+import 'package:montessori_app/modules/auth/providers/auth_provider.dart';
 
 void main() {
   Future<void> pumpDesktopLayout(
@@ -20,6 +24,11 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
+        overrides: [
+          currentUserProvider.overrideWith(
+            (ref) => AppUser(id: 'admin-1', phone: '9999999999', role: 'admin', isActive: true),
+          ),
+        ],
         child: MaterialApp(
           home: AdminLayout(
             selectedIndex: selectedIndex,
@@ -76,17 +85,16 @@ void main() {
     );
 
     testWidgets(
-      'tapping Settings shows a coming-soon snackbar and does not navigate',
+      'tapping Settings navigates to the School Settings hub (SETTINGS-01)',
       (tester) async {
         await pumpDesktopLayout(tester);
 
         await tester.ensureVisible(find.text('Settings'));
         await tester.tap(find.text('Settings'));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 300));
+        await tester.pumpAndSettle();
 
-        expect(find.text('Settings is coming soon'), findsOneWidget);
-        expect(find.byType(AdminSidebar), findsOneWidget);
+        expect(find.text('Settings is coming soon'), findsNothing);
+        expect(find.byType(AdminSettingsScreen), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
     );

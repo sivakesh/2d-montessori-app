@@ -172,11 +172,13 @@ void main() {
       // navigation.
       int? tappedId;
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: AdminSidebar(
-              selectedIndex: 0,
-              onDestinationSelected: (id) => tappedId = id,
+        ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              body: AdminSidebar(
+                selectedIndex: 0,
+                onDestinationSelected: (id) => tappedId = id,
+              ),
             ),
           ),
         ),

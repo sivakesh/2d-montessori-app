@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_sizes.dart';
+import '../../admin/settings/models/academic_year_matching.dart';
+import '../../admin/settings/providers/academic_year_provider.dart';
 import '../../admin/ui/admin_fab.dart';
 import '../../admin/ui/admin_layout.dart';
 import '../models/fee_receipt_model.dart';
@@ -23,16 +26,16 @@ final _currencyFormat = NumberFormat.currency(locale: 'en_IN', symbol: '₹', de
 
 String _formatCurrency(num? value) => _currencyFormat.format(value ?? 0);
 
-class AdminFeesScreen extends StatefulWidget {
+class AdminFeesScreen extends ConsumerStatefulWidget {
   const AdminFeesScreen({super.key, FeeService? service}) : _service = service;
 
   final FeeService? _service;
 
   @override
-  State<AdminFeesScreen> createState() => _AdminFeesScreenState();
+  ConsumerState<AdminFeesScreen> createState() => _AdminFeesScreenState();
 }
 
-class _AdminFeesScreenState extends State<AdminFeesScreen> {
+class _AdminFeesScreenState extends ConsumerState<AdminFeesScreen> {
   late final _service = widget._service ?? FeeService();
   int _tab = 0;
   bool _loading = true;
@@ -64,12 +67,12 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
   }
 
   Future<void> _openStructure({FeeStructureModel? structure}) async {
-    await showDialog(context: context, barrierDismissible: false, builder: (_) => FeeStructureDialog(structure: structure));
+    await showDialog(context: context, barrierDismissible: false, builder: (_) => FeeStructureDialog(structure: structure, service: _service));
     await _load();
   }
 
   Future<void> _openAssignment({StudentFeeAssignmentModel? assignment}) async {
-    await showDialog(context: context, barrierDismissible: false, builder: (_) => FeeAssignmentDialog(assignment: assignment));
+    await showDialog(context: context, barrierDismissible: false, builder: (_) => FeeAssignmentDialog(assignment: assignment, service: _service));
     await _load();
   }
 
@@ -337,7 +340,16 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
     }
   }
 
-  Widget _buildStructures() => ListView.builder(
+  Widget _buildStructures() {
+    // FEES-AY-IMPLEMENT-01: loaded once per build (not per row) via the
+    // same shared academicYearsProvider every other Academic-Year-aware
+    // screen already reads, so resolving each Structure's display label
+    // never issues a per-row Firestore query.
+    final academicYearNamesById = <String, String>{
+      for (final year in ref.watch(academicYearsProvider).valueOrNull ?? const [])
+        year.id: year.name,
+    };
+    return ListView.builder(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         itemCount: _structures.length,
@@ -346,10 +358,18 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
           final frequencySummary = s.components.isEmpty
               ? 'No components'
               : s.components.map((c) => c.frequency).toSet().join(', ');
+          final resolvedAcademicYear = resolveClassAcademicYearLabel(
+            academicYearId: s.academicYearId,
+            academicYear: s.academicYear,
+            academicYearNamesById: academicYearNamesById,
+          );
+          final academicYearLabel = resolvedAcademicYear.isNotEmpty
+              ? resolvedAcademicYear
+              : (s.academicYearId.isNotEmpty ? 'Unresolved' : '-');
           return _FeeListCard(
             icon: Icons.receipt_long_outlined,
             title: s.name,
-            subtitleLines: ['${s.academicYear} • ${s.components.length} components • $frequencySummary'],
+            subtitleLines: ['$academicYearLabel • ${s.components.length} components • $frequencySummary'],
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -376,6 +396,7 @@ class _AdminFeesScreenState extends State<AdminFeesScreen> {
           );
         },
       );
+  }
 
   Widget _buildAssignments() => ListView.builder(
         shrinkWrap: true,
