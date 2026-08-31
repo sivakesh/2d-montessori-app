@@ -1,0 +1,66 @@
+name: 🚀 Deploy to Firebase (PRODUCTION)
+
+# PROD-01: deploys ONLY to the live production Firebase project
+# (twod-montessori-prod, .firebaserc alias "prod").
+#
+# Deliberately manual-only (workflow_dispatch) -- it must NEVER be inferred
+# from APP_ENV=prod or triggered automatically by a push to main. The
+# DEV/UAT workflow (deploy.yml) already builds with APP_ENV=prod on every
+# push to main; that controls application behaviour only, not which
+# Firebase project gets deployed to. Running this workflow requires an
+# explicit, deliberate trigger from a repo maintainer, plus typing the
+# confirmation phrase below.
+#
+# Requires a separate GitHub Actions secret FIREBASE_SERVICE_ACCOUNT_PROD
+# (a service account scoped to twod-montessori-prod) to be added before
+# this workflow can actually run. It intentionally does NOT reuse the
+# DEV/UAT secret FIREBASE_SERVICE_ACCOUNT.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DEPLOY-PRODUCTION to confirm you intend to deploy to twod-montessori-prod'
+        required: true
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify confirmation phrase
+        run: |
+          if [ "${{ inputs.confirm }}" != "DEPLOY-PRODUCTION" ]; then
+            echo "Confirmation phrase did not match. Aborting production deploy."
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Flutter Web (APP_ENV=prod, DEPLOY_TARGET=prod)
+        run: flutter build web --release --dart-define=APP_ENV=prod --dart-define=DEPLOY_TARGET=prod
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Setup Firebase Auth
+        run: |
+          echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_PROD }}' > firebase-service-account.json
+
+      - name: Deploy to Firebase (prod alias -> twod-montessori-prod)
+        run: |
+          export GOOGLE_APPLICATION_CREDENTIALS=firebase-service-account.json
+          firebase deploy --project prod --only hosting 2>&1 | tee firebase-deploy.log
