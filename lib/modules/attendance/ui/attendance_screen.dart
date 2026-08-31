@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../admin/settings/models/school_settings_model.dart' show kDefaultSchoolId;
+import '../../admin/settings/providers/academic_year_provider.dart';
 import '../../admin/ui/admin_attendance_management_screen.dart'
     show resolveAttendanceDisplayStatus;
 import '../../auth/data/user_service.dart';
@@ -16,6 +18,11 @@ import '../../mood_checkin/services/mood_checkin_service.dart';
 import '../../students/providers/student_provider.dart';
 import '../providers/attendance_provider.dart';
 
+/// AY-IMPLEMENT-03: the fallback used only when no current Academic Year
+/// is configured yet (or it hasn't finished loading) — see
+/// `_AttendanceScreenState._academicYearStart`'s doc comment for why this
+/// is no longer the primary source once a real Academic Year exists. Kept
+/// exactly as it always was so behavior is unchanged in that fallback case.
 DateTime getAcademicYearStart(DateTime today) {
   if (today.month >= 6) {
     return DateTime(today.year, 6, 1);
@@ -76,6 +83,12 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   /// Leave.
   Map<String, Set<String>> _historyStaffIdsOnLeave = {};
   late DateTime _selectedHistoryWeekStart;
+  /// The canonical current Academic Year's own `startDate`, resolved
+  /// best-effort in [_loadData] — see [_academicYearStart]'s doc comment.
+  /// `null` until it loads, or if no current Academic Year is configured,
+  /// in which case [_academicYearStart] falls back to
+  /// [getAcademicYearStart] exactly as before AY-IMPLEMENT-03.
+  DateTime? _canonicalAcademicYearStart;
   Map<String, String> _classNames = {};
   int _studentCount = 0;
   int _staffCount = 0;
@@ -109,6 +122,19 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
       final userService = _userService;
       final attendanceService = ref.read(attendanceServiceProvider);
       final moodService = ref.read(moodCheckinServiceProvider);
+      // Best-effort, same shape as the on-leave resolutions below: a
+      // failure (or no current Academic Year configured yet) must never
+      // block attendance from loading — `_academicYearStart` simply keeps
+      // using its existing hardcoded fallback in that case.
+      DateTime? canonicalAcademicYearStart;
+      try {
+        final currentYear = await ref
+            .read(academicYearServiceProvider)
+            .getCurrentAcademicYear(schoolId: kDefaultSchoolId);
+        canonicalAcademicYearStart = currentYear?.startDate;
+      } catch (_) {
+        canonicalAcademicYearStart = null;
+      }
 
       final classes = await classService.getClasses();
       final allStudents = await studentService.getAllStudents();
@@ -275,6 +301,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         _historyStudentIdsOnLeave = historyStudentIdsOnLeave;
         _historyStaffIdsOnLeave = historyStaffIdsOnLeave;
         _classNames = classNames;
+        _canonicalAcademicYearStart = canonicalAcademicYearStart;
         _studentCount = summaryStudents.length;
         _staffCount = staff.length;
         _presentCount = presentCount;
@@ -383,8 +410,15 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     ).subtract(Duration(days: date.weekday - 1));
   }
 
+  /// AY-IMPLEMENT-03: the earliest date History week-navigation can scroll
+  /// back to. Prefers the canonical current Academic Year's own
+  /// `startDate` (resolved in [_loadData]) once one is configured;
+  /// falls back to the pre-existing hardcoded June-1 heuristic
+  /// ([getAcademicYearStart]) only while that hasn't loaded yet or no
+  /// current Academic Year exists — never invents one, exactly like every
+  /// other `currentAcademicYearProvider` consumer's null-safe contract.
   DateTime get _academicYearStart =>
-      getAcademicYearStart(DateTime.now().toLocal());
+      _canonicalAcademicYearStart ?? getAcademicYearStart(DateTime.now().toLocal());
 
   DateTime get _academicYearWeekStart => _startOfWeek(_academicYearStart);
 

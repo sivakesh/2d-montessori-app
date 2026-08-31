@@ -12,6 +12,8 @@ import '../../finance/widgets/finance_status_chip.dart';
 import '../../finance/widgets/finance_summary_card.dart';
 import '../../leave/services/leave_service.dart';
 import '../../students/providers/student_provider.dart';
+import '../settings/models/school_settings_model.dart' show kDefaultSchoolId;
+import '../settings/providers/academic_year_provider.dart';
 import 'admin_layout.dart';
 
 /// Pure summary calculation over already-loaded attendance statuses — no
@@ -44,12 +46,18 @@ String resolveAttendanceDisplayStatus({
 }
 
 class AdminAttendanceManagementScreen extends ConsumerStatefulWidget {
-  const AdminAttendanceManagementScreen({super.key, this.leaveService});
+  const AdminAttendanceManagementScreen({super.key, this.leaveService, this.userService});
 
   /// Overridable only so tests can inject a fake-Firestore-backed
   /// LeaveService — the same DI seam every service here already exposes on
   /// its own constructor. Production callers never pass this.
   final LeaveService? leaveService;
+
+  /// Same DI seam as [leaveService], for [UserService] — mirrors the
+  /// existing convention on AttendanceScreen. Production callers never
+  /// pass this; it defaults to the same `UserService()` this screen always
+  /// constructed.
+  final UserService? userService;
 
   @override
   ConsumerState<AdminAttendanceManagementScreen> createState() =>
@@ -59,6 +67,7 @@ class AdminAttendanceManagementScreen extends ConsumerStatefulWidget {
 class _AdminAttendanceManagementScreenState
     extends ConsumerState<AdminAttendanceManagementScreen> {
   late final _leaveService = widget.leaveService ?? LeaveService();
+  late final _userService = widget.userService ?? UserService();
   DateTime _selectedDate = DateTime.now().toLocal();
   bool _loading = true;
   String? _errorMessage;
@@ -74,6 +83,14 @@ class _AdminAttendanceManagementScreenState
   /// here.
   Set<String> _studentIdsOnLeave = {};
   String _selectedScope = 'student';
+  /// AY-IMPLEMENT-03: the canonical current Academic Year's own
+  /// `startDate`, resolved best-effort in [_loadData] — see
+  /// [_academicYearStart]'s doc comment. `null` until it loads, or if no
+  /// current Academic Year is configured, in which case
+  /// [_academicYearStart] falls back to
+  /// `AttendanceService.getAcademicYearStart` exactly as before
+  /// AY-IMPLEMENT-03.
+  DateTime? _canonicalAcademicYearStart;
 
   @override
   void initState() {
@@ -82,7 +99,13 @@ class _AdminAttendanceManagementScreenState
     _loadData();
   }
 
+  /// The earliest date the historical attendance date picker allows
+  /// picking. Prefers the canonical current Academic Year's own
+  /// `startDate` once one is configured; falls back to the pre-existing
+  /// hardcoded June-1 heuristic only while that hasn't loaded yet or no
+  /// current Academic Year exists — never invents one.
   DateTime get _academicYearStart =>
+      _canonicalAcademicYearStart ??
       ref.read(attendanceServiceProvider).getAcademicYearStart(DateTime.now());
 
   String _dateKey(DateTime date) =>
@@ -132,7 +155,7 @@ class _AdminAttendanceManagementScreenState
       final attendanceService = ref.read(attendanceServiceProvider);
       final studentService = ref.read(studentServiceProvider);
       final classService = ref.read(classServiceProvider);
-      final userService = UserService();
+      final userService = _userService;
 
       final classes = await classService.getClasses();
       final students = await studentService.getAllStudents();
@@ -149,6 +172,19 @@ class _AdminAttendanceManagementScreenState
             await _leaveService.getStudentIdsOnApprovedLeave(_selectedDate);
       } catch (_) {
         studentIdsOnLeave = {};
+      }
+      // Same best-effort shape: a failure (or no current Academic Year
+      // configured yet) must never block attendance from loading —
+      // `_academicYearStart` simply keeps using its existing hardcoded
+      // fallback in that case.
+      DateTime? canonicalAcademicYearStart;
+      try {
+        final currentYear = await ref
+            .read(academicYearServiceProvider)
+            .getCurrentAcademicYear(schoolId: kDefaultSchoolId);
+        canonicalAcademicYearStart = currentYear?.startDate;
+      } catch (_) {
+        canonicalAcademicYearStart = null;
       }
 
       final draft = <String, String>{};
@@ -174,6 +210,7 @@ class _AdminAttendanceManagementScreenState
         _staff = staff;
         _attendanceMap = attendanceMap;
         _studentIdsOnLeave = studentIdsOnLeave;
+        _canonicalAcademicYearStart = canonicalAcademicYearStart;
         _draftStatuses
           ..clear()
           ..addAll(draft);

@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../admin/notifications/data/admin_notification_service.dart';
+import '../../admin/settings/models/academic_year_date_range.dart';
 import '../models/calendar_event_model.dart';
 
 class CalendarService {
@@ -31,6 +32,21 @@ class CalendarService {
         .toList();
     items.sort((a, b) => a.date.compareTo(b.date));
     return items;
+  }
+
+  /// AY-IMPLEMENT-03: every calendar item (any status) whose single [date]
+  /// falls within one Academic Year — reuses [getAllEvents] and filters
+  /// client-side, the same convention [getEventsForAudience] already uses
+  /// for its own status filtering, rather than a server-side range query
+  /// (this collection has no existing date-range query to build on, and no
+  /// event model supports multi-day/recurring spans — see AY-AUDIT-02 §6).
+  /// Never writes or reads an `academicYearId` — the calendar schema itself
+  /// is completely untouched.
+  Future<List<CalendarEventModel>> getEventsForAcademicYear(
+    AcademicYearDateRange range,
+  ) async {
+    final all = await getAllEvents();
+    return all.where((e) => range.contains(e.date)).toList();
   }
 
   /// Published items visible to one consumer audience ('Parents' or

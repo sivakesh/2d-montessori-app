@@ -5,6 +5,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../admin/settings/models/academic_year_date_range.dart';
 import '../models/mood_checkin_model.dart';
 
 class MoodCheckinService {
@@ -30,6 +31,32 @@ class MoodCheckinService {
     return _collection
         .where('checkInAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
         .where('checkInAt', isLessThan: Timestamp.fromDate(end));
+  }
+
+  /// AY-IMPLEMENT-03: the same `checkInAt` range-query shape as
+  /// [_todayQuery], just bounded by [range] instead of "today" — two
+  /// range clauses on the one `checkInAt` field, no other filter combined,
+  /// so this needs no composite index (unlike the equality+orderBy shape
+  /// documented on `FinanceService.watchInvoicesByType`). [range]'s
+  /// [AcademicYearDateRange.queryUpperBound] (not [AcademicYearDateRange.end]
+  /// directly) is what makes this correct against a Timestamp field: using
+  /// `end` (midnight of the last day) as an `isLessThanOrEqualTo`/
+  /// `isLessThan` bound would silently exclude any check-in later that
+  /// same day.
+  Query<Map<String, dynamic>> _academicYearQuery(AcademicYearDateRange range) {
+    return _collection
+        .where('checkInAt', isGreaterThanOrEqualTo: Timestamp.fromDate(range.start))
+        .where('checkInAt', isLessThan: Timestamp.fromDate(range.queryUpperBound));
+  }
+
+  /// Every mood check-in within one Academic Year. Never writes or reads an
+  /// `academicYearId` — the mood check-in schema itself is completely
+  /// untouched.
+  Future<List<MoodCheckinModel>> getMoodCheckinsForAcademicYear(
+    AcademicYearDateRange range,
+  ) async {
+    final snapshot = await _academicYearQuery(range).get();
+    return snapshot.docs.map(MoodCheckinModel.fromFirestore).toList();
   }
 
   Future<int> getTodayMoodCheckinCount() async {

@@ -7,6 +7,8 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../admin/settings/models/academic_year_date_range.dart';
+
 class AttendanceService {
   AttendanceService({
     FirebaseFirestore? firestore,
@@ -92,6 +94,18 @@ class AttendanceService {
     }
 
     return map;
+  }
+
+  /// AY-IMPLEMENT-03: every attendance record for one Academic Year — a
+  /// thin convenience wrapper over [getAttendanceHistoryMap], the same
+  /// already-existing, index-free (`date` is a single-field range query)
+  /// date-range query Reports needs, just bounded by [range] instead of an
+  /// ad-hoc start/end. Never stores or reads an `academicYearId` — the
+  /// attendance schema itself is completely untouched.
+  Future<Map<String, Map<String, dynamic>>> getAttendanceForAcademicYear(
+    AcademicYearDateRange range,
+  ) {
+    return getAttendanceHistoryMap(startDate: range.start, endDate: range.end);
   }
 
   String dateKeyFor(DateTime date) =>

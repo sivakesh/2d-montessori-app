@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 
 import '../../admin/notifications/data/admin_notification_service.dart';
+import '../../admin/settings/models/academic_year_date_range.dart';
 import '../../parent/data/parent_service.dart';
 import '../models/leave_request_model.dart';
 
@@ -142,6 +143,24 @@ class LeaveService {
         .toList();
     _sortByCreatedAtDesc(items);
     return items;
+  }
+
+  /// AY-IMPLEMENT-03: every staff leave request attributed to one Academic
+  /// Year, using the audit-approved rule — [LeaveRequestModel.startDate]
+  /// alone determines the year; a request is never split across two years
+  /// even if [endDate] crosses [range]'s boundary. Reuses [getAllRequests]
+  /// (already scoped to `subjectType == 'staff'`) and filters client-side,
+  /// the same convention every other range-based method in this file
+  /// already uses (see [getStaffIdsOnApprovedLeaveForRange]) rather than a
+  /// server-side range query, which would require a composite index once
+  /// combined with the `subjectType` equality this collection's shared-use
+  /// already implies. Never writes or reads an `academicYearId` — the leave
+  /// schema itself is completely untouched.
+  Future<List<LeaveRequestModel>> getStaffRequestsForAcademicYear(
+    AcademicYearDateRange range,
+  ) async {
+    final all = await getAllRequests();
+    return all.where((r) => range.contains(r.startDate)).toList();
   }
 
   /// Staff ids with an Approved leave request whose `[startDate, endDate]`
@@ -321,6 +340,17 @@ class LeaveService {
         .toList();
     _sortByCreatedAtDesc(items);
     return items;
+  }
+
+  /// AY-IMPLEMENT-03: the Student Leave sibling of
+  /// [getStaffRequestsForAcademicYear] — same `startDate`-only attribution
+  /// rule, same client-side-filter-over-[getAllStudentLeaveRequests]
+  /// convention, same "never writes/reads academicYearId" guarantee.
+  Future<List<LeaveRequestModel>> getStudentRequestsForAcademicYear(
+    AcademicYearDateRange range,
+  ) async {
+    final all = await getAllStudentLeaveRequests();
+    return all.where((r) => range.contains(r.startDate)).toList();
   }
 
   /// Student ids with an Approved leave request whose [startDate, endDate]

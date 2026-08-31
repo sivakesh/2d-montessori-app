@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import '../../admin/settings/models/academic_year_date_range.dart';
 import '../models/finance_account_model.dart';
 import '../models/finance_category_model.dart';
 import '../models/finance_dashboard_summary_model.dart';
@@ -149,6 +150,90 @@ class FinanceService {
       });
       return items;
     });
+  }
+
+  // ---------------------------------------------------------------------
+  // AY-IMPLEMENT-03: date-derived Academic Year reporting support. Every
+  // method below is a one-shot `.get()` (not a `.snapshots()` stream, since
+  // a Report queries a fixed historical range, not a live view) plus a
+  // client-side date filter — deliberately never a server-side range query
+  // combined with any other filter/orderBy, mirroring [watchInvoicesByType]'s
+  // own documented lesson above: an equality/range filter combined with an
+  // orderBy on a different field silently requires a composite index that
+  // doesn't exist here, and this collection set has already broken once in
+  // production from exactly that. None of these write or read an
+  // `academicYearId` — every Finance schema is completely untouched. Fee-
+  // sourced entries deliberately have no method here: their Academic Year
+  // is already fully resolvable through the existing `feeAssignmentId` ->
+  // `StudentFeeAssignment.academicYearId` relationship (FeeService), and
+  // duplicating that onto the Finance document would be exactly the kind
+  // of redundant field AY-AUDIT-02 recommended against.
+
+  /// Every non-deleted income entry whose [FinanceIncomeModel.incomeDate]
+  /// falls within [range]. Filters `isDeleted` client-side, matching
+  /// [watchIncome]'s own convention (a `!=` Firestore filter would exclude
+  /// documents that predate the field's existence entirely).
+  Future<List<FinanceIncomeModel>> getIncomeForAcademicYear(
+    AcademicYearDateRange range,
+  ) async {
+    final snap = await _income.get();
+    return snap.docs
+        .where((d) => d.data()['isDeleted'] != true)
+        .map((d) => FinanceIncomeModel.fromMap(d.id, d.data()))
+        .where((e) => e.incomeDate != null && range.contains(e.incomeDate!))
+        .toList();
+  }
+
+  /// Every expense whose [FinanceExpenseModel.expenseDate] falls within
+  /// [range].
+  Future<List<FinanceExpenseModel>> getExpensesForAcademicYear(
+    AcademicYearDateRange range,
+  ) async {
+    final snap = await _expenses.get();
+    return snap.docs
+        .map((d) => FinanceExpenseModel.fromMap(d.id, d.data()))
+        .where((e) => e.expenseDate != null && range.contains(e.expenseDate!))
+        .toList();
+  }
+
+  /// Every ledger entry whose [FinanceLedgerEntryModel.transactionDate]
+  /// falls within [range]. Cancelled-status exclusion (if wanted) is left
+  /// to the caller, exactly like [watchLedger] itself already leaves it to
+  /// its own callers rather than baking it into the query.
+  Future<List<FinanceLedgerEntryModel>> getLedgerForAcademicYear(
+    AcademicYearDateRange range,
+  ) async {
+    final snap = await _ledger.get();
+    return snap.docs
+        .map((d) => FinanceLedgerEntryModel.fromMap(d.id, d.data()))
+        .where((e) => e.transactionDate != null && range.contains(e.transactionDate!))
+        .toList();
+  }
+
+  /// Every invoice (any type) whose [FinanceInvoiceModel.invoiceDate] falls
+  /// within [range]. Type-agnostic — a caller wanting only expense/salary
+  /// invoices filters `type` on the result, the same composability
+  /// [watchInvoicesByType] already offers for the live-stream case.
+  Future<List<FinanceInvoiceModel>> getInvoicesForAcademicYear(
+    AcademicYearDateRange range,
+  ) async {
+    final snap = await _invoices.get();
+    return snap.docs
+        .map((d) => FinanceInvoiceModel.fromMap(d.id, d.data()))
+        .where((e) => e.invoiceDate != null && range.contains(e.invoiceDate!))
+        .toList();
+  }
+
+  /// Every staff salary payment whose
+  /// [StaffSalaryPaymentModel.paymentDate] falls within [range].
+  Future<List<StaffSalaryPaymentModel>> getSalaryPaymentsForAcademicYear(
+    AcademicYearDateRange range,
+  ) async {
+    final snap = await _salary.get();
+    return snap.docs
+        .map((d) => StaffSalaryPaymentModel.fromMap(d.id, d.data()))
+        .where((e) => e.paymentDate != null && range.contains(e.paymentDate!))
+        .toList();
   }
 
   Future<String> createCategory(FinanceCategoryModel category) async {
