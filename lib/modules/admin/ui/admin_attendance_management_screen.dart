@@ -447,7 +447,36 @@ class _AdminAttendanceManagementScreenState
         if (_loading)
           const Center(child: CircularProgressIndicator())
         else ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Remember to save your changes. Attendance status changes '
+                  'are applied only after you tap Save.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                    ),
+                    onPressed: _canSave ? _saveAll : null,
+                    icon: const Icon(Icons.save),
+                    label: const Text('Save'),
+                  ),
+                ),
+              ],
+            ),
+          ),
           if (_selectedScope == 'student')
+            
             filteredStudents.isEmpty
                 ? const _AttendanceEmptyState(
                     title: 'No students found',
