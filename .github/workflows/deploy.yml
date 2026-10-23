@@ -1,13 +1,17 @@
+
 name: 🚀 Deploy to Firebase
 
 on:
   push:
     branches:
       - main
+      - dev
 
 jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout code
@@ -19,34 +23,73 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Flutter version
-        run: flutter --version
-
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build Flutter Web (PROD)
-        run: flutter build web --release --dart-define=APP_ENV=prod
+      - name: Select Firebase environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF_NAME" == "main" ]]; then
+            echo "APP_ENV=prod" >> "$GITHUB_ENV"
+            echo "FIREBASE_PROJECT=twod-montessori-prod" >> "$GITHUB_ENV"
+          elif [[ "$GITHUB_REF_NAME" == "dev" ]]; then
+            echo "APP_ENV=dev" >> "$GITHUB_ENV"
+            echo "FIREBASE_PROJECT=montessori-app-95988" >> "$GITHUB_ENV"
+          else
+            echo "Unsupported deployment branch"
+            exit 1
+          fi
+      - name: Verify Firebase configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$APP_ENV" == "prod" ]]; then
+            grep -q "projectId: 'twod-montessori-prod'" lib/firebase_options.dart
+            grep -q "appId: '1:455124304339:web:0d3b3d520aa2cd5a836f26'" lib/firebase_options.dart
+            grep -q '"prod": "twod-montessori-prod"' .firebaserc
+          else
+            grep -q "projectId: 'montessori-app-95988'" lib/firebase_options.dart
+            grep -q "appId: '1:679712248653:web:83691e33d448b7f057dd04'" lib/firebase_options.dart
+            grep -q '"dev": "montessori-app-95988"' .firebaserc
+          fi
+
+          echo "Firebase configuration checks passed."
+
+      - name: Build Flutter Web
+        run: flutter build web --release --dart-define=APP_ENV=$APP_ENV
+
+      - name: Verify built web files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f build/web/main.dart.js
+
+          if [[ "$APP_ENV" == "prod" ]]; then
+            grep -q "twod-montessori-prod" build/web/main.dart.js
+            grep -q "1:455124304339:web:0d3b3d520aa2cd5a836f26" build/web/main.dart.js
+          else
+            grep -q "montessori-app-95988" build/web/main.dart.js
+            grep -q "1:679712248653:web:83691e33d448b7f057dd04" build/web/main.dart.js
+          fi
 
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
 
-      - name: Setup Firebase Auth
+      - name: Configure Firebase credentials
+        shell: bash
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
-          echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > firebase-service-account.json
+          set -euo pipefail
+          test -n "$FIREBASE_SERVICE_ACCOUNT"
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-service-account.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-service-account.json" >> "$GITHUB_ENV"
 
-      - name: Deploy to Firebase
+      - name: Deploy to selected Firebase project
+        shell: bash
         run: |
-          export GOOGLE_APPLICATION_CREDENTIALS=firebase-service-account.json
-          firebase deploy --only hosting 2>&1 | tee firebase-deploy.log
-
-          EXIT_CODE=${PIPESTATUS[0]}
-
-          if [ $EXIT_CODE -ne 0 ]; then
-            if grep -q "current active version" firebase-deploy.log; then
-              echo "Firebase Hosting version is already active. Treating as success."
-              exit 0
-            fi
-
-            exit $EXIT_CODE
-          fi
+          set -euo pipefail
+          firebase deploy --only hosting --project "$FIREBASE_PROJECT"

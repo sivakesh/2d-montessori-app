@@ -65,5 +65,15 @@ class DefaultFirebaseOptions {
     projectId: 'montessori-app-95988',
     storageBucket: 'montessori-app-95988.firebasestorage.app',
   );
+}
 
+class ProductionFirebaseOptions {
+  static const web = FirebaseOptions(
+    apiKey: 'AIzaSyBbYELUWA1hK1ZjXsbpxespvM3mOAyFFwE',
+    appId: '1:455124304339:web:0d3b3d520aa2cd5a836f26',
+    messagingSenderId: '455124304339',
+    projectId: 'twod-montessori-prod',
+    authDomain: 'twod-montessori-prod.firebaseapp.com',
+    storageBucket: 'twod-montessori-prod.firebasestorage.app',
+  );
 }

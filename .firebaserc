@@ -1,8 +1,10 @@
+
 {
   "projects": {
     "montessori-app": "montessori-app-95988",
     "default": "montessori-app-95988",
-    "prod": "montessori-app-95988"
+    "dev": "montessori-app-95988",
+    "prod": "twod-montessori-prod"
   },
   "targets": {},
   "etags": {}
