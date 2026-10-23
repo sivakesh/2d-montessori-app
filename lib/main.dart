@@ -1,7 +1,7 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'firebase_options.dart';
+
 import 'core/theme/app_theme.dart';
 import 'modules/auth/ui/auth_gate.dart';
 import 'modules/auth/ui/login_screen.dart';
@@ -11,10 +11,20 @@ import 'modules/admin/ui/admin_dashboard_screen.dart';
 import 'modules/admin/ui/admin_profile_form.dart';
 import 'admin/screens/admin_session_logs_screen.dart';
 import 'modules/auth/utils/recaptcha_web_view.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+
+import 'core/config/app_env.dart';
+import 'firebase_options.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  final firebaseOptions = kIsWeb && currentEnvironment == AppEnvironment.prod
+      ? ProductionFirebaseOptions.web
+      : DefaultFirebaseOptions.currentPlatform;
+
+  await Firebase.initializeApp(options: firebaseOptions);
+
   registerRecaptchaView();
   // ignore: avoid_print
   print('Firebase initialized');
