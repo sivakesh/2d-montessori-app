@@ -24,6 +24,9 @@ class FinanceInvoiceModel {
     required this.updatedAt,
     required this.createdBy,
     required this.reversedAt,
+    this.cancellationReason = '',
+    this.cancelledAt,
+    this.cancelledBy = '',
   });
 
   final String id;
@@ -48,6 +51,13 @@ class FinanceInvoiceModel {
   final DateTime? updatedAt;
   final String createdBy;
   final DateTime? reversedAt;
+
+  /// Set only when an expense invoice is cancelled
+  /// (FinanceService.cancelExpenseInvoice); empty/null for every other
+  /// invoice, including all pre-existing documents.
+  final String cancellationReason;
+  final DateTime? cancelledAt;
+  final String cancelledBy;
 
   factory FinanceInvoiceModel.fromMap(String id, Map<String, dynamic> data) {
     DateTime? parse(dynamic v) => v is Timestamp ? v.toDate() : v is DateTime ? v : null;
@@ -75,6 +85,9 @@ class FinanceInvoiceModel {
       updatedAt: parse(data['updatedAt']),
       createdBy: data['createdBy']?.toString() ?? '',
       reversedAt: parse(data['reversedAt']),
+      cancellationReason: data['cancellationReason']?.toString() ?? '',
+      cancelledAt: parse(data['cancelledAt']),
+      cancelledBy: data['cancelledBy']?.toString() ?? '',
     );
   }
 }

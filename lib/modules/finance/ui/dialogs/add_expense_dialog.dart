@@ -1,11 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../../../core/services/document_number_service.dart';
 import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../models/finance_category_model.dart';
+import '../../models/finance_invoice_model.dart';
 import '../../services/finance_service.dart';
 
 class AddExpenseDialog extends StatefulWidget {
-  const AddExpenseDialog({super.key});
+  const AddExpenseDialog({super.key, this.initial, this.service});
+
+  /// When set, the dialog edits this existing expense invoice in place
+  /// (via [FinanceService.updateExpenseInvoice]) instead of raising a new
+  /// one — no new invoice number is allocated.
+  final FinanceInvoiceModel? initial;
+
+  /// Optional injection seam (tests); defaults to `FinanceService()` as before.
+  final FinanceService? service;
 
   @override
   State<AddExpenseDialog> createState() => _AddExpenseDialogState();
@@ -18,12 +28,54 @@ class _AddExpenseDialogState extends State<AddExpenseDialog> {
   final _amount = TextEditingController();
   final _tax = TextEditingController(text: '0');
   final _attachment = TextEditingController();
-  final _service = FinanceService();
-  final _numberService = DocumentNumberService();
-  final DateTime _invoiceDate = DateTime.now();
+  late final _service = widget.service ?? FinanceService();
+  // Lazy: only the create path allocates an invoice number; editing never does.
+  late final _numberService = DocumentNumberService();
+  DateTime _invoiceDate = DateTime.now();
   final DateTime _dueDate = DateTime.now();
   String? _categoryId;
   bool _saving = false;
+
+  bool get _isEdit => widget.initial != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initial;
+    if (initial != null) {
+      _vendorName.text = initial.partyName;
+      _description.text = initial.description;
+      _amount.text = _exactAmount(initial.amount);
+      _tax.text = _exactAmount(initial.taxAmount);
+      _attachment.text = initial.attachmentUrl;
+      _invoiceDate = initial.invoiceDate ?? initial.createdAt ?? DateTime.now();
+    }
+  }
+
+  /// Pre-fills without rounding, so saving a descriptive-only edit never
+  /// changes the stored amount (e.g. 1234.5 stays 1234.5, 1000 shows "1000").
+  static String _exactAmount(double value) =>
+      value == value.roundToDouble() ? value.toStringAsFixed(0) : value.toString();
+
+  /// When editing an invoice that already has payments, the new total
+  /// (amount + tax) may not drop below what has been paid.
+  String? _validateAgainstPaid() {
+    final paid = widget.initial?.paidAmount ?? 0;
+    if (paid <= 0) return null;
+    final total = (double.tryParse(_amount.text) ?? 0) + (double.tryParse(_tax.text) ?? 0);
+    if (total < paid) return 'Total cannot be less than ₹${_exactAmount(paid)} already paid';
+    return null;
+  }
+
+  Future<void> _pickInvoiceDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      initialDate: _invoiceDate,
+    );
+    if (picked != null) setState(() => _invoiceDate = picked);
+  }
 
   @override
   void dispose() {
@@ -38,6 +90,31 @@ class _AddExpenseDialogState extends State<AddExpenseDialog> {
   Future<void> _save() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() => _saving = true);
+    final initial = widget.initial;
+    if (initial != null) {
+      try {
+        final cats = await _service.watchCategories().first;
+        final cat = cats.firstWhere((e) => e.id == _categoryId);
+        await _service.updateExpenseInvoice(
+          id: initial.id,
+          partyName: _vendorName.text.trim(),
+          categoryName: cat.name,
+          invoiceDate: _invoiceDate,
+          amount: double.tryParse(_amount.text) ?? 0,
+          taxAmount: double.tryParse(_tax.text) ?? 0,
+          description: _description.text.trim(),
+          attachmentUrl: _attachment.text.trim(),
+        );
+        if (!mounted) return;
+        Navigator.pop(context, true);
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to update expense invoice: $e')));
+      } finally {
+        if (mounted) setState(() => _saving = false);
+      }
+      return;
+    }
     try {
       // Allocate the invoice number only once the invoice is actually being
       // saved, so a cancelled dialog never burns a number and leaves a gap.
@@ -88,12 +165,14 @@ class _AddExpenseDialogState extends State<AddExpenseDialog> {
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(20),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Text('Raise Expense Invoice', style: Theme.of(context).textTheme.titleLarge),
+                Text(_isEdit ? 'Edit Expense Invoice' : 'Raise Expense Invoice', style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 4),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    'An invoice number is generated automatically when you save.',
+                    _isEdit
+                        ? 'Invoice No: ${widget.initial!.invoiceNo.isEmpty ? '—' : widget.initial!.invoiceNo}'
+                        : 'An invoice number is generated automatically when you save.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
                   ),
                 ),
@@ -103,7 +182,19 @@ class _AddExpenseDialogState extends State<AddExpenseDialog> {
                 StreamBuilder<List<FinanceCategoryModel>>(
                   stream: _service.watchCategories(),
                   builder: (context, snap) {
-                    final items = snap.data?.where((e) => e.type == 'expense' && e.isActive).toList() ?? [];
+                    final initialCategory = widget.initial?.categoryName;
+                    // Editing: pre-select the invoice's existing category
+                    // (stored by name only), keeping it selectable even if
+                    // that category has since been deactivated.
+                    if (_isEdit && _categoryId == null) {
+                      for (final c in snap.data ?? const <FinanceCategoryModel>[]) {
+                        if (c.type == 'expense' && c.name == initialCategory) _categoryId = c.id;
+                      }
+                    }
+                    final items = snap.data
+                            ?.where((e) => e.type == 'expense' && (e.isActive || (_isEdit && e.id == _categoryId)))
+                            .toList() ??
+                        [];
                     return DropdownButtonFormField<String>(
                       initialValue: _categoryId,
                       decoration: const InputDecoration(labelText: 'Expense Category'),
@@ -114,9 +205,31 @@ class _AddExpenseDialogState extends State<AddExpenseDialog> {
                   },
                 ),
                 const SizedBox(height: 12),
-                TextFormField(controller: _amount, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number, validator: (v) => (double.tryParse(v ?? '') ?? 0) > 0 ? null : 'Required'),
+                TextFormField(
+                  controller: _amount,
+                  decoration: InputDecoration(
+                    labelText: 'Amount',
+                    helperText: (widget.initial?.paidAmount ?? 0) > 0
+                        ? '₹${_exactAmount(widget.initial!.paidAmount)} already paid — total cannot go below this'
+                        : null,
+                  ),
+                  keyboardType: TextInputType.number,
+                  validator: (v) => (double.tryParse(v ?? '') ?? 0) > 0 ? _validateAgainstPaid() : 'Required',
+                ),
                 const SizedBox(height: 12),
                 TextFormField(controller: _tax, decoration: const InputDecoration(labelText: 'Tax Amount (optional)'), keyboardType: TextInputType.number),
+                if (_isEdit) ...[
+                  const SizedBox(height: 12),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Invoice Date'),
+                    subtitle: Text(DateFormat('dd MMM yyyy').format(_invoiceDate)),
+                    trailing: TextButton(
+                      onPressed: _saving ? null : _pickInvoiceDate,
+                      child: const Text('Change'),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 TextFormField(controller: _description, decoration: const InputDecoration(labelText: 'Description'), maxLines: 3),
                 const SizedBox(height: 12),

@@ -1,7 +1,8 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'firebase_options.dart';
+import 'core/config/deploy_target.dart';
+import 'core/config/firebase_environment.dart';
 import 'core/theme/app_theme.dart';
 import 'modules/auth/ui/auth_gate.dart';
 import 'modules/auth/ui/login_screen.dart';
@@ -14,7 +15,7 @@ import 'modules/auth/utils/recaptcha_web_view.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await Firebase.initializeApp(options: firebaseOptionsFor(currentDeployTarget));
   registerRecaptchaView();
   // ignore: avoid_print
   print('Firebase initialized');

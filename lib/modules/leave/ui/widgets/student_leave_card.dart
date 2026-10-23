@@ -14,11 +14,28 @@ class StudentLeaveCard extends StatelessWidget {
     required this.request,
     this.onApprove,
     this.onReject,
+    this.onLeaveDate,
   });
 
   final LeaveRequestModel request;
   final VoidCallback? onApprove;
   final VoidCallback? onReject;
+
+  /// When set, an Approved request whose `[startDate, endDate]` range
+  /// includes this date (inclusive, date components only) additionally
+  /// shows an "ON LEAVE" chip — the same date-coverage rule as
+  /// [LeaveService.getStudentIdsOnApprovedLeave]. Null (the default) keeps
+  /// the card exactly as it was for callers that don't pass it.
+  final DateTime? onLeaveDate;
+
+  bool get _isOnLeave {
+    final date = onLeaveDate;
+    if (date == null || request.status != LeaveStatus.approved) return false;
+    final day = DateTime(date.year, date.month, date.day);
+    final start = DateTime(request.startDate.year, request.startDate.month, request.startDate.day);
+    final end = DateTime(request.endDate.year, request.endDate.month, request.endDate.day);
+    return !day.isBefore(start) && !day.isAfter(end);
+  }
 
   (String, Color) _statusStyle() {
     return switch (request.status) {
@@ -54,6 +71,10 @@ class StudentLeaveCard extends StatelessWidget {
                     style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
                   ),
                 ),
+                if (_isOnLeave) ...[
+                  const FinanceStatusChip(label: 'ON LEAVE', color: Color(0xFF1565C0)),
+                  const SizedBox(width: 6),
+                ],
                 FinanceStatusChip(label: statusLabel, color: statusColor),
               ],
             ),

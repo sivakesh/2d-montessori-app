@@ -340,6 +340,9 @@ class FinanceService {
       throw StateError('Invoice not found');
     }
     final invoice = FinanceInvoiceModel.fromMap(snap.id, snap.data()!);
+    if (invoice.status == 'cancelled') {
+      throw StateError('This invoice has been cancelled and cannot receive payments.');
+    }
     if (amount <= 0 || amount > invoice.balanceAmount) {
       throw StateError('Invalid amount');
     }
@@ -418,6 +421,269 @@ class FinanceService {
       }, SetOptions(merge: true));
     });
     return paymentRef.id;
+  }
+
+  /// Edits an existing expense invoice's descriptive fields and amount in
+  /// place (same document id — never a new invoice). The invoice number,
+  /// type, and recorded payments are never touched: `paidAmount` stays
+  /// as-is, and `balanceAmount`/`status` are recomputed from the new total
+  /// with the exact same formula [payInvoice] uses. Refuses a new total
+  /// below what has already been paid, since that would leave payments
+  /// exceeding the invoice. Raising/editing an invoice never moves money,
+  /// so no ledger or account balance changes here.
+  ///
+  /// Writes a full merged map inside a transaction rather than
+  /// `SetOptions(merge: true)`, for the same fake_cloud_firestore reason
+  /// documented on [updateIncome].
+  Future<void> updateExpenseInvoice({
+    required String id,
+    required String partyName,
+    required String categoryName,
+    required DateTime invoiceDate,
+    required double amount,
+    required double taxAmount,
+    required String description,
+    required String attachmentUrl,
+  }) async {
+    if (amount <= 0) throw StateError('Amount must be greater than 0');
+    if (taxAmount < 0) throw StateError('Tax amount cannot be negative');
+    final invoiceRef = _invoices.doc(id);
+    await _firestore.runTransaction((txn) async {
+      final snap = await txn.get(invoiceRef);
+      if (!snap.exists || snap.data() == null) {
+        throw StateError('Invoice not found');
+      }
+      final current = snap.data()!;
+      final invoice = FinanceInvoiceModel.fromMap(snap.id, current);
+      if (invoice.type != 'expense') {
+        throw StateError('Only expense invoices can be edited here.');
+      }
+      if (invoice.status == 'cancelled') {
+        throw StateError('This invoice has been cancelled and can no longer be edited.');
+      }
+      final totalAmount = amount + taxAmount;
+      if (totalAmount < invoice.paidAmount) {
+        throw StateError(
+          'Total amount cannot be less than the ₹${invoice.paidAmount.toStringAsFixed(0)} already paid on this invoice.',
+        );
+      }
+      final paidAmount = invoice.paidAmount;
+      final balanceAmount = (totalAmount - paidAmount).clamp(0, double.infinity);
+      final status = balanceAmount == 0 ? 'paid' : paidAmount > 0 ? 'partial' : 'unpaid';
+      txn.set(invoiceRef, {
+        ...current,
+        'partyName': partyName,
+        'categoryName': categoryName,
+        'invoiceDate': invoiceDate,
+        'amount': amount,
+        'taxAmount': taxAmount,
+        'totalAmount': totalAmount,
+        'balanceAmount': balanceAmount,
+        'status': status,
+        'description': description,
+        'attachmentUrl': attachmentUrl,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  /// Deletes an expense invoice that has no recorded payments. An invoice
+  /// with any payment (non-zero `paidAmount`, or any payment entry in
+  /// `finance_income` linked by `invoiceId`) is refused with an explanation
+  /// rather than deleted, so payment history and ledger entries are never
+  /// orphaned. An unpaid invoice has never posted anything to the ledger or
+  /// an account balance (see [_createInvoice]), so removing it leaves
+  /// accounting totals unchanged. The invoice number is not reused.
+  Future<void> deleteExpenseInvoice(String id) async {
+    final linkedPayments = await _income.where('invoiceId', isEqualTo: id).get();
+    if (linkedPayments.docs.isNotEmpty) {
+      throw StateError(
+        'This invoice has recorded payments and cannot be deleted. Payment history must be preserved — use Cancel instead.',
+      );
+    }
+    final invoiceRef = _invoices.doc(id);
+    await _firestore.runTransaction((txn) async {
+      final snap = await txn.get(invoiceRef);
+      if (!snap.exists || snap.data() == null) {
+        throw StateError('Invoice not found');
+      }
+      final invoice = FinanceInvoiceModel.fromMap(snap.id, snap.data()!);
+      if (invoice.type != 'expense') {
+        throw StateError('Only expense invoices can be deleted here.');
+      }
+      if (invoice.status == 'cancelled') {
+        throw StateError('A cancelled invoice is kept for audit and cannot be deleted.');
+      }
+      if (invoice.paidAmount > 0) {
+        throw StateError(
+          'This invoice has recorded payments and cannot be deleted. Payment history must be preserved — use Cancel instead.',
+        );
+      }
+      txn.delete(invoiceRef);
+    });
+  }
+
+  /// Every payment recorded against an expense invoice (from
+  /// `finance_income`, where [payInvoice] writes them), including reversed
+  /// ones (`isDeleted == true`), newest first — the invoice's full payment
+  /// history for the Expenses UI.
+  Future<List<FinanceIncomeModel>> getInvoicePayments(String invoiceId) async {
+    final snap = await _income.where('invoiceId', isEqualTo: invoiceId).get();
+    final items = snap.docs.map((d) => FinanceIncomeModel.fromMap(d.id, d.data())).toList();
+    items.sort((a, b) {
+      final aDate = a.createdAt;
+      final bDate = b.createdAt;
+      if (aDate == null && bDate == null) return 0;
+      if (aDate == null) return 1;
+      if (bDate == null) return -1;
+      return bDate.compareTo(aDate);
+    });
+    return items;
+  }
+
+  /// Reverses an expense-invoice payment that was recorded by mistake (no
+  /// money actually moved). The original payment document is preserved —
+  /// marked with the existing void convention (`isDeleted`, `deletedAt`,
+  /// `deletedBy`) plus `reversalReason`/`reversedAt`/`reversedBy` — and its
+  /// ledger mirror is marked `status: 'cancelled'` (the flag
+  /// [watchDashboardSummary] already excludes), so nothing is erased.
+  ///
+  /// Unlike [_voidIncomeDoc] (which reverses *income*, so it subtracts),
+  /// an expense payment reduced the account balance when recorded, so the
+  /// reversal adds the amount back. The invoice's `paidAmount` is reduced
+  /// and `balanceAmount`/`status` recomputed with [payInvoice]'s formula.
+  /// A second reversal of the same payment is refused.
+  ///
+  /// Not a refund: if money was actually paid, the payment must stay.
+  Future<void> reverseExpenseInvoicePayment({
+    required String paymentId,
+    required String reason,
+  }) async {
+    if (reason.trim().isEmpty) throw StateError('A reversal reason is required.');
+    final paymentRef = _income.doc(paymentId);
+    final initial = await paymentRef.get();
+    if (!initial.exists || initial.data() == null) {
+      throw StateError('Payment not found');
+    }
+    final invoiceId = initial.data()!['invoiceId']?.toString() ?? '';
+    final ledgerId = initial.data()!['ledgerEntryId']?.toString() ?? '';
+    final accountId = initial.data()!['accountId']?.toString() ?? '';
+    if (invoiceId.isEmpty) throw StateError('This entry is not an invoice payment.');
+    final invoiceRef = _invoices.doc(invoiceId);
+    final ledgerRef = ledgerId.isNotEmpty ? _ledger.doc(ledgerId) : null;
+    final accountRef = accountId.isNotEmpty ? _accounts.doc(accountId) : null;
+
+    // Full merged maps rather than SetOptions(merge: true) — see [updateIncome].
+    await _firestore.runTransaction((txn) async {
+      final paymentSnap = await txn.get(paymentRef);
+      final invoiceSnap = await txn.get(invoiceRef);
+      final ledgerSnap = ledgerRef != null ? await txn.get(ledgerRef) : null;
+      final accountSnap = accountRef != null ? await txn.get(accountRef) : null;
+
+      final payment = paymentSnap.data()!;
+      if (payment['sourceModule']?.toString() != 'invoice' || payment['invoiceType']?.toString() != 'expense') {
+        throw StateError('Only expense invoice payments can be reversed here.');
+      }
+      if (payment['isDeleted'] == true) {
+        throw StateError('This payment has already been reversed.');
+      }
+      if (!invoiceSnap.exists || invoiceSnap.data() == null) {
+        throw StateError('Invoice not found');
+      }
+      final invoiceData = invoiceSnap.data()!;
+      final invoice = FinanceInvoiceModel.fromMap(invoiceSnap.id, invoiceData);
+      final amount = (payment['amount'] as num?)?.toDouble() ?? 0.0;
+      final actor = _createdBy;
+
+      txn.set(paymentRef, {
+        ...payment,
+        'isDeleted': true,
+        'deletedAt': FieldValue.serverTimestamp(),
+        'deletedBy': actor,
+        'reversalReason': reason.trim(),
+        'reversedAt': FieldValue.serverTimestamp(),
+        'reversedBy': actor,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      if (ledgerRef != null && ledgerSnap != null && ledgerSnap.data() != null) {
+        txn.set(ledgerRef, {
+          ...ledgerSnap.data()!,
+          'status': 'cancelled',
+          'reversalReason': reason.trim(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      if (accountRef != null && accountSnap != null && accountSnap.data() != null) {
+        final currentBalance = (accountSnap.data()!['currentBalance'] as num?)?.toDouble() ?? 0.0;
+        txn.set(accountRef, {
+          ...accountSnap.data()!,
+          'currentBalance': currentBalance + amount,
+        });
+      }
+      final paidAmount = (invoice.paidAmount - amount).clamp(0, double.infinity).toDouble();
+      final balanceAmount = (invoice.totalAmount - paidAmount).clamp(0, double.infinity);
+      final status = balanceAmount == 0 ? 'paid' : paidAmount > 0 ? 'partial' : 'unpaid';
+      txn.set(invoiceRef, {
+        ...invoiceData,
+        'paidAmount': paidAmount,
+        'balanceAmount': balanceAmount,
+        'status': status,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  /// Cancels an expense invoice raised by mistake, keeping it as an
+  /// auditable record (`status: 'cancelled'`, `cancellationReason`,
+  /// `cancelledAt`, `cancelledBy`) instead of deleting it. Only allowed
+  /// once the invoice has no active payments — mistaken payments must be
+  /// reversed first via [reverseExpenseInvoicePayment], and real payments
+  /// (money that actually moved) block cancellation entirely, since there
+  /// is no refund workflow to offset them. `balanceAmount` is set to 0 so
+  /// the cancelled invoice no longer counts as outstanding anywhere that
+  /// sums balances; `totalAmount` and every other field are kept. A
+  /// cancelled invoice cannot be cancelled again, edited, or paid.
+  Future<void> cancelExpenseInvoice({
+    required String id,
+    required String reason,
+  }) async {
+    if (reason.trim().isEmpty) throw StateError('A cancellation reason is required.');
+    final payments = await _income.where('invoiceId', isEqualTo: id).get();
+    if (payments.docs.any((d) => d.data()['isDeleted'] != true)) {
+      throw StateError(
+        'This invoice has active payments. Reverse any payment recorded by mistake before cancelling. '
+        'Invoices with real payments cannot be cancelled.',
+      );
+    }
+    final invoiceRef = _invoices.doc(id);
+    await _firestore.runTransaction((txn) async {
+      final snap = await txn.get(invoiceRef);
+      if (!snap.exists || snap.data() == null) {
+        throw StateError('Invoice not found');
+      }
+      final current = snap.data()!;
+      final invoice = FinanceInvoiceModel.fromMap(snap.id, current);
+      if (invoice.type != 'expense') {
+        throw StateError('Only expense invoices can be cancelled here.');
+      }
+      if (invoice.status == 'cancelled') {
+        throw StateError('This invoice has already been cancelled.');
+      }
+      if (invoice.paidAmount > 0) {
+        throw StateError(
+          'This invoice has active payments. Reverse any payment recorded by mistake before cancelling.',
+        );
+      }
+      txn.set(invoiceRef, {
+        ...current,
+        'status': 'cancelled',
+        'balanceAmount': 0,
+        'cancellationReason': reason.trim(),
+        'cancelledAt': FieldValue.serverTimestamp(),
+        'cancelledBy': _createdBy,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
   }
 
   Future<String> createExpense(FinanceExpenseModel expense) async {
