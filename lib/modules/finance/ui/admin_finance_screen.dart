@@ -122,6 +122,175 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
     }
   }
 
+  Future<void> _openEditExpenseInvoice(FinanceInvoiceModel invoice) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AddExpenseDialog(initial: invoice, service: _service),
+    );
+    if (saved == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Expense invoice updated')),
+      );
+    }
+  }
+
+  /// An invoice with any recorded payment is never deleted — the user gets
+  /// an explanation instead of a confirmation, so payment history and the
+  /// ledger can't be orphaned. [FinanceService.deleteExpenseInvoice]
+  /// enforces the same rule server-side.
+  Future<void> _deleteExpenseInvoice(FinanceInvoiceModel invoice) async {
+    final label = invoice.invoiceNo.isEmpty ? 'this invoice' : invoice.invoiceNo;
+    if (invoice.paidAmount > 0) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Cannot Delete Invoice'),
+          content: Text(
+            '$label has ₹${invoice.paidAmount.toStringAsFixed(0)} in recorded '
+            'payments. Invoices with payments cannot be deleted, so that '
+            'payment history and the ledger stay intact.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete Expense Invoice'),
+        content: Text(
+          'Delete $label for '
+          '${invoice.partyName.isEmpty ? 'this vendor' : invoice.partyName} '
+          '(₹${invoice.totalAmount.toStringAsFixed(0)})? This invoice has no '
+          'payments. This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await _service.deleteExpenseInvoice(invoice.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Expense invoice deleted')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete expense invoice: $e')),
+        );
+      }
+    }
+  }
+
+  /// Asks for a required reason. Returns null when the user backs out.
+  Future<String?> _askReason({
+    required String title,
+    required String message,
+    required String confirmLabel,
+  }) {
+    return showDialog<String>(
+      context: context,
+      builder: (_) => _ReasonDialog(title: title, message: message, confirmLabel: confirmLabel),
+    );
+  }
+
+  /// Cancel keeps the invoice as an auditable record. Only possible once
+  /// it has no active payments — the service enforces the same rule.
+  Future<void> _cancelExpenseInvoice(FinanceInvoiceModel invoice) async {
+    final label = invoice.invoiceNo.isEmpty ? 'this invoice' : invoice.invoiceNo;
+    if (invoice.paidAmount > 0) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Cannot Cancel Invoice'),
+          content: Text(
+            '$label has ₹${invoice.paidAmount.toStringAsFixed(0)} in active '
+            'payments. If a payment was recorded by mistake and no money '
+            'moved, open the invoice and reverse that payment first. If the '
+            'money was actually paid, the invoice cannot be cancelled.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    final reason = await _askReason(
+      title: 'Cancel Expense Invoice',
+      message: 'Cancel $label? It stays on record as Cancelled for audit, is '
+          'removed from active expense totals, and can no longer be edited '
+          'or paid. This cannot be undone.',
+      confirmLabel: 'Cancel Invoice',
+    );
+    if (reason == null) return;
+    try {
+      await _service.cancelExpenseInvoice(id: invoice.id, reason: reason);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Expense invoice cancelled')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to cancel expense invoice: $e')),
+        );
+      }
+    }
+  }
+
+  /// For a payment recorded by mistake only. The original payment is kept
+  /// (marked reversed) and its ledger entry cancelled — see
+  /// FinanceService.reverseExpenseInvoicePayment.
+  Future<void> _reverseExpensePayment(FinanceIncomeModel payment) async {
+    final reason = await _askReason(
+      title: 'Reverse Payment',
+      message: 'Reverse this ₹${payment.amount.toStringAsFixed(0)} payment? '
+          'Use this only if the payment was recorded by mistake and no money '
+          'actually moved. The original record is kept and marked Reversed, '
+          'its ledger entry is cancelled, and the invoice balance is restored.',
+      confirmLabel: 'Reverse Payment',
+    );
+    if (reason == null) return;
+    try {
+      await _service.reverseExpenseInvoicePayment(paymentId: payment.id, reason: reason);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Payment reversed')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to reverse payment: $e')),
+        );
+      }
+    }
+  }
+
   // Settings manages both categories and accounts, so its FAB offers a
   // choice between the two existing add dialogs instead of picking one.
   Future<void> _showSettingsAddChoice(BuildContext context) async {
@@ -231,6 +400,10 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
         return _ExpenseTab(
           service: _service,
           onPay: _showPayInvoice,
+          onEdit: _openEditExpenseInvoice,
+          onDelete: _deleteExpenseInvoice,
+          onCancel: _cancelExpenseInvoice,
+          onReversePayment: _reverseExpensePayment,
           onRaiseInvoice: () => showDialog(context: context, barrierDismissible: false, builder: (_) => const AddExpenseDialog()),
         );
       case 3:
@@ -740,10 +913,22 @@ class _IncomeEntryCard extends StatelessWidget {
 /// `watchInvoicesByType('expense')` stream and the existing `payInvoice`
 /// flow — no new business logic, no new Firestore queries.
 class _ExpenseTab extends StatelessWidget {
-  const _ExpenseTab({required this.service, required this.onPay, required this.onRaiseInvoice});
+  const _ExpenseTab({
+    required this.service,
+    required this.onPay,
+    required this.onEdit,
+    required this.onDelete,
+    required this.onCancel,
+    required this.onReversePayment,
+    required this.onRaiseInvoice,
+  });
 
   final FinanceService service;
   final Future<void> Function(FinanceInvoiceModel invoice) onPay;
+  final Future<void> Function(FinanceInvoiceModel invoice) onEdit;
+  final Future<void> Function(FinanceInvoiceModel invoice) onDelete;
+  final Future<void> Function(FinanceInvoiceModel invoice) onCancel;
+  final Future<void> Function(FinanceIncomeModel payment) onReversePayment;
   final VoidCallback onRaiseInvoice;
 
   @override
@@ -762,9 +947,12 @@ class _ExpenseTab extends StatelessWidget {
         // FinanceService's ledger-based accounting totals. Raising an invoice
         // never affects the ledger/account balance; only paidAmount here
         // reflects money that has actually moved.
-        final outstanding = items.fold<double>(0, (total, i) => total + i.balanceAmount);
-        final paid = items.fold<double>(0, (total, i) => total + i.paidAmount);
-        final totalInvoiced = items.fold<double>(0, (total, i) => total + i.totalAmount);
+        // A cancelled invoice stays listed for audit but is no longer an
+        // active expense, so it's excluded from these totals.
+        final active = items.where((i) => i.status != 'cancelled');
+        final outstanding = active.fold<double>(0, (total, i) => total + i.balanceAmount);
+        final paid = active.fold<double>(0, (total, i) => total + i.paidAmount);
+        final totalInvoiced = active.fold<double>(0, (total, i) => total + i.totalAmount);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -809,7 +997,16 @@ class _ExpenseTab extends StatelessWidget {
                 children: items
                     .map((invoice) => Padding(
                           padding: const EdgeInsets.only(bottom: 12),
-                          child: _InvoiceCard(invoice: invoice, onPay: () => onPay(invoice), partyLabel: 'Vendor'),
+                          child: _InvoiceCard(
+                            invoice: invoice,
+                            onPay: () => onPay(invoice),
+                            onEdit: () => onEdit(invoice),
+                            onDelete: () => onDelete(invoice),
+                            onCancel: () => onCancel(invoice),
+                            service: service,
+                            onReversePayment: onReversePayment,
+                            partyLabel: 'Vendor',
+                          ),
                         ))
                     .toList(),
               ),
@@ -826,6 +1023,9 @@ class _ExpenseTab extends StatelessWidget {
       return (label: 'PAID', color: AppColors.secondary);
     case 'partial':
       return (label: 'PARTIALLY PAID', color: const Color(0xFFB26A00));
+    // Only expense invoices can be cancelled (FinanceService.cancelExpenseInvoice).
+    case 'cancelled':
+      return (label: 'CANCELLED', color: Colors.grey);
     default:
       return (label: 'UNPAID', color: const Color(0xFFD32F2F));
   }
@@ -835,19 +1035,49 @@ class _ExpenseTab extends StatelessWidget {
 /// (unpaid/partial/paid, Pay action), only the [partyLabel] differs
 /// ("Vendor" vs "Staff").
 class _InvoiceCard extends StatelessWidget {
-  const _InvoiceCard({required this.invoice, required this.onPay, required this.partyLabel});
+  const _InvoiceCard({
+    required this.invoice,
+    required this.onPay,
+    required this.partyLabel,
+    this.onEdit,
+    this.onDelete,
+    this.onCancel,
+    this.service,
+    this.onReversePayment,
+  });
 
   final FinanceInvoiceModel invoice;
   final VoidCallback onPay;
   final String partyLabel;
 
+  /// Expenses-only, like [onEdit]/[onDelete]: cancel the invoice, and (via
+  /// [service] + [onReversePayment]) show its payment history with a
+  /// Reverse action in the details dialog. Salary passes none of these.
+  final VoidCallback? onCancel;
+  final FinanceService? service;
+  final Future<void> Function(FinanceIncomeModel payment)? onReversePayment;
+
+  /// Edit/Delete actions — passed only by the Expenses tab; the Salary tab
+  /// omits them, so its cards render exactly as before.
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
+
   @override
   Widget build(BuildContext context) {
     final status = _invoiceStatusPresentation(invoice.status);
     final isPaid = invoice.status == 'paid';
+    final isCancelled = invoice.status == 'cancelled';
     return InkWell(
       borderRadius: BorderRadius.circular(16),
-      onTap: () => showDialog(context: context, builder: (_) => _InvoiceDetailsDialog(invoice: invoice, partyLabel: partyLabel)),
+      onTap: () => showDialog(
+        context: context,
+        builder: (_) => _InvoiceDetailsDialog(
+          invoice: invoice,
+          partyLabel: partyLabel,
+          service: service,
+          onReversePayment: onReversePayment,
+        ),
+      ),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(16),
@@ -900,10 +1130,48 @@ class _InvoiceCard extends StatelessWidget {
                 _AmountStat(label: 'Balance', value: invoice.balanceAmount),
               ],
             ),
+            if (isCancelled && invoice.cancellationReason.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                'Cancelled: ${invoice.cancellationReason}',
+                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+            ],
             const SizedBox(height: 14),
-            Align(
-              alignment: Alignment.centerRight,
-              child: isPaid
+            Row(
+              children: [
+                if (onEdit != null && !isCancelled)
+                  IconButton(
+                    tooltip: 'Edit',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.edit_outlined, size: 20),
+                    onPressed: onEdit,
+                  ),
+                if (onDelete != null && !isCancelled)
+                  IconButton(
+                    tooltip: 'Delete',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+                    onPressed: onDelete,
+                  ),
+                if (onCancel != null && !isCancelled)
+                  IconButton(
+                    tooltip: 'Cancel Invoice',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.block, size: 20, color: Colors.red),
+                    onPressed: onCancel,
+                  ),
+                const Spacer(),
+                isCancelled
+                  ? const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.block, size: 16, color: Colors.grey),
+                        SizedBox(width: 6),
+                        Text('Cancelled', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey)),
+                      ],
+                    )
+                  : isPaid
                   ? const Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -920,6 +1188,7 @@ class _InvoiceCard extends StatelessWidget {
                       ),
                       child: const Text('Pay'),
                     ),
+              ],
             ),
           ],
         ),
@@ -950,10 +1219,20 @@ class _AmountStat extends StatelessWidget {
 }
 
 class _InvoiceDetailsDialog extends StatelessWidget {
-  const _InvoiceDetailsDialog({required this.invoice, required this.partyLabel});
+  const _InvoiceDetailsDialog({
+    required this.invoice,
+    required this.partyLabel,
+    this.service,
+    this.onReversePayment,
+  });
 
   final FinanceInvoiceModel invoice;
   final String partyLabel;
+
+  /// When set (Expenses only), the dialog lists this invoice's payment
+  /// history, with a Reverse action on each active payment.
+  final FinanceService? service;
+  final Future<void> Function(FinanceIncomeModel payment)? onReversePayment;
 
   @override
   Widget build(BuildContext context) {
@@ -997,6 +1276,65 @@ class _InvoiceDetailsDialog extends StatelessWidget {
               if (invoice.description.isNotEmpty) row('Description', invoice.description),
               if (invoice.invoiceDate != null) row('Invoice Date', DateFormat('dd MMM yyyy').format(invoice.invoiceDate!)),
               if (invoice.createdAt != null) row('Created', DateFormat('dd MMM yyyy').format(invoice.createdAt!)),
+              if (invoice.status == 'cancelled') ...[
+                if (invoice.cancellationReason.isNotEmpty) row('Cancel Reason', invoice.cancellationReason),
+                if (invoice.cancelledAt != null) row('Cancelled On', DateFormat('dd MMM yyyy').format(invoice.cancelledAt!)),
+                if (invoice.cancelledBy.isNotEmpty) row('Cancelled By', invoice.cancelledBy),
+              ],
+              if (service != null) ...[
+                const Divider(height: 24),
+                const Text('Payments', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                FutureBuilder<List<FinanceIncomeModel>>(
+                  future: service!.getInvoicePayments(invoice.id),
+                  builder: (context, snap) {
+                    if (snap.hasError) {
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                        child: Text("Couldn't load payments.", style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                      );
+                    }
+                    if (!snap.hasData) {
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                        child: LinearProgressIndicator(),
+                      );
+                    }
+                    final payments = snap.data!;
+                    if (payments.isEmpty) {
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                        child: Text('No payments recorded.', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                      );
+                    }
+                    return Column(
+                      children: payments.map((p) {
+                        final details = [
+                          if (p.incomeDate != null) DateFormat('dd MMM yyyy').format(p.incomeDate!),
+                          p.paymentMode,
+                          if (p.referenceNo.isNotEmpty) 'Ref ${p.referenceNo}',
+                        ].join(' • ');
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          title: Text('₹${p.amount.toStringAsFixed(0)}'),
+                          subtitle: Text(details),
+                          trailing: p.isDeleted
+                              ? const FinanceStatusChip(label: 'REVERSED', color: Colors.grey)
+                              : onReversePayment == null
+                                  ? null
+                                  : TextButton(
+                                      onPressed: () {
+                                        Navigator.pop(context);
+                                        onReversePayment!(p);
+                                      },
+                                      child: const Text('Reverse', style: TextStyle(color: Colors.red)),
+                                    ),
+                        );
+                      }).toList(),
+                    );
+                  },
+                ),
+              ],
               if (invoice.attachmentUrl.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
@@ -1607,6 +1945,68 @@ class _ReportCard extends StatelessWidget {
   }
 }
 
+/// Confirmation dialog with a required reason (Expenses cancel/reverse).
+/// Owns its controller so it is disposed only after the dialog is gone.
+class _ReasonDialog extends StatefulWidget {
+  const _ReasonDialog({required this.title, required this.message, required this.confirmLabel});
+
+  final String title;
+  final String message;
+  final String confirmLabel;
+
+  @override
+  State<_ReasonDialog> createState() => _ReasonDialogState();
+}
+
+class _ReasonDialogState extends State<_ReasonDialog> {
+  final _controller = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.message),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _controller,
+            decoration: InputDecoration(labelText: 'Reason *', errorText: _error),
+            maxLines: 2,
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Back'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: Colors.red),
+          onPressed: () {
+            final reason = _controller.text.trim();
+            if (reason.isEmpty) {
+              setState(() => _error = 'Reason is required');
+              return;
+            }
+            Navigator.of(context).pop(reason);
+          },
+          child: Text(widget.confirmLabel),
+        ),
+      ],
+    );
+  }
+}
+
 class _PayInvoiceDialog extends StatefulWidget {
   const _PayInvoiceDialog({
     required this.invoice,
@@ -1627,10 +2027,44 @@ class _PayInvoiceDialogState extends State<_PayInvoiceDialog> {
   String _paymentMode = 'cash';
   bool _saving = false;
 
+  /// The date the payment was actually made. Offered for expense invoices
+  /// only; Salary keeps its existing "today" behaviour. Starts at now —
+  /// exactly the value previously saved — and a picked date replaces it.
+  DateTime _paidDate = DateTime.now();
+  String? _paidDateError;
+
+  bool get _showsPaymentDate => widget.invoice.type == 'expense';
+
   @override
   void initState() {
     super.initState();
     _amount.text = widget.invoice.balanceAmount.toStringAsFixed(0);
+  }
+
+  Future<void> _pickPaidDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(now.year, now.month, now.day),
+      initialDate: _paidDate,
+    );
+    if (picked != null) {
+      setState(() {
+        _paidDate = picked;
+        _paidDateError = null;
+      });
+    }
+  }
+
+  /// A payment date cannot be in the future (a payment can only be
+  /// recorded once it has been made).
+  String? _validatePaidDate() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(_paidDate.year, _paidDate.month, _paidDate.day);
+    if (day.isAfter(today)) return 'Payment date cannot be in the future';
+    return null;
   }
 
   @override
@@ -1644,13 +2078,20 @@ class _PayInvoiceDialogState extends State<_PayInvoiceDialog> {
   Future<void> _save() async {
     final amount = double.tryParse(_amount.text) ?? 0;
     if (amount <= 0 || amount > widget.invoice.balanceAmount) return;
+    if (_showsPaymentDate) {
+      final dateError = _validatePaidDate();
+      if (dateError != null) {
+        setState(() => _paidDateError = dateError);
+        return;
+      }
+    }
     setState(() => _saving = true);
     try {
       await widget.service.payInvoice(
         invoiceId: widget.invoice.id,
         invoiceType: widget.invoice.type,
         amount: amount,
-        paidDate: DateTime.now(),
+        paidDate: _showsPaymentDate ? _paidDate : DateTime.now(),
         paymentMode: _paymentMode,
         referenceNo: _reference.text.trim(),
         remarks: _remarks.text.trim(),
@@ -1677,6 +2118,19 @@ class _PayInvoiceDialogState extends State<_PayInvoiceDialog> {
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(controller: _amount, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number),
+            if (_showsPaymentDate)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Payment Date *'),
+                subtitle: Text(
+                  _paidDateError ?? DateFormat('dd MMM yyyy').format(_paidDate),
+                  style: _paidDateError == null ? null : const TextStyle(color: Colors.red),
+                ),
+                trailing: TextButton(
+                  onPressed: _saving ? null : _pickPaidDate,
+                  child: const Text('Change'),
+                ),
+              ),
             DropdownButtonFormField<String>(
               initialValue: _paymentMode,
               decoration: const InputDecoration(labelText: 'Payment Mode'),

@@ -322,7 +322,10 @@ class _StudentLeaveTabState extends ConsumerState<_StudentLeaveTab> {
                       ),
                       itemCount: _requests.length,
                       separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
-                      itemBuilder: (context, index) => StudentLeaveCard(request: _requests[index]),
+                      itemBuilder: (context, index) => StudentLeaveCard(
+                        request: _requests[index],
+                        onLeaveDate: DateTime.now(),
+                      ),
                     ),
                   );
 
