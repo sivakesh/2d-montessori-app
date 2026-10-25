@@ -322,4 +322,77 @@ void main() {
     expect(find.text('Needs review — not counted'), findsOneWidget);
     expect(find.textContaining('its ledger entry is still active'), findsOneWidget);
   });
+
+  group('type filter', () {
+    Finder filterChip(String label) => find.descendant(
+          of: find.byKey(const Key('cancelled-type-filter')),
+          matching: find.widgetWithText(ChoiceChip, label),
+        );
+
+    testWidgets('an empty filter shows a clear message; exclusions stay visible under every filter', (tester) async {
+      await finance.voidIncome(await manualIncome(300));
+      final unclear = await manualIncome(100);
+      await firestore.doc('finance_income/$unclear').update({'isDeleted': true}); // ledger still active
+      await pumpDashboard(tester);
+      await tester.tap(card());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Needs review — not counted'), findsOneWidget);
+      expect(find.textContaining('its ledger entry is still active'), findsOneWidget);
+      expect(find.text('Shown under every filter: their type or link is unclear.'), findsNothing); // All
+
+      for (final label in ['Expenses', 'Salary']) {
+        await tester.tap(filterChip(label));
+        await tester.pumpAndSettle();
+        expect(find.text('No cancelled or voided ${label == 'Expenses' ? 'expense' : 'salary'} transactions.'), findsOneWidget);
+        expect(find.textContaining('Manual income • '), findsNothing);
+        expect(find.textContaining('transactions, ₹'), findsNothing, reason: 'no count line for an empty result');
+        expect(find.text('Needs review — not counted'), findsOneWidget);
+        expect(find.textContaining('its ledger entry is still active'), findsOneWidget);
+        expect(find.text('Shown under every filter: their type or link is unclear.'), findsOneWidget);
+      }
+
+      await tester.tap(filterChip('Income'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Manual income • '), findsOneWidget);
+      expect(find.text('Income: 1 transaction, ₹300 in total — the sum of the amounts listed above. All types: 1, ₹300.'), findsOneWidget);
+      expect(find.text('Needs review — not counted'), findsOneWidget);
+    });
+
+    testWidgets('with no cancellations at all, every filter keeps the original empty message', (tester) async {
+      await pumpDashboard(tester);
+      await tester.tap(card());
+      await tester.pumpAndSettle();
+      expect(find.text('No cancelled or voided transactions.'), findsOneWidget);
+      await tester.tap(filterChip('Income'));
+      await tester.pumpAndSettle();
+      expect(find.text('No cancelled or voided transactions.'), findsOneWidget);
+    });
+
+    testWidgets('the filter wraps and stays usable on a narrow screen', (tester) async {
+      await finance.voidIncome(await manualIncome(300));
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(ProviderScope(child: MaterialApp(home: AdminFinanceScreen(service: finance, feeService: fees))));
+      await tester.pumpAndSettle();
+      // The Dashboard itself renders at 360px without overflow (the Recent
+      // Transactions header used to overflow here).
+      expect(tester.takeException(), isNull);
+      await tester.ensureVisible(card());
+      await tester.tap(card());
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      final filter = tester.getRect(find.byKey(const Key('cancelled-type-filter')));
+      expect(filter.right, lessThanOrEqualTo(360), reason: 'the filter wraps within the screen');
+      await tester.tap(filterChip('Salary'));
+      await tester.pumpAndSettle();
+      expect(find.text('No cancelled or voided salary transactions.'), findsOneWidget);
+      await tester.tap(filterChip('All'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Manual income • '), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
 }

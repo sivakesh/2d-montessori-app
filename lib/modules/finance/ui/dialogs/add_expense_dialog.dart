@@ -4,10 +4,21 @@ import '../../../../core/services/document_number_service.dart';
 import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../models/finance_category_model.dart';
 import '../../models/finance_invoice_model.dart';
+import '../../models/vendor_model.dart';
 import '../../services/finance_service.dart';
 
+/// The vendor an invoice is (or will be) saved with: the `vendors` doc id
+/// (stored as the invoice's `partyId`, empty for legacy name-only invoices)
+/// and the name stored as `partyName`.
+typedef _VendorChoice = ({String id, String name});
+
+/// Raise / edit an expense invoice. The vendor is picked (with search) from
+/// Finance -> Vendors; the selected vendor's id is saved as `partyId` and
+/// its name as `partyName`. Editing an invoice whose saved vendor is
+/// inactive, no longer in Vendors, or only a name that matches no vendor
+/// keeps that saved vendor unless a different one is chosen.
 class AddExpenseDialog extends StatefulWidget {
-  const AddExpenseDialog({super.key, this.initial, this.service});
+  const AddExpenseDialog({super.key, this.initial, this.service, this.numberService});
 
   /// When set, the dialog edits this existing expense invoice in place
   /// (via [FinanceService.updateExpenseInvoice]) instead of raising a new
@@ -17,20 +28,29 @@ class AddExpenseDialog extends StatefulWidget {
   /// Optional injection seam (tests); defaults to `FinanceService()` as before.
   final FinanceService? service;
 
+  /// Optional injection seam (tests); defaults to `DocumentNumberService()`.
+  final DocumentNumberService? numberService;
+
   @override
   State<AddExpenseDialog> createState() => _AddExpenseDialogState();
 }
 
 class _AddExpenseDialogState extends State<AddExpenseDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _vendorName = TextEditingController();
+  final _vendorText = TextEditingController();
+  final _vendorFocus = FocusNode();
   final _description = TextEditingController();
   final _amount = TextEditingController();
   final _tax = TextEditingController(text: '0');
   final _attachment = TextEditingController();
   late final _service = widget.service ?? FinanceService();
   // Lazy: only the create path allocates an invoice number; editing never does.
-  late final _numberService = DocumentNumberService();
+  late final _numberService = widget.numberService ?? DocumentNumberService();
+  late final Stream<List<VendorModel>> _vendors = _service.watchVendors();
+  _VendorChoice? _vendor;
+  // Edit: the saved vendor is matched against Vendors once, on first load.
+  bool _vendorMatched = false;
+  String? _vendorNote;
   DateTime _invoiceDate = DateTime.now();
   final DateTime _dueDate = DateTime.now();
   String? _categoryId;
@@ -43,12 +63,49 @@ class _AddExpenseDialogState extends State<AddExpenseDialog> {
     super.initState();
     final initial = widget.initial;
     if (initial != null) {
-      _vendorName.text = initial.partyName;
+      if (initial.partyName.trim().isNotEmpty) {
+        _vendor = (id: initial.partyId, name: initial.partyName);
+        _vendorText.text = initial.partyName;
+      }
       _description.text = initial.description;
       _amount.text = _exactAmount(initial.amount);
       _tax.text = _exactAmount(initial.taxAmount);
       _attachment.text = initial.attachmentUrl;
       _invoiceDate = initial.invoiceDate ?? initial.createdAt ?? DateTime.now();
+    }
+    // Typing after a selection clears it until a vendor is picked again.
+    _vendorText.addListener(() {
+      if (_vendor != null && _vendorText.text != _vendor!.name) setState(() => _vendor = null);
+    });
+  }
+
+  /// Edit only: links the saved vendor to Vendors without changing it. A
+  /// saved id is looked up by id; a legacy name-only invoice is linked when
+  /// exactly one vendor has that name (its stored name is kept). Anything
+  /// else stays as saved, with a note.
+  void _matchSavedVendor(List<VendorModel> vendors) {
+    _vendorMatched = true;
+    final initial = widget.initial!;
+    final saved = initial.partyName.trim();
+    if (saved.isEmpty) return;
+    const keep = 'The invoice keeps this vendor unless you choose another.';
+    if (initial.partyId.isNotEmpty) {
+      final match = vendors.where((v) => v.id == initial.partyId).firstOrNull;
+      if (match == null) {
+        _vendorNote = '"$saved" is no longer in Vendors. $keep';
+      } else if (!match.isActive) {
+        _vendorNote = '"$saved" is inactive in Vendors. $keep';
+      }
+      return;
+    }
+    final matches = vendors.where((v) => v.name.trim().toLowerCase() == saved.toLowerCase()).toList();
+    if (matches.length == 1) {
+      _vendor = (id: matches.single.id, name: initial.partyName);
+      if (!matches.single.isActive) _vendorNote = '"$saved" is inactive in Vendors. $keep';
+    } else if (matches.isEmpty) {
+      _vendorNote = '"$saved" was saved as a name and doesn\'t match a vendor in Vendors. $keep';
+    } else {
+      _vendorNote = 'More than one vendor is named "$saved", so it isn\'t linked to either. $keep';
     }
   }
 
@@ -79,7 +136,8 @@ class _AddExpenseDialogState extends State<AddExpenseDialog> {
 
   @override
   void dispose() {
-    _vendorName.dispose();
+    _vendorText.dispose();
+    _vendorFocus.dispose();
     _description.dispose();
     _amount.dispose();
     _tax.dispose();
@@ -95,9 +153,11 @@ class _AddExpenseDialogState extends State<AddExpenseDialog> {
       try {
         final cats = await _service.watchCategories().first;
         final cat = cats.firstWhere((e) => e.id == _categoryId);
+        final vendor = _vendor!;
         await _service.updateExpenseInvoice(
           id: initial.id,
-          partyName: _vendorName.text.trim(),
+          partyId: vendor.id.isEmpty ? null : vendor.id,
+          partyName: vendor.name.trim(),
           categoryName: cat.name,
           invoiceDate: _invoiceDate,
           amount: double.tryParse(_amount.text) ?? 0,
@@ -131,8 +191,8 @@ class _AddExpenseDialogState extends State<AddExpenseDialog> {
       final taxAmount = double.tryParse(_tax.text) ?? 0;
       final total = invoiceAmount + taxAmount;
       await _service.createExpenseInvoice({
-        'partyId': '',
-        'partyName': _vendorName.text.trim(),
+        'partyId': _vendor!.id,
+        'partyName': _vendor!.name.trim(),
         'categoryName': cat.name,
         'invoiceNo': invoiceNo,
         'invoiceSequence': invoiceSequence,
@@ -156,6 +216,86 @@ class _AddExpenseDialogState extends State<AddExpenseDialog> {
     }
   }
 
+  Widget _vendorField() => StreamBuilder<List<VendorModel>>(
+    stream: _vendors,
+    builder: (context, snap) {
+      final loading = !snap.hasData && !snap.hasError;
+      final all = snap.data ?? const <VendorModel>[];
+      if (_isEdit && !_vendorMatched && snap.hasData) _matchSavedVendor(all);
+      final active = all.where((v) => v.isActive && v.name.trim().isNotEmpty).toList();
+      final String? status = snap.hasError
+          ? "Couldn't load vendors. Close and reopen this form to try again."
+          : loading
+          ? 'Loading vendors…'
+          : active.isEmpty
+          ? 'No active vendors yet. Add one under Finance → Vendors first.'
+          : null;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          RawAutocomplete<VendorModel>(
+            key: const Key('expense-vendor'),
+            textEditingController: _vendorText,
+            focusNode: _vendorFocus,
+            displayStringForOption: (v) => v.name.trim(),
+            optionsBuilder: (value) {
+              final query = value.text.trim().toLowerCase();
+              return active.where((v) => v.name.toLowerCase().contains(query));
+            },
+            onSelected: (v) => setState(() {
+              _vendor = (id: v.id, name: v.name.trim());
+              _vendorNote = null;
+            }),
+            fieldViewBuilder: (context, controller, focusNode, onSubmitted) => TextFormField(
+              controller: controller,
+              focusNode: focusNode,
+              validator: (_) => _vendor == null ? 'Select a vendor from the list' : null,
+              enabled: !loading && !_saving,
+              decoration: InputDecoration(
+                labelText: 'Vendor',
+                hintText: 'Search vendors by name',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: loading
+                    ? const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                      )
+                    : null,
+                helperText: status,
+                helperMaxLines: 3,
+              ),
+            ),
+            optionsViewBuilder: (context, onSelected, options) => Align(
+              alignment: Alignment.topLeft,
+              child: Material(
+                elevation: 4,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 240, maxWidth: 480),
+                  child: ListView(
+                    padding: EdgeInsets.zero,
+                    shrinkWrap: true,
+                    children: [
+                      for (final v in options)
+                        ListTile(
+                          key: Key('vendor-option-${v.id}'),
+                          dense: true,
+                          title: Text(v.name.trim()),
+                          subtitle: v.serviceType.trim().isEmpty ? null : Text(v.serviceType.trim()),
+                          onTap: () => onSelected(v),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (_vendorNote != null && _vendor != null) ...[const SizedBox(height: 4), Text(_vendorNote!, style: TextStyle(fontSize: 12, color: Colors.orange.shade900))],
+        ],
+      );
+    },
+  );
+
   @override
   Widget build(BuildContext context) => ResponsiveDialogShell(
         desktopWidth: 760,
@@ -177,7 +317,7 @@ class _AddExpenseDialogState extends State<AddExpenseDialog> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                TextFormField(controller: _vendorName, decoration: const InputDecoration(labelText: 'Vendor Name'), validator: (v) => (v == null || v.isEmpty) ? 'Required' : null),
+                _vendorField(),
                 const SizedBox(height: 12),
                 StreamBuilder<List<FinanceCategoryModel>>(
                   stream: _service.watchCategories(),

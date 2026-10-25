@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/services/document_number_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_sizes.dart';
 import '../../../core/widgets/responsive_dialog_shell.dart';
@@ -28,11 +30,17 @@ import 'dialogs/add_salary_payment_dialog.dart';
 import 'dialogs/add_vendor_dialog.dart';
 
 class AdminFinanceScreen extends StatefulWidget {
-  const AdminFinanceScreen({super.key, FinanceService? service, FeeService? feeService})
+  const AdminFinanceScreen({super.key, FinanceService? service, FeeService? feeService, DocumentNumberService? numberService})
       : _service = service,
-        _feeService = feeService;
+        _feeService = feeService,
+        _numberService = numberService;
 
   final FinanceService? _service;
+
+  /// Optional injection seam (tests): allocates expense invoice numbers in
+  /// the Raise Expense Invoice dialog. Null keeps the dialog's own
+  /// `DocumentNumberService()`.
+  final DocumentNumberService? _numberService;
 
   /// Optional injection seam (tests). Used only to void Fee-Collection-
   /// sourced income entries through the Fees module's own void workflow.
@@ -206,6 +214,11 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
       );
     }
   }
+
+  /// The Raise Expense Invoice dialog for both entry points (Expenses FAB
+  /// and the empty-state button), on the same FinanceService as this screen
+  /// — the one its Vendors list and invoice lists use.
+  Widget _raiseExpenseDialog() => AddExpenseDialog(service: _service, numberService: widget._numberService);
 
   Future<void> _openEditExpenseInvoice(FinanceInvoiceModel invoice) async {
     final saved = await showDialog<bool>(
@@ -428,7 +441,7 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
                     await showDialog(context: context, barrierDismissible: false, builder: (_) => const AddIncomeDialog());
                     break;
                   case 2:
-                    await showDialog(context: context, barrierDismissible: false, builder: (_) => const AddExpenseDialog());
+                    await showDialog(context: context, barrierDismissible: false, builder: (_) => _raiseExpenseDialog());
                     break;
                   case 3:
                     await showDialog(context: context, barrierDismissible: false, builder: (_) => const AddSalaryPaymentDialog());
@@ -489,7 +502,7 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
           onDelete: _deleteExpenseInvoice,
           onCancel: _cancelExpenseInvoice,
           onReversePayment: _reverseExpensePayment,
-          onRaiseInvoice: () => showDialog(context: context, barrierDismissible: false, builder: (_) => const AddExpenseDialog()),
+          onRaiseInvoice: () => showDialog(context: context, barrierDismissible: false, builder: (_) => _raiseExpenseDialog()),
         );
       case 3:
         return _SalaryTab(
@@ -680,13 +693,84 @@ class _CancelledTransactionsCardState extends State<_CancelledTransactionsCard> 
   }
 }
 
-class _CancelledTransactionsDialog extends StatelessWidget {
+/// Type filter for the cancelled-transactions list, by
+/// [FinanceCancelledTransaction.typeLabel]. Display only.
+enum _CancelledTypeFilter {
+  all('All', '', {}),
+  income('Income', 'income', {'Manual income', 'Fee collection'}),
+  expenses('Expenses', 'expense', {'Expense payment'}),
+  salary('Salary', 'salary', {'Salary payment'});
+
+  const _CancelledTypeFilter(this.label, this.noun, this.typeLabels);
+
+  final String label;
+
+  /// Used in the empty message, e.g. "No cancelled or voided income transactions."
+  final String noun;
+  final Set<String> typeLabels;
+
+  bool includes(FinanceCancelledTransaction t) => this == all || typeLabels.contains(t.typeLabel);
+
+  /// The non-All filter a transaction belongs to, if any (e.g. not an
+  /// "Other (source)" type).
+  static _CancelledTypeFilter? groupOf(FinanceCancelledTransaction t) {
+    for (final f in values) {
+      if (f != all && f.typeLabels.contains(t.typeLabel)) return f;
+    }
+    return null;
+  }
+}
+
+class _CancelledTransactionsDialog extends StatefulWidget {
   const _CancelledTransactionsDialog({required this.summary});
 
   final FinanceCancelledTransactionsSummary summary;
 
   @override
+  State<_CancelledTransactionsDialog> createState() => _CancelledTransactionsDialogState();
+}
+
+class _CancelledTransactionsDialogState extends State<_CancelledTransactionsDialog> {
+  _CancelledTypeFilter _filter = _CancelledTypeFilter.all;
+  final _search = TextEditingController();
+
+  /// Kept here so the size survives a filter/search with no rows (which
+  /// removes the pager); null until changed.
+  int? _pageSize;
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  /// The row's own displayed text: heading, type, source, reference, linked
+  /// receipt/invoice number and id, record and ledger ids, reason, status.
+  static Iterable<String> _searchFields(FinanceCancelledTransaction t) => [
+        t.title,
+        t.typeLabel,
+        _CancelledTypeFilter.groupOf(t)?.label ?? 'Other',
+        t.sourceLabel,
+        t.reference,
+        t.linkedDocumentNumber,
+        t.linkedDocumentId,
+        t.id,
+        t.ledgerId,
+        t.reason,
+        t.statusLabel,
+      ];
+
+  @override
   Widget build(BuildContext context) {
+    final summary = widget.summary;
+    final query = _normalizeSearch(_search.text);
+    final searching = query.isNotEmpty;
+    // Count and amount below come from this filtered (type + search) list
+    // only; the summary itself (and every total elsewhere) is unchanged.
+    final shown = summary.transactions.where((t) => _filter.includes(t) && _matchesSearch(query, _searchFields(t))).toList();
+    final shownAmount = shown.fold<double>(0, (total, t) => total + t.amount);
+    final isAll = _filter == _CancelledTypeFilter.all;
+    final countLabel = searching ? (isAll ? 'Matching' : 'Matching ${_filter.label}') : (isAll ? 'Counted' : _filter.label);
     String day(DateTime? d) => d == null ? 'Not recorded' : DateFormat('dd MMM yyyy').format(d);
     Widget row(String label, String value) => Padding(
           padding: const EdgeInsets.only(top: 2),
@@ -711,57 +795,118 @@ class _CancelledTransactionsDialog extends StatelessWidget {
             'Fees receipt are not counted again. These amounts are not included in any total or balance.',
             style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
           ),
+          const SizedBox(height: 12),
+          Wrap(
+            key: const Key('cancelled-type-filter'),
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              for (final f in _CancelledTypeFilter.values)
+                ChoiceChip(
+                  label: Text(f.label),
+                  selected: _filter == f,
+                  visualDensity: VisualDensity.compact,
+                  onSelected: (_) => setState(() => _filter = f),
+                ),
+            ],
+          ),
+          if (summary.transactions.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _FinanceSearchField(
+              keyPrefix: 'cancelled',
+              controller: _search,
+              hint: 'Search title, type, reference, receipt/invoice no. or ID',
+              onChanged: (_) => setState(() {}),
+            ),
+          ],
           const Divider(height: 24),
           if (summary.transactions.isEmpty)
-            const Text('No cancelled or voided transactions.', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
-          for (final t in summary.transactions)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    spacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      Text('${t.typeLabel} • ${t.title}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-                      if (t.reviewNote.isNotEmpty) const FinanceStatusChip(label: 'NEEDS REVIEW', color: _warningColor),
-                    ],
-                  ),
-                  row('Source', t.sourceLabel),
-                  if (t.linkedDocumentLabel.isNotEmpty)
-                    row(
-                      t.linkedDocumentLabel,
-                      t.linkedDocumentNumber.isNotEmpty
-                          ? t.linkedDocumentNumber
-                          : t.linkedDocumentFound
-                              ? '${t.linkedDocumentLabel} number not recorded'
-                              : '${t.linkedDocumentLabel} record not found',
+            const Text('No cancelled or voided transactions.', style: TextStyle(fontSize: 13, color: AppColors.textSecondary))
+          else if (shown.isEmpty && searching)
+            Text(
+              'No cancelled or voided ${isAll ? '' : '${_filter.noun} '}transactions match "${_search.text.trim()}".',
+              key: const Key('cancelled-search-empty'),
+              style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            )
+          else if (shown.isEmpty)
+            Text(
+              'No cancelled or voided ${_filter.noun} transactions.',
+              style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            ),
+          // Only the current page's rows are built; the count and amount
+          // below stay over the complete filtered list.
+          if (shown.isNotEmpty)
+            _PagedList<FinanceCancelledTransaction>(
+              keyPrefix: 'cancelled',
+              items: shown,
+              idOf: (t) => t.id,
+              resetToken: (_filter, query),
+              initialPageSize: _pageSize,
+              onPageSizeChanged: (size) => _pageSize = size,
+              itemBuilder: (t) => Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text('${t.typeLabel} • ${t.title}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                        FinanceStatusChip(
+                          label: (_CancelledTypeFilter.groupOf(t)?.label ?? 'Other').toUpperCase(),
+                          color: const Color(0xFF607D8B),
+                        ),
+                        if (t.reviewNote.isNotEmpty) const FinanceStatusChip(label: 'NEEDS REVIEW', color: _warningColor),
+                      ],
                     ),
-                  if (t.linkedDocumentLabel == 'Receipt' && t.linkedDocumentId.isNotEmpty) row('Collection ID', t.linkedDocumentId),
-                  if (t.linkedDocumentLabel == 'Invoice' && t.linkedDocumentId.isNotEmpty) row('Invoice ID', t.linkedDocumentId),
-                  if (t.linkedDocumentStatus.isNotEmpty) row('${t.linkedDocumentLabel} status', t.linkedDocumentStatus),
-                  row('Reference', t.reference.isEmpty ? 'Reference not recorded' : t.reference),
-                  row(t.linkedDocumentLabel == 'Receipt' ? 'Finance record ID' : 'Record ID', t.id),
-                  row('Ledger entry', t.ledgerId.isEmpty ? 'None linked' : '${t.ledgerId} (${t.ledgerStatus.isEmpty ? 'not found' : t.ledgerStatus})'),
-                  row('Original date', day(t.originalDate)),
-                  row('Cancelled on', day(t.cancelledAt)),
-                  row('Original amount', '₹${t.amount.toStringAsFixed(0)}'),
-                  row('Reason', t.reason.isEmpty ? 'Not recorded' : t.reason),
-                  row('Status', t.statusLabel),
-                  if (t.reviewNote.isNotEmpty) row('Needs review', '${t.reviewNote}. Still counted: the voided Finance record is what totals used.'),
-                ],
+                    row('Source', t.sourceLabel),
+                    if (t.linkedDocumentLabel.isNotEmpty)
+                      row(
+                        t.linkedDocumentLabel,
+                        t.linkedDocumentNumber.isNotEmpty
+                            ? t.linkedDocumentNumber
+                            : t.linkedDocumentFound
+                                ? '${t.linkedDocumentLabel} number not recorded'
+                                : '${t.linkedDocumentLabel} record not found',
+                      ),
+                    if (t.linkedDocumentLabel == 'Receipt' && t.linkedDocumentId.isNotEmpty) row('Collection ID', t.linkedDocumentId),
+                    if (t.linkedDocumentLabel == 'Invoice' && t.linkedDocumentId.isNotEmpty) row('Invoice ID', t.linkedDocumentId),
+                    if (t.linkedDocumentStatus.isNotEmpty) row('${t.linkedDocumentLabel} status', t.linkedDocumentStatus),
+                    row('Reference', t.reference.isEmpty ? 'Reference not recorded' : t.reference),
+                    row(t.linkedDocumentLabel == 'Receipt' ? 'Finance record ID' : 'Record ID', t.id),
+                    row('Ledger entry', t.ledgerId.isEmpty ? 'None linked' : '${t.ledgerId} (${t.ledgerStatus.isEmpty ? 'not found' : t.ledgerStatus})'),
+                    row('Original date', day(t.originalDate)),
+                    row('Cancelled on', day(t.cancelledAt)),
+                    row('Original amount', '₹${t.amount.toStringAsFixed(0)}'),
+                    row('Reason', t.reason.isEmpty ? 'Not recorded' : t.reason),
+                    row('Status', t.statusLabel),
+                    if (t.reviewNote.isNotEmpty) row('Needs review', '${t.reviewNote}. Still counted: the voided Finance record is what totals used.'),
+                  ],
+                ),
               ),
             ),
-          if (summary.transactions.isNotEmpty)
+          if (shown.isNotEmpty)
             Text(
-              'Counted: ${summary.count} transaction${summary.count == 1 ? '' : 's'}, '
-              '₹${summary.originalAmount.toStringAsFixed(0)} in total — the sum of the amounts listed above.',
+              '$countLabel: ${shown.length} transaction${shown.length == 1 ? '' : 's'}, '
+              '₹${shownAmount.toStringAsFixed(0)} in total — the sum of the amounts listed '
+              '${shown.length > 10 ? 'on all pages' : 'above'}.'
+              '${isAll && !searching ? '' : ' All types: ${summary.count}, ₹${summary.originalAmount.toStringAsFixed(0)}.'}',
               style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
             ),
           if (summary.exclusions.isNotEmpty) ...[
             const Divider(height: 24),
             const Text('Needs review — not counted', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _warningColor)),
+            if (!isAll || searching)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  searching
+                      ? 'Shown under every filter and search: their type or link is unclear.'
+                      : 'Shown under every filter: their type or link is unclear.',
+                  style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                ),
+              ),
             for (final e in summary.exclusions)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
@@ -882,7 +1027,9 @@ class _DashboardTab extends StatelessWidget {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          _DashboardSectionHeader(title: 'Recent Transactions'),
+                          // Flexible so a narrow screen wraps the title
+                          // instead of overflowing; "View all" keeps its size.
+                          const Expanded(child: _DashboardSectionHeader(title: 'Recent Transactions')),
                           TextButton(
                             onPressed: onViewAllTransactions,
                             child: const Text('View all'),
@@ -1087,7 +1234,12 @@ class _FinanceEmptyState extends StatelessWidget {
 /// income entries). Built purely from the existing `watchIncome()` stream,
 /// with the existing `programType != 'invoice'` filter that excludes
 /// invoice-payment records that also live in the same collection.
-class _IncomeTab extends StatelessWidget {
+///
+/// The list is paged in the UI only (10/25/50 per page): Total Income and
+/// Transactions are always from the full filtered list, and only the
+/// current page's cards are built. The stream is held in state so changing
+/// page doesn't resubscribe it.
+class _IncomeTab extends StatefulWidget {
   const _IncomeTab({
     required this.service,
     required this.launchUrlFn,
@@ -1102,9 +1254,46 @@ class _IncomeTab extends StatelessWidget {
   final ValueChanged<FinanceIncomeModel> onVoid;
 
   @override
+  State<_IncomeTab> createState() => _IncomeTabState();
+}
+
+class _IncomeTabState extends State<_IncomeTab> {
+  static const _pageSizes = [10, 25, 50];
+
+  late Stream<List<FinanceIncomeModel>> _income = widget.service.watchIncome();
+  int _pageSize = _pageSizes.first;
+  int _page = 0;
+
+  /// Ids of the last filtered list, in order; a different list sends the
+  /// view back to the first page.
+  List<String> _lastIds = const [];
+
+  final _search = TextEditingController();
+
+  /// Normalized query (see [_normalizeSearch]) the current page belongs to.
+  String _lastQuery = '';
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  static Iterable<String> _searchFields(FinanceIncomeModel i) => [i.title, i.remarks, i.categoryName, i.referenceNo, i.studentName];
+
+  @override
+  void didUpdateWidget(covariant _IncomeTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.service != widget.service) _income = widget.service.watchIncome();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final onAddIncome = widget.onAddIncome;
+    final onEdit = widget.onEdit;
+    final onVoid = widget.onVoid;
     return StreamBuilder<List<FinanceIncomeModel>>(
-      stream: service.watchIncome(),
+      stream: _income,
       builder: (context, snap) {
         if (!snap.hasData) {
           return const Padding(
@@ -1117,6 +1306,21 @@ class _IncomeTab extends StatelessWidget {
         // must only show actual income (fee collections, manual income).
         final items = snap.data!.where((i) => i.programType != 'invoice').toList();
         final totalIncome = items.fold<double>(0, (total, i) => total + i.amount);
+        // Search filters the listed rows only; the cards use [items].
+        final query = _normalizeSearch(_search.text);
+        final shown = items.where((i) => _matchesSearch(query, _searchFields(i))).toList();
+
+        final ids = [for (final i in shown) i.id];
+        if (!listEquals(ids, _lastIds) || query != _lastQuery) {
+          _lastIds = ids;
+          _lastQuery = query;
+          _page = 0;
+        }
+        final pageCount = shown.isEmpty ? 1 : (shown.length + _pageSize - 1) ~/ _pageSize;
+        if (_page >= pageCount) _page = 0;
+        final start = _page * _pageSize;
+        final end = (start + _pageSize).clamp(0, shown.length);
+        final pageItems = shown.sublist(start, end);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1158,15 +1362,65 @@ class _IncomeTab extends StatelessWidget {
                 ctaLabel: 'Add Income',
                 onCta: onAddIncome,
               )
-            else
-              Column(
-                children: items
-                    .map((i) => Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: _IncomeEntryCard(income: i, onEdit: onEdit, onVoid: onVoid),
-                        ))
-                    .toList(),
+            else ...[
+              _FinanceSearchField(
+                keyPrefix: 'income',
+                controller: _search,
+                hint: 'Search description, category, reference or payer',
+                onChanged: (_) => setState(() {}),
               ),
+              if (shown.isEmpty) _FinanceSearchEmpty(keyPrefix: 'income', noun: 'income transactions', query: _search.text),
+              if (shown.isNotEmpty) ...[
+                Column(
+                  children: pageItems
+                      .map((i) => Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: _IncomeEntryCard(income: i, onEdit: onEdit, onVoid: onVoid),
+                          ))
+                      .toList(),
+                ),
+                Wrap(
+                  key: const Key('income-pagination'),
+                  spacing: 12,
+                  runSpacing: 4,
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      'Showing ${start + 1}–$end of ${shown.length}',
+                      style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                    ),
+                    Wrap(
+                      spacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        const Text('Per page', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                        DropdownButton<int>(
+                          key: const Key('income-page-size'),
+                          value: _pageSize,
+                          underline: const SizedBox.shrink(),
+                          items: [for (final size in _pageSizes) DropdownMenuItem(value: size, child: Text('$size'))],
+                          // Keeps the current page if it still exists;
+                          // otherwise back to the first page (see build).
+                          onChanged: (size) => setState(() => _pageSize = size ?? _pageSize),
+                        ),
+                        IconButton(
+                          tooltip: 'Previous page',
+                          icon: const Icon(Icons.chevron_left),
+                          onPressed: _page > 0 ? () => setState(() => _page--) : null,
+                        ),
+                        Text('Page ${_page + 1} of $pageCount', style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                        IconButton(
+                          tooltip: 'Next page',
+                          icon: const Icon(Icons.chevron_right),
+                          onPressed: _page < pageCount - 1 ? () => setState(() => _page++) : null,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ],
           ],
         );
       },
@@ -1273,6 +1527,268 @@ class _IncomeEntryCard extends StatelessWidget {
   }
 }
 
+/// Free-text search over a Finance list (display only): the query is
+/// trimmed and matched case-insensitively as a substring of any of the
+/// row's [fields]. An empty query matches everything.
+String _normalizeSearch(String query) => query.trim().toLowerCase();
+bool _matchesSearch(String normalizedQuery, Iterable<String> fields, {Iterable<String> exactFields = const []}) =>
+    normalizedQuery.isEmpty ||
+    fields.any((f) => f.toLowerCase().contains(normalizedQuery)) ||
+    exactFields.any((f) => f.toLowerCase() == normalizedQuery);
+
+/// The search box above a Finance list: updates as you type and has a
+/// Clear action. Keys: `<keyPrefix>-search`, `<keyPrefix>-search-clear`.
+class _FinanceSearchField extends StatelessWidget {
+  const _FinanceSearchField({required this.keyPrefix, required this.controller, required this.hint, required this.onChanged});
+
+  final String keyPrefix;
+  final TextEditingController controller;
+  final String hint;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextField(
+        key: Key('$keyPrefix-search'),
+        controller: controller,
+        onChanged: onChanged,
+        decoration: InputDecoration(
+          hintText: hint,
+          prefixIcon: const Icon(Icons.search),
+          isDense: true,
+          border: const OutlineInputBorder(),
+          suffixIcon: controller.text.isEmpty
+              ? null
+              : IconButton(
+                  key: Key('$keyPrefix-search-clear'),
+                  tooltip: 'Clear search',
+                  icon: const Icon(Icons.close),
+                  onPressed: () {
+                    controller.clear();
+                    onChanged('');
+                  },
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+/// "No … match "query"." shown when a search matches nothing.
+class _FinanceSearchEmpty extends StatelessWidget {
+  const _FinanceSearchEmpty({required this.keyPrefix, required this.noun, required this.query});
+
+  final String keyPrefix;
+  final String noun;
+  final String query;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      key: Key('$keyPrefix-search-empty'),
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: Center(
+        child: Text(
+          'No $noun match "${query.trim()}".',
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+        ),
+      ),
+    );
+  }
+}
+
+/// A search box over a [_PagedList]. Keeps the query in its own state so
+/// typing never rebuilds the parent tab (or re-subscribes its stream).
+/// Only the displayed rows are filtered; the caller's totals keep using the
+/// complete [items]. A query change returns to page 1 and keeps the page
+/// size.
+class _SearchablePagedList<T> extends StatefulWidget {
+  const _SearchablePagedList({
+    required this.keyPrefix,
+    required this.items,
+    required this.idOf,
+    required this.searchFieldsOf,
+    required this.itemBuilder,
+    required this.hint,
+    required this.noun,
+    this.exactSearchFieldsOf,
+  });
+
+  final String keyPrefix;
+  final List<T> items;
+  final String Function(T item) idOf;
+  final Iterable<String> Function(T item) searchFieldsOf;
+
+  /// Optional values matched only by the whole query (e.g. a status, so
+  /// "active" doesn't also match "inactive").
+  final Iterable<String> Function(T item)? exactSearchFieldsOf;
+  final Widget Function(T item) itemBuilder;
+  final String hint;
+
+  /// For the no-match message, e.g. "expense invoices".
+  final String noun;
+
+  @override
+  State<_SearchablePagedList<T>> createState() => _SearchablePagedListState<T>();
+}
+
+class _SearchablePagedListState<T> extends State<_SearchablePagedList<T>> {
+  final _controller = TextEditingController();
+  String _query = '';
+
+  /// Kept here so the size survives a no-match search (which removes the
+  /// pager); null until changed, i.e. the pager's default.
+  int? _pageSize;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = _normalizeSearch(_query);
+    final exact = widget.exactSearchFieldsOf;
+    final shown = widget.items
+        .where((item) => _matchesSearch(query, widget.searchFieldsOf(item), exactFields: exact == null ? const [] : exact(item)))
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _FinanceSearchField(
+          keyPrefix: widget.keyPrefix,
+          controller: _controller,
+          hint: widget.hint,
+          onChanged: (v) => setState(() => _query = v),
+        ),
+        if (shown.isEmpty)
+          _FinanceSearchEmpty(keyPrefix: widget.keyPrefix, noun: widget.noun, query: _query)
+        else
+          _PagedList<T>(
+            keyPrefix: widget.keyPrefix,
+            items: shown,
+            idOf: widget.idOf,
+            itemBuilder: widget.itemBuilder,
+            resetToken: query,
+            initialPageSize: _pageSize,
+            onPageSizeChanged: (size) => _pageSize = size,
+          ),
+      ],
+    );
+  }
+}
+
+/// UI-only pagination for an already-filtered, already-ordered list (used
+/// by the Expenses, Salary and Ledger tabs; same controls and behaviour as the
+/// Income tab's): 10/25/50 per page, Previous/Next, "Showing x–y of n" and
+/// "Page p of q". Only the current page's items are built. Returns to the
+/// first page when the list's ids change, or when a page size leaves the
+/// current page out of range. The caller shows its own empty state, so
+/// [items] is never empty here; totals stay with the caller.
+class _PagedList<T> extends StatefulWidget {
+  const _PagedList({
+    required this.keyPrefix,
+    required this.items,
+    required this.idOf,
+    required this.itemBuilder,
+    this.resetToken,
+    this.initialPageSize,
+    this.onPageSizeChanged,
+  });
+
+  /// Prefix for the control keys, e.g. `expense-pagination`.
+  final String keyPrefix;
+  final List<T> items;
+  final String Function(T item) idOf;
+  final Widget Function(T item) itemBuilder;
+
+  /// Optional: a change also returns to the first page (e.g. a filter
+  /// change that happens to leave the same items).
+  final Object? resetToken;
+
+  /// Optional: lets a parent keep the chosen page size when this list is
+  /// rebuilt from scratch (e.g. after a search matched nothing).
+  final int? initialPageSize;
+  final ValueChanged<int>? onPageSizeChanged;
+
+  @override
+  State<_PagedList<T>> createState() => _PagedListState<T>();
+}
+
+class _PagedListState<T> extends State<_PagedList<T>> {
+  static const _pageSizes = [10, 25, 50];
+
+  late int _pageSize = widget.initialPageSize ?? _pageSizes.first;
+  int _page = 0;
+  List<String> _lastIds = const [];
+  late Object? _lastResetToken = widget.resetToken;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = widget.items;
+    final ids = [for (final item in items) widget.idOf(item)];
+    if (!listEquals(ids, _lastIds) || widget.resetToken != _lastResetToken) {
+      _lastIds = ids;
+      _lastResetToken = widget.resetToken;
+      _page = 0;
+    }
+    final pageCount = items.isEmpty ? 1 : (items.length + _pageSize - 1) ~/ _pageSize;
+    if (_page >= pageCount) _page = 0;
+    final start = _page * _pageSize;
+    final end = (start + _pageSize).clamp(0, items.length);
+    const label = TextStyle(fontSize: 13, color: AppColors.textSecondary);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final item in items.sublist(start, end)) widget.itemBuilder(item),
+        Wrap(
+          key: Key('${widget.keyPrefix}-pagination'),
+          spacing: 12,
+          runSpacing: 4,
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text('Showing ${start + 1}–$end of ${items.length}', style: label),
+            Wrap(
+              spacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                const Text('Per page', style: label),
+                DropdownButton<int>(
+                  key: Key('${widget.keyPrefix}-page-size'),
+                  value: _pageSize,
+                  underline: const SizedBox.shrink(),
+                  items: [for (final size in _pageSizes) DropdownMenuItem(value: size, child: Text('$size'))],
+                  onChanged: (size) {
+                    setState(() => _pageSize = size ?? _pageSize);
+                    widget.onPageSizeChanged?.call(_pageSize);
+                  },
+                ),
+                IconButton(
+                  tooltip: 'Previous page',
+                  icon: const Icon(Icons.chevron_left),
+                  onPressed: _page > 0 ? () => setState(() => _page--) : null,
+                ),
+                Text('Page ${_page + 1} of $pageCount', style: label),
+                IconButton(
+                  tooltip: 'Next page',
+                  icon: const Icon(Icons.chevron_right),
+                  onPressed: _page < pageCount - 1 ? () => setState(() => _page++) : null,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
 /// The Finance "Expenses" tab: vendor-invoice lifecycle at a glance
 /// (raise -> unpaid/partial/paid -> pay). Built purely from the existing
 /// `watchInvoicesByType('expense')` stream and the existing `payInvoice`
@@ -1358,23 +1874,29 @@ class _ExpenseTab extends StatelessWidget {
                 onCta: onRaiseInvoice,
               )
             else
-              Column(
-                children: items
-                    .map((invoice) => Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: _InvoiceCard(
-                            invoice: invoice,
-                            onPay: () => onPay(invoice),
-                            onEdit: () => onEdit(invoice),
-                            onDelete: () => onDelete(invoice),
-                            onCancel: () => onCancel(invoice),
-                            service: service,
-                            onReversePayment: onReversePayment,
-                            showPaymentDates: true,
-                            partyLabel: 'Vendor',
-                          ),
-                        ))
-                    .toList(),
+              // Search and paging filter the rows only; the cards above
+              // use the complete list.
+              _SearchablePagedList<FinanceInvoiceModel>(
+                keyPrefix: 'expense',
+                items: items,
+                idOf: (invoice) => invoice.id,
+                hint: 'Search vendor, invoice no., category, description or status',
+                noun: 'expense invoices',
+                searchFieldsOf: (i) => [i.partyName, i.invoiceNo, i.categoryName, i.description, i.status, _invoiceStatusPresentation(i.status).label],
+                itemBuilder: (invoice) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _InvoiceCard(
+                    invoice: invoice,
+                    onPay: () => onPay(invoice),
+                    onEdit: () => onEdit(invoice),
+                    onDelete: () => onDelete(invoice),
+                    onCancel: () => onCancel(invoice),
+                    service: service,
+                    onReversePayment: onReversePayment,
+                    showPaymentDates: true,
+                    partyLabel: 'Vendor',
+                  ),
+                ),
               ),
           ],
         );
@@ -1901,19 +2423,23 @@ class _SalaryTab extends StatelessWidget {
                 onCta: onRaiseInvoice,
               )
             else
-              Column(
-                children: items
-                    .map((invoice) => Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: _InvoiceCard(
-                            invoice: invoice,
-                            onPay: () => onPay(invoice),
-                            partyLabel: 'Staff',
-                            service: service,
-                            showPaymentDates: true,
-                          ),
-                        ))
-                    .toList(),
+              _SearchablePagedList<FinanceInvoiceModel>(
+                keyPrefix: 'salary',
+                items: items,
+                idOf: (invoice) => invoice.id,
+                hint: 'Search staff, invoice no., description or status',
+                noun: 'salary invoices',
+                searchFieldsOf: (i) => [i.partyName, i.invoiceNo, i.description, i.status, _invoiceStatusPresentation(i.status).label],
+                itemBuilder: (invoice) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _InvoiceCard(
+                    invoice: invoice,
+                    onPay: () => onPay(invoice),
+                    partyLabel: 'Staff',
+                    service: service,
+                    showPaymentDates: true,
+                  ),
+                ),
               ),
           ],
         );
@@ -1953,13 +2479,20 @@ class _VendorTab extends StatelessWidget {
                 onCta: onAddVendor,
               )
             else
-              Column(
-                children: items
-                    .map((vendor) => Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: _VendorCard(vendor: vendor),
-                        ))
-                    .toList(),
+              // Search and paging filter the displayed cards only, in the
+              // existing watchVendors() (name) order.
+              _SearchablePagedList<VendorModel>(
+                keyPrefix: 'vendor',
+                items: items,
+                idOf: (vendor) => vendor.id,
+                hint: 'Search name, service type, phone, email or status',
+                noun: 'vendors',
+                searchFieldsOf: (v) => [v.name, v.serviceType, v.phone, v.email],
+                exactSearchFieldsOf: (v) => [v.isActive ? 'active' : 'inactive'],
+                itemBuilder: (vendor) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _VendorCard(vendor: vendor),
+                ),
               ),
           ],
         );
@@ -2145,13 +2678,20 @@ class _LedgerTab extends StatelessWidget {
                 if (items.isEmpty)
                   const _EmptyTransactions()
                 else
-                  Column(
-                    children: items
-                        .map((e) => Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: LedgerEntryCard(entry: e),
-                            ))
-                        .toList(),
+                  // Searched and paged in the UI only; the inflow/outflow/net
+                  // movement and balance figures above use the complete list.
+                  _SearchablePagedList<FinanceLedgerEntryModel>(
+                    keyPrefix: 'ledger',
+                    items: items,
+                    idOf: (e) => e.id,
+                    hint: 'Search description, category, reference, account or vendor',
+                    noun: 'transactions',
+                    // subCategoryName holds the vendor name on direct expenses.
+                    searchFieldsOf: (e) => [e.title, e.description, e.categoryName, e.subCategoryName, e.referenceNo, e.accountName],
+                    itemBuilder: (e) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: LedgerEntryCard(entry: e),
+                    ),
                   ),
                 // Reserves clearance so the last transaction can scroll
                 // fully clear of the floating "Add" FAB.
@@ -2166,12 +2706,174 @@ class _LedgerTab extends StatelessWidget {
 }
 
 /// The Finance "Settings" tab: lists the actual categories and accounts
-/// (not just counts), read-only — FinanceService has no update/delete for
-/// either, so there is no existing CRUD to preserve beyond creation (already
-/// handled by the Settings FAB's Add Category / Add Account choice sheet).
+/// (not just counts). Categories can be edited and deleted through
+/// FinanceService.updateCategory/deleteCategory (default categories are
+/// locked; a category in use can't be renamed, retyped or deleted, only
+/// deactivated). Accounts can be edited and deleted through
+/// FinanceService.updateAccount/deleteAccount (an account in use keeps its
+/// type and opening balance and can't be deleted, only deactivated; one that
+/// new payments depend on stays active). Adding either is handled by the
+/// Settings FAB's Add Category / Add Account choice sheet.
 class _SettingsTab extends StatelessWidget {
   const _SettingsTab({required this.service});
   final FinanceService service;
+
+  static void _message(BuildContext context, String text) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+
+  Future<void> _editCategory(BuildContext context, FinanceCategoryModel category) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AddCategoryDialog(category: category, service: service),
+    );
+    if (saved == true && context.mounted) _message(context, 'Category updated');
+  }
+
+  Future<void> _deleteCategory(BuildContext context, FinanceCategoryModel category) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete Category'),
+        content: Text(
+          'Delete "${category.name}"? This is only allowed when no income, expense, invoice or ledger '
+          'record uses it.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    final List<String> refs;
+    try {
+      refs = await service.categoryReferences(category);
+    } catch (e) {
+      if (context.mounted) _message(context, "Couldn't check where this category is used, so it wasn't deleted: $e");
+      return;
+    }
+    if (!context.mounted) return;
+    if (refs.isNotEmpty) {
+      final deactivate = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Category In Use'),
+          content: Text(
+            '"${category.name}" is used by ${refs.join(', ')}, so it can\'t be deleted without leaving those '
+            'records pointing at a missing category. '
+            '${category.isActive ? 'Deactivate it instead to hide it from new entries; existing records keep it.' : 'It is already inactive.'}',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Close')),
+            if (category.isActive)
+              FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Deactivate')),
+          ],
+        ),
+      );
+      if (deactivate != true || !context.mounted) return;
+      try {
+        await service.updateCategory(id: category.id, name: category.name, type: category.type, isActive: false);
+        if (context.mounted) _message(context, 'Category deactivated');
+      } catch (e) {
+        if (context.mounted) _message(context, 'Failed to deactivate category: ${e is StateError ? e.message : e}');
+      }
+      return;
+    }
+    try {
+      await service.deleteCategory(category.id);
+      if (context.mounted) _message(context, 'Category deleted');
+    } catch (e) {
+      if (context.mounted) _message(context, 'Failed to delete category: ${e is StateError ? e.message : e}');
+    }
+  }
+
+  Future<void> _editAccount(BuildContext context, FinanceAccountModel account) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AddAccountDialog(account: account, service: service),
+    );
+    if (saved == true && context.mounted) _message(context, 'Account updated');
+  }
+
+  /// Confirms, then checks usage: an account that records point at, that
+  /// holds a balance, or that new payments depend on is never deleted —
+  /// the user gets the reason and, where allowed, a Deactivate option.
+  Future<void> _deleteAccount(BuildContext context, FinanceAccountModel account) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete Account'),
+        content: Text(
+          'Delete "${account.name}"? This is only allowed when no Finance record uses it, its balances are zero '
+          'and new payments don\'t depend on it.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    final FinanceAccountUsage usage;
+    try {
+      usage = await service.accountUsage(account);
+    } catch (e) {
+      if (context.mounted) _message(context, "Couldn't check how this account is used, so it wasn't deleted: $e");
+      return;
+    }
+    if (!context.mounted) return;
+    final blocked = usage.deleteBlockedReason(account.name);
+    if (blocked != null) {
+      final canDeactivate = account.isActive && usage.deactivateBlockedReason(account.name) == null;
+      final deactivate = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(usage.isRequired ? 'Account Required' : 'Account In Use'),
+          content: Text(
+            '$blocked '
+            '${canDeactivate ? 'Deactivate it instead: it receives no new payments, and its history and balances stay as they are.' : account.isActive ? '' : 'It is already inactive.'}'
+                .trim(),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Close')),
+            if (canDeactivate) FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Deactivate')),
+          ],
+        ),
+      );
+      if (deactivate != true || !context.mounted) return;
+      try {
+        await service.updateAccount(
+          id: account.id,
+          name: account.name,
+          type: account.type,
+          openingBalance: account.openingBalance,
+          isActive: false,
+        );
+        if (context.mounted) _message(context, 'Account deactivated');
+      } catch (e) {
+        if (context.mounted) _message(context, 'Failed to deactivate account: ${e is StateError ? e.message : e}');
+      }
+      return;
+    }
+    try {
+      await service.deleteAccount(account.id);
+      if (context.mounted) _message(context, 'Account deleted');
+    } catch (e) {
+      if (context.mounted) _message(context, 'Failed to delete account: ${e is StateError ? e.message : e}');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2191,6 +2893,15 @@ class _SettingsTab extends StatelessWidget {
         StreamBuilder<List<FinanceCategoryModel>>(
           stream: service.watchCategories(),
           builder: (context, snap) {
+            if (snap.hasError) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Text(
+                  "Couldn't load categories. Reopen Settings to try again.",
+                  style: TextStyle(fontSize: 13, color: _warningColor),
+                ),
+              );
+            }
             if (!snap.hasData) {
               return const Padding(
                 padding: EdgeInsets.symmetric(vertical: 16),
@@ -2209,7 +2920,11 @@ class _SettingsTab extends StatelessWidget {
               children: items
                   .map((category) => Padding(
                         padding: const EdgeInsets.only(bottom: 10),
-                        child: _CategoryRow(category: category),
+                        child: _CategoryRow(
+                          category: category,
+                          onEdit: () => _editCategory(context, category),
+                          onDelete: () => _deleteCategory(context, category),
+                        ),
                       ))
                   .toList(),
             );
@@ -2224,6 +2939,15 @@ class _SettingsTab extends StatelessWidget {
         StreamBuilder<List<FinanceAccountModel>>(
           stream: service.watchAccounts(),
           builder: (context, snap) {
+            if (snap.hasError) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Text(
+                  "Couldn't load accounts. Reopen Settings to try again.",
+                  style: TextStyle(fontSize: 13, color: _warningColor),
+                ),
+              );
+            }
             if (!snap.hasData) {
               return const Padding(
                 padding: EdgeInsets.symmetric(vertical: 16),
@@ -2241,7 +2965,13 @@ class _SettingsTab extends StatelessWidget {
             return _ResponsiveCardGrid(
               desktopColumns: 3,
               tabletColumns: 2,
-              children: items.map((account) => _AccountRow(account: account)).toList(),
+              children: items
+                  .map((account) => _AccountRow(
+                        account: account,
+                        onEdit: () => _editAccount(context, account),
+                        onDelete: () => _deleteAccount(context, account),
+                      ))
+                  .toList(),
             );
           },
         ),
@@ -2254,8 +2984,12 @@ class _SettingsTab extends StatelessWidget {
 }
 
 class _CategoryRow extends StatelessWidget {
-  const _CategoryRow({required this.category});
+  const _CategoryRow({required this.category, this.onEdit, this.onDelete});
   final FinanceCategoryModel category;
+
+  /// Not offered for default (isSystem) categories.
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -2287,6 +3021,28 @@ class _CategoryRow extends StatelessWidget {
             const SizedBox(width: 8),
             const FinanceStatusChip(label: 'INACTIVE', color: Colors.grey),
           ],
+          if (category.isSystem)
+            const Padding(
+              padding: EdgeInsets.only(left: 8),
+              child: Tooltip(
+                message: 'Default category',
+                child: Icon(Icons.lock_outline, size: 18, color: AppColors.textSecondary),
+              ),
+            )
+          else ...[
+            IconButton(
+              tooltip: 'Edit',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.edit_outlined, size: 20),
+              onPressed: onEdit,
+            ),
+            IconButton(
+              tooltip: 'Delete',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+              onPressed: onDelete,
+            ),
+          ],
         ],
       ),
     );
@@ -2294,8 +3050,10 @@ class _CategoryRow extends StatelessWidget {
 }
 
 class _AccountRow extends StatelessWidget {
-  const _AccountRow({required this.account});
+  const _AccountRow({required this.account, this.onEdit, this.onDelete});
   final FinanceAccountModel account;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
 
   static IconData _iconFor(String type) {
     final t = type.toLowerCase();
@@ -2347,6 +3105,20 @@ class _AccountRow extends StatelessWidget {
                 ),
               ),
               if (!account.isActive) const FinanceStatusChip(label: 'INACTIVE', color: Colors.grey),
+              if (onEdit != null)
+                IconButton(
+                  tooltip: 'Edit',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.edit_outlined, size: 20),
+                  onPressed: onEdit,
+                ),
+              if (onDelete != null)
+                IconButton(
+                  tooltip: 'Delete',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+                  onPressed: onDelete,
+                ),
             ],
           ),
           const SizedBox(height: 12),

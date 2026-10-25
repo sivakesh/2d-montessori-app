@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -44,6 +45,33 @@ class _AdminFeesScreenState extends ConsumerState<AdminFeesScreen> {
   List<FeeStructureModel> _structures = [];
   List<StudentFeeAssignmentModel> _assignments = [];
   List<FeeReceiptModel> _receipts = [];
+
+  /// Independent UI page state for each list, kept here so it survives
+  /// switching tabs and one list's paging never moves another's.
+  final _pagers = {
+    for (final list in _lists) list: _ListPager(),
+  };
+
+  /// Each list's own search text, kept here (like [_pagers]) so a query
+  /// survives switching tabs and never affects another list.
+  final _searches = {
+    for (final list in _lists) list: TextEditingController(),
+  };
+
+  static const _lists = ['structures', 'assignments', 'collections', 'receipts', 'dues'];
+
+  @override
+  void dispose() {
+    for (final controller in _searches.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  /// Searchable fields shared by the assignment-based lists (Assignments,
+  /// Collections, Dues).
+  static Iterable<String> _assignmentSearchFields(StudentFeeAssignmentModel a) =>
+      [a.studentName, a.admissionNo, a.className, a.feeStructureName, a.academicYear, a.status];
 
   @override
   void initState() {
@@ -349,12 +377,24 @@ class _AdminFeesScreenState extends ConsumerState<AdminFeesScreen> {
       for (final year in ref.watch(academicYearsProvider).valueOrNull ?? const [])
         year.id: year.name,
     };
-    return ListView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: _structures.length,
-        itemBuilder: (context, i) {
-          final s = _structures[i];
+    return _pagedList<FeeStructureModel>(
+        list: 'structures',
+        items: _structures,
+        idOf: (s) => s.id,
+        hint: 'Search name, description, academic year or frequency',
+        noun: 'fee structures',
+        searchFieldsOf: (s) => [
+          s.name,
+          s.description,
+          s.academicYear,
+          resolveClassAcademicYearLabel(
+            academicYearId: s.academicYearId,
+            academicYear: s.academicYear,
+            academicYearNamesById: academicYearNamesById,
+          ),
+          for (final c in s.components) c.frequency,
+        ],
+        itemBuilder: (s) {
           final frequencySummary = s.components.isEmpty
               ? 'No components'
               : s.components.map((c) => c.frequency).toSet().join(', ');
@@ -398,12 +438,14 @@ class _AdminFeesScreenState extends ConsumerState<AdminFeesScreen> {
       );
   }
 
-  Widget _buildAssignments() => ListView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: _assignments.length,
-        itemBuilder: (context, i) {
-          final a = _assignments[i];
+  Widget _buildAssignments() => _pagedList<StudentFeeAssignmentModel>(
+        list: 'assignments',
+        items: _assignments,
+        idOf: (a) => a.id,
+        hint: 'Search student, admission no., class, structure, year or status',
+        noun: 'assignments',
+        searchFieldsOf: _assignmentSearchFields,
+        itemBuilder: (a) {
           return _FeeListCard(
             icon: Icons.assignment_outlined,
             title: a.studentName,
@@ -438,13 +480,16 @@ class _AdminFeesScreenState extends ConsumerState<AdminFeesScreen> {
         },
       );
 
-  Widget _buildCollections() => ListView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: _assignments.where((a) => a.balanceAmount > 0).length,
-        itemBuilder: (context, i) {
-          final items = _assignments.where((a) => a.balanceAmount > 0).toList();
-          final a = items[i];
+  // Filtered once per build (previously re-filtered for every row), then
+  // sliced to the current page.
+  Widget _buildCollections() => _pagedList<StudentFeeAssignmentModel>(
+        list: 'collections',
+        items: _assignments.where((a) => a.balanceAmount > 0).toList(),
+        idOf: (a) => a.id,
+        hint: 'Search student, admission no., class, structure, year or status',
+        noun: 'collections',
+        searchFieldsOf: _assignmentSearchFields,
+        itemBuilder: (a) {
           return _FeeListCard(
             icon: Icons.payments_outlined,
             title: a.studentName,
@@ -478,12 +523,14 @@ class _AdminFeesScreenState extends ConsumerState<AdminFeesScreen> {
         },
       );
 
-  Widget _buildReceipts() => ListView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: _receipts.length,
-        itemBuilder: (context, i) {
-          final r = _receipts[i];
+  Widget _buildReceipts() => _pagedList<FeeReceiptModel>(
+        list: 'receipts',
+        items: _receipts,
+        idOf: (r) => r.id,
+        hint: 'Search receipt no., student, admission no., structure, mode or reference',
+        noun: 'receipts',
+        searchFieldsOf: (r) => [r.receiptNo, r.studentName, r.admissionNo, r.className, r.feeStructureName, r.paymentMode, r.referenceNo],
+        itemBuilder: (r) {
           return _FeeListCard(
             icon: Icons.description_outlined,
             title: r.receiptNo,
@@ -548,12 +595,14 @@ class _AdminFeesScreenState extends ConsumerState<AdminFeesScreen> {
 
   Widget _buildDues() {
     final dues = _assignments.where((a) => a.balanceAmount > 0).toList();
-    return ListView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: dues.length,
-        itemBuilder: (context, i) {
-          final a = dues[i];
+    return _pagedList<StudentFeeAssignmentModel>(
+        list: 'dues',
+        items: dues,
+        idOf: (a) => a.id,
+        hint: 'Search student, admission no., class, structure, year or status',
+        noun: 'dues',
+        searchFieldsOf: _assignmentSearchFields,
+        itemBuilder: (a) {
           return _FeeListCard(
             icon: Icons.schedule_outlined,
             title: a.studentName,
@@ -576,6 +625,85 @@ class _AdminFeesScreenState extends ConsumerState<AdminFeesScreen> {
           );
         },
       );
+  }
+
+  /// [items] (already filtered and ordered) searched and paged in the UI
+  /// only: the list's query (trimmed, case-insensitive substring of any of
+  /// [searchFieldsOf]) is applied once, then just the current page's rows
+  /// are built with [itemBuilder], plus the pagination controls (none when
+  /// nothing is shown). A genuinely empty [items] renders exactly as before,
+  /// with no search box. Summary figures never come from here — `_summary`
+  /// covers all records.
+  Widget _pagedList<T>({
+    required String list,
+    required List<T> items,
+    required String Function(T item) idOf,
+    required Widget Function(T item) itemBuilder,
+    required Iterable<String> Function(T item) searchFieldsOf,
+    required String hint,
+    required String noun,
+  }) {
+    final pager = _pagers[list]!;
+    final search = _searches[list]!;
+    final query = search.text.trim().toLowerCase();
+    final shown = query.isEmpty
+        ? items
+        : items.where((item) => searchFieldsOf(item).any((f) => f.toLowerCase().contains(query))).toList();
+    pager.sync([for (final item in shown) idOf(item)], query: query);
+    final pageItems = shown.sublist(pager.start, pager.end(shown.length));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (items.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: TextField(
+              key: Key('fees-$list-search'),
+              controller: search,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                hintText: hint,
+                prefixIcon: const Icon(Icons.search),
+                isDense: true,
+                border: const OutlineInputBorder(),
+                suffixIcon: search.text.isEmpty
+                    ? null
+                    : IconButton(
+                        key: Key('fees-$list-search-clear'),
+                        tooltip: 'Clear search',
+                        icon: const Icon(Icons.close),
+                        onPressed: () => setState(search.clear),
+                      ),
+              ),
+            ),
+          ),
+        if (items.isNotEmpty && shown.isEmpty)
+          Padding(
+            key: Key('fees-$list-search-empty'),
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: Text(
+                'No $noun match "${search.text.trim()}".',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              ),
+            ),
+          ),
+        ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: pageItems.length,
+          itemBuilder: (context, i) => itemBuilder(pageItems[i]),
+        ),
+        if (shown.isNotEmpty)
+          _FeePaginationControls(
+            list: list,
+            pager: pager,
+            total: shown.length,
+            onChanged: (update) => setState(update),
+          ),
+      ],
+    );
   }
 }
 
@@ -707,6 +835,84 @@ class _FeeListCard extends StatelessWidget {
           trailing,
         ],
       ),
+    );
+  }
+}
+
+/// UI page state for one Fees list: 10/25/50 per page. Returns to the first
+/// page when the shown records are added, removed or reordered (their ids
+/// change), when the list's search query changes, or when the current page
+/// no longer exists. The page size is never reset.
+class _ListPager {
+  static const pageSizes = [10, 25, 50];
+
+  int pageSize = pageSizes.first;
+  int page = 0;
+  int pageCount = 1;
+  List<String> _lastIds = const [];
+  String _lastQuery = '';
+
+  void sync(List<String> ids, {String query = ''}) {
+    if (!listEquals(ids, _lastIds) || query != _lastQuery) {
+      _lastIds = ids;
+      _lastQuery = query;
+      page = 0;
+    }
+    pageCount = ids.isEmpty ? 1 : (ids.length + pageSize - 1) ~/ pageSize;
+    if (page >= pageCount) page = 0;
+  }
+
+  int get start => page * pageSize;
+  int end(int total) => (start + pageSize).clamp(0, total);
+}
+
+/// Range, page size and Previous/Next for one Fees list; wraps on narrow
+/// screens. Keys: `fees-<list>-pagination`, `fees-<list>-page-size`.
+class _FeePaginationControls extends StatelessWidget {
+  const _FeePaginationControls({required this.list, required this.pager, required this.total, required this.onChanged});
+
+  final String list;
+  final _ListPager pager;
+  final int total;
+  final void Function(VoidCallback update) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    const label = TextStyle(fontSize: 13, color: AppColors.textSecondary);
+    return Wrap(
+      key: Key('fees-$list-pagination'),
+      spacing: 12,
+      runSpacing: 4,
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text('Showing ${pager.start + 1}–${pager.end(total)} of $total', style: label),
+        Wrap(
+          spacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            const Text('Per page', style: label),
+            DropdownButton<int>(
+              key: Key('fees-$list-page-size'),
+              value: pager.pageSize,
+              underline: const SizedBox.shrink(),
+              items: [for (final size in _ListPager.pageSizes) DropdownMenuItem(value: size, child: Text('$size'))],
+              onChanged: (size) => onChanged(() => pager.pageSize = size ?? pager.pageSize),
+            ),
+            IconButton(
+              tooltip: 'Previous page',
+              icon: const Icon(Icons.chevron_left),
+              onPressed: pager.page > 0 ? () => onChanged(() => pager.page--) : null,
+            ),
+            Text('Page ${pager.page + 1} of ${pager.pageCount}', style: label),
+            IconButton(
+              tooltip: 'Next page',
+              icon: const Icon(Icons.chevron_right),
+              onPressed: pager.page < pager.pageCount - 1 ? () => onChanged(() => pager.page++) : null,
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

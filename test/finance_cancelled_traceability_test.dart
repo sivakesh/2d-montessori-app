@@ -8,6 +8,9 @@
 //   NEEDS REVIEW (still counted); unclear records are listed, not counted.
 // - Count and amount equal the rows listed; balances are unchanged;
 //   lookup failures never show a total.
+// - Type filter (All / Income / Expenses / Salary) narrows only the rows
+//   shown and the count/amount beneath them; traceability details and the
+//   "Needs review — not counted" section stay visible.
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -291,5 +294,120 @@ void main() {
     await tester.tap(card);
     await tester.pumpAndSettle();
     expect(find.text('Cancelled / Voided Transactions'), findsOneWidget);
+  });
+
+  group('type filter', () {
+    Finder filterChip(String label) => find.descendant(
+          of: find.byKey(const Key('cancelled-type-filter')),
+          matching: find.widgetWithText(ChoiceChip, label),
+        );
+    Future<void> selectFilter(WidgetTester tester, String label) async {
+      await tester.tap(filterChip(label));
+      await tester.pumpAndSettle();
+    }
+
+    int rows(String typeLabel) => find.textContaining('$typeLabel • ').evaluate().length;
+
+    late String expensePaymentId;
+    late String receiptId;
+
+    Future<void> seedAllTypes() async {
+      await finance.voidIncome(await manualIncome(2000, title: 'Test 2'));
+      await finance.voidIncome(await manualIncome(4000));
+      receiptId = await collect(10000);
+      await fees.voidReceipt(receiptId);
+      final expense = await invoicePayment(2000, invoiceNo: 'INV-00010013');
+      expensePaymentId = expense.paymentId;
+      await finance.reverseExpenseInvoicePayment(paymentId: expense.paymentId, reason: 'Recorded by mistake');
+      // No app workflow reverses salary payments; a record in that state is seeded.
+      final salary = await invoicePayment(5000, type: 'salary', invoiceNo: 'INV-00010014');
+      final salaryLedger = (await doc('finance_income/${salary.paymentId}'))['ledgerEntryId'] as String;
+      await firestore.doc('finance_income/${salary.paymentId}').update({'isDeleted': true});
+      await firestore.doc('finance_ledger/$salaryLedger').update({'status': 'cancelled'});
+    }
+
+    testWidgets('All shows every transaction; Income, Expenses and Salary show only their types', (tester) async {
+      await seedAllTypes();
+      final s = await summary();
+      expect(s.count, 5);
+      expect(s.originalAmount, 23000);
+      await openList(tester);
+
+      expect(tester.widget<ChoiceChip>(filterChip('All')).selected, isTrue);
+      expect([rows('Manual income'), rows('Fee collection'), rows('Expense payment'), rows('Salary payment')], [2, 1, 1, 1]);
+      expect(find.text('Counted: 5 transactions, ₹23000 in total — the sum of the amounts listed above.'), findsOneWidget);
+
+      await selectFilter(tester, 'Income');
+      expect(tester.widget<ChoiceChip>(filterChip('Income')).selected, isTrue);
+      expect([rows('Manual income'), rows('Fee collection'), rows('Expense payment'), rows('Salary payment')], [2, 1, 0, 0]);
+      expect(find.text('Original amount'), findsNWidgets(3));
+      expect(
+        find.text('Income: 3 transactions, ₹16000 in total — the sum of the amounts listed above. All types: 5, ₹23000.'),
+        findsOneWidget,
+      );
+
+      await selectFilter(tester, 'Expenses');
+      expect([rows('Manual income'), rows('Fee collection'), rows('Expense payment'), rows('Salary payment')], [0, 0, 1, 0]);
+      expect(
+        find.text('Expenses: 1 transaction, ₹2000 in total — the sum of the amounts listed above. All types: 5, ₹23000.'),
+        findsOneWidget,
+      );
+
+      await selectFilter(tester, 'Salary');
+      expect([rows('Manual income'), rows('Fee collection'), rows('Expense payment'), rows('Salary payment')], [0, 0, 0, 1]);
+      expect(
+        find.text('Salary: 1 transaction, ₹5000 in total — the sum of the amounts listed above. All types: 5, ₹23000.'),
+        findsOneWidget,
+      );
+
+      await selectFilter(tester, 'All');
+      expect([rows('Manual income'), rows('Fee collection'), rows('Expense payment'), rows('Salary payment')], [2, 1, 1, 1]);
+      expect(find.text('Counted: 5 transactions, ₹23000 in total — the sum of the amounts listed above.'), findsOneWidget);
+      // The underlying summary is untouched by filtering.
+      expect((await summary()).count, 5);
+    });
+
+    testWidgets('each row keeps its heading, a type chip, sourceLabel and all traceability details when filtered', (tester) async {
+      await seedAllTypes();
+      final receiptNo = (await doc('fee_receipts/$receiptId'))['receiptNo'] as String;
+      final expenseLedger = (await doc('finance_income/$expensePaymentId'))['ledgerEntryId'] as String;
+      await openList(tester);
+
+      await selectFilter(tester, 'Expenses');
+      const heading = 'Expense payment • Expense Payment - Party';
+      for (final text in [
+        'EXPENSES', 'Finance → Expenses', 'INV-00010013', 'Invoice ID', 'Invoice status', 'Reference not recorded',
+        'Record ID', expensePaymentId, '$expenseLedger (cancelled)', 'Original date', 'Cancelled on', '₹2000',
+        'Recorded by mistake', 'Reversed',
+      ]) {
+        expect(inRow(heading, text), findsOneWidget, reason: text);
+      }
+
+      await selectFilter(tester, 'Income');
+      final feeHeading = find.textContaining('Fee collection • ').evaluate().single.widget as Text;
+      for (final text in ['INCOME', 'Fees', receiptNo, 'Collection ID', receiptId, 'Finance record ID', 'Receipt status']) {
+        expect(inRow(feeHeading.data!, text), findsOneWidget, reason: text);
+      }
+      expect(inRow('Manual income • Test 2', 'INCOME'), findsOneWidget);
+      expect(inRow('Manual income • Test 2', 'Finance → Income'), findsOneWidget);
+
+      await selectFilter(tester, 'Salary');
+      expect(inRow('Salary payment • Salary Payment - Party', 'SALARY'), findsOneWidget);
+      expect(inRow('Salary payment • Salary Payment - Party', 'Finance → Salary'), findsOneWidget);
+      expect(inRow('Salary payment • Salary Payment - Party', 'INV-00010014'), findsOneWidget);
+    });
+
+    testWidgets('a counted record needing review stays visible with its note under its filter', (tester) async {
+      final receipt = await collect(1500);
+      await fees.voidReceipt(receipt);
+      await firestore.doc('fee_receipts/$receipt').delete();
+      await openList(tester);
+      await selectFilter(tester, 'Income');
+      expect(find.text('NEEDS REVIEW'), findsOneWidget);
+      expect(find.textContaining('Still counted'), findsOneWidget);
+      await selectFilter(tester, 'Expenses');
+      expect(find.text('NEEDS REVIEW'), findsNothing);
+      expect(find.text('No cancelled or voided expense transactions.'), findsOneWidget);
+    });
   });
 }

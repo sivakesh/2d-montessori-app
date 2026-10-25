@@ -506,10 +506,243 @@ class FinanceService {
     return doc.id;
   }
 
+  /// Which kinds of Finance record refer to [category], as plain labels
+  /// (empty when it is unused). Transactions store the category both by id
+  /// (`categoryId`: income, direct expenses, ledger) and by name
+  /// (`categoryName`; expense invoices store only the name, and their edit
+  /// dialog re-selects the category by that name), so both are checked —
+  /// voided/cancelled records included, as they are kept for audit. One
+  /// `limit(1)` query per check; nothing is changed.
+  Future<List<String>> categoryReferences(FinanceCategoryModel category) async {
+    final name = category.name.trim();
+    Future<bool> used(CollectionReference<Map<String, dynamic>> c, {bool byId = true}) async {
+      if (byId && (await c.where('categoryId', isEqualTo: category.id).limit(1).get()).docs.isNotEmpty) return true;
+      if (name.isEmpty) return false;
+      return (await c.where('categoryName', isEqualTo: name).limit(1).get()).docs.isNotEmpty;
+    }
+
+    return [
+      if (await used(_income)) 'income entries',
+      if (await used(_expenses)) 'expense records',
+      if (await used(_invoices, byId: false)) 'expense invoices',
+      if (await used(_ledger)) 'ledger entries',
+    ];
+  }
+
+  /// Updates a non-default category's name, type and active flag.
+  /// - Name is required (trimmed); no other category of the same type may
+  ///   have the same name (case-insensitive).
+  /// - A category in use keeps its name and type (renaming would detach
+  ///   invoices that refer to it by name; a type change would reclassify
+  ///   history); it can still be deactivated, which hides it from new
+  ///   entries while existing records keep it.
+  /// - Default (`isSystem`) categories can't be changed.
+  /// Transactions are never modified.
+  Future<void> updateCategory({
+    required String id,
+    required String name,
+    required String type,
+    required bool isActive,
+  }) async {
+    final ref = _categories.doc(id);
+    final snap = await ref.get();
+    final data = snap.data();
+    if (!snap.exists || data == null) throw StateError('Category not found.');
+    final current = FinanceCategoryModel.fromMap(snap.id, data);
+    if (current.isSystem) throw StateError('Default categories can\'t be changed.');
+    final newName = name.trim();
+    if (newName.isEmpty) throw StateError('Category name is required.');
+    if (type != 'income' && type != 'expense') throw StateError('Category type must be income or expense.');
+    final all = await _categories.get();
+    final duplicate = all.docs.any((d) =>
+        d.id != id &&
+        (d.data()['name']?.toString().trim().toLowerCase() ?? '') == newName.toLowerCase() &&
+        (d.data()['type']?.toString() ?? 'income') == type);
+    if (duplicate) throw StateError('Another $type category is already named "$newName".');
+    if (newName != current.name.trim() || type != current.type) {
+      final refs = await categoryReferences(current);
+      if (refs.isNotEmpty) {
+        throw StateError(
+          '"${current.name}" is used by ${refs.join(', ')}, so its name and type can\'t be changed. '
+          'You can deactivate it instead.',
+        );
+      }
+    }
+    await ref.set({
+      'name': newName,
+      'type': type,
+      'isActive': isActive,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  /// Deletes a category only when nothing refers to it (see
+  /// [categoryReferences]) and it isn't a default category, so no
+  /// transaction is left pointing at a missing category. A category in use
+  /// should be deactivated instead ([updateCategory] with `isActive: false`).
+  /// There is a brief window between the check and the delete in which a new
+  /// transaction could pick the category; such a record still keeps its own
+  /// copy of the category name.
+  Future<void> deleteCategory(String id) async {
+    final ref = _categories.doc(id);
+    final snap = await ref.get();
+    final data = snap.data();
+    if (!snap.exists || data == null) throw StateError('Category not found.');
+    final category = FinanceCategoryModel.fromMap(snap.id, data);
+    if (category.isSystem) throw StateError('Default categories can\'t be deleted.');
+    final refs = await categoryReferences(category);
+    if (refs.isNotEmpty) {
+      throw StateError(
+        '"${category.name}" is used by ${refs.join(', ')}, so it can\'t be deleted without leaving '
+        'those records pointing at a missing category. Deactivate it instead to hide it from new entries.',
+      );
+    }
+    await ref.delete();
+  }
+
   Future<String> createAccount(FinanceAccountModel account) async {
     final doc = _accounts.doc();
     await doc.set(account.toMap());
     return doc.id;
+  }
+
+  /// Account types offered by the Add/Edit Account form.
+  static const accountTypes = ['cash', 'bank', 'upi', 'wallet', 'other'];
+
+  /// The payment types (cash / bank / upi, see [_accountTypeForPaymentMode])
+  /// whose payments are routed to an active account of that type by
+  /// [_matchAccountForPaymentMode].
+  static const _paymentTypes = ['cash', 'bank', 'upi'];
+
+  static bool _servesPaymentType(String accountType, String paymentType) =>
+      accountType.toLowerCase().contains(paymentType);
+
+  /// What depends on [account] (read-only; one `limit(1)` query per record
+  /// collection):
+  /// - Finance records that store its `accountId` — ledger entries, income
+  ///   (manual, fee collection and invoice payments), direct expenses and
+  ///   salary payments — voided/cancelled ones included, as they are kept
+  ///   for audit and still point at the account;
+  /// - the payment types it is the only active account for, and whether it
+  ///   is the last active account (new payments are routed to an active
+  ///   account by type, falling back to any active one).
+  Future<FinanceAccountUsage> accountUsage(FinanceAccountModel account) async {
+    Future<bool> used(CollectionReference<Map<String, dynamic>> c) async =>
+        (await c.where('accountId', isEqualTo: account.id).limit(1).get()).docs.isNotEmpty;
+    final references = [
+      if (await used(_ledger)) 'ledger entries',
+      if (await used(_income)) 'income and payment records',
+      if (await used(_expenses)) 'expense records',
+      if (await used(_salary)) 'salary payment records',
+    ];
+    final others = (await _accounts.where('isActive', isEqualTo: true).get())
+        .docs
+        .where((d) => d.id != account.id)
+        .map((d) => d.data()['type']?.toString() ?? '')
+        .toList();
+    return FinanceAccountUsage(
+      references: references,
+      onlyActiveFor: account.isActive
+          ? [
+              for (final t in _paymentTypes)
+                if (_servesPaymentType(account.type, t) && !others.any((o) => _servesPaymentType(o, t))) t,
+            ]
+          : const [],
+      isLastActive: account.isActive && others.isEmpty,
+      openingBalance: account.openingBalance,
+      currentBalance: account.currentBalance,
+    );
+  }
+
+  /// Edits an account in place (same document id; transactions are never
+  /// touched — they keep their own `accountId` and saved `accountName`).
+  /// - Name is required (trimmed) and unique across accounts
+  ///   (case-insensitive). Balances are worked out by id and type, never by
+  ///   name, so a rename is safe; existing records keep the name they were
+  ///   saved with.
+  /// - Type and opening balance can change only while no Finance record
+  ///   uses the account (a type change would move its history between
+  ///   Cash/Bank/UPI; an opening-balance change would rewrite its closing
+  ///   balance). A new opening balance moves the current balance by the same
+  ///   difference.
+  /// - It can't stop being the only active account for a payment type (by
+  ///   type change or deactivation), nor can the last active account be
+  ///   deactivated, since new payments would then go to another account
+  ///   type or fail.
+  Future<void> updateAccount({
+    required String id,
+    required String name,
+    required String type,
+    required double openingBalance,
+    required bool isActive,
+  }) async {
+    final ref = _accounts.doc(id);
+    final snap = await ref.get();
+    final data = snap.data();
+    if (!snap.exists || data == null) throw StateError('Account not found.');
+    final current = FinanceAccountModel.fromMap(snap.id, data);
+    final newName = name.trim();
+    if (newName.isEmpty) throw StateError('Account name is required.');
+    if (type != current.type && !accountTypes.contains(type)) throw StateError('Choose a valid account type.');
+    if (!openingBalance.isFinite) throw StateError('Opening balance must be a number.');
+    final all = await _accounts.get();
+    final duplicate = all.docs.any((d) => d.id != id && (d.data()['name']?.toString().trim().toLowerCase() ?? '') == newName.toLowerCase());
+    if (duplicate) throw StateError('Another account is already named "$newName".');
+
+    final typeChanged = type != current.type;
+    final openingChanged = openingBalance != current.openingBalance;
+    final usage = await accountUsage(current);
+    if ((typeChanged || openingChanged) && usage.references.isNotEmpty) {
+      throw StateError(
+        '"${current.name}" is used by ${usage.references.join(', ')}, so its type and opening balance can\'t be '
+        'changed without changing past balances. You can still rename or deactivate it.',
+      );
+    }
+    final lost = [for (final t in usage.onlyActiveFor) if (!isActive || !_servesPaymentType(type, t)) t];
+    if (lost.isNotEmpty) {
+      throw StateError(
+        '"${current.name}" is the only active ${lost.join('/')} account, so new ${lost.join('/')} payments '
+        'would go to a different account. Add or activate another ${lost.join('/')} account first.',
+      );
+    }
+    if (!isActive && usage.isLastActive) {
+      throw StateError('"${current.name}" is the last active account; new payments need at least one.');
+    }
+
+    await _firestore.runTransaction((txn) async {
+      final live = await txn.get(ref);
+      final liveData = live.data();
+      if (!live.exists || liveData == null) throw StateError('Account not found.');
+      double numVal(dynamic v) => v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0;
+      txn.set(ref, {
+        ...liveData,
+        'name': newName,
+        'type': type,
+        'openingBalance': openingBalance,
+        if (openingChanged) 'currentBalance': numVal(liveData['currentBalance']) + (openingBalance - numVal(liveData['openingBalance'])),
+        'isActive': isActive,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  /// Deletes an account only when nothing depends on it (see
+  /// [FinanceAccountUsage.deleteBlockedReason]): no Finance record (voided
+  /// ones included) points at it, its opening and current balances are
+  /// zero (so no total changes), and it isn't required for routing new
+  /// payments. Otherwise it should be deactivated instead, where allowed.
+  /// There is a brief window between the check and the delete in which a new
+  /// payment could pick the account; such a record keeps its own copy of the
+  /// account name.
+  Future<void> deleteAccount(String id) async {
+    final ref = _accounts.doc(id);
+    final snap = await ref.get();
+    final data = snap.data();
+    if (!snap.exists || data == null) throw StateError('Account not found.');
+    final usage = await accountUsage(FinanceAccountModel.fromMap(snap.id, data));
+    final reason = usage.deleteBlockedReason(data['name']?.toString() ?? 'This account');
+    if (reason != null) throw StateError(reason);
+    await ref.delete();
   }
 
   Future<String> createVendor(VendorModel vendor) async {
@@ -822,11 +1055,16 @@ class FinanceService {
   /// exceeding the invoice. Raising/editing an invoice never moves money,
   /// so no ledger or account balance changes here.
   ///
+  /// [partyId] is the selected vendor's id (`vendors` doc id); when null the
+  /// invoice's stored `partyId` is left exactly as it is, so legacy invoices
+  /// that only carry a vendor name keep it.
+  ///
   /// Writes a full merged map inside a transaction rather than
   /// `SetOptions(merge: true)`, for the same fake_cloud_firestore reason
   /// documented on [updateIncome].
   Future<void> updateExpenseInvoice({
     required String id,
+    String? partyId,
     required String partyName,
     required String categoryName,
     required DateTime invoiceDate,
@@ -862,6 +1100,7 @@ class FinanceService {
       final status = balanceAmount == 0 ? 'paid' : paidAmount > 0 ? 'partial' : 'unpaid';
       txn.set(invoiceRef, {
         ...current,
+        'partyId': ?partyId,
         'partyName': partyName,
         'categoryName': categoryName,
         'invoiceDate': invoiceDate,
@@ -1708,4 +1947,51 @@ class FeeIncomeLink {
   /// is no ledger entry or no stored amount).
   final double? incomeAmount;
   final double? ledgerAmount;
+}
+
+/// See [FinanceService.accountUsage].
+class FinanceAccountUsage {
+  const FinanceAccountUsage({
+    required this.references,
+    required this.onlyActiveFor,
+    required this.isLastActive,
+    required this.openingBalance,
+    required this.currentBalance,
+  });
+
+  /// Kinds of Finance record that point at the account (empty when none).
+  final List<String> references;
+
+  /// Payment types (cash/bank/upi) it is the only active account for.
+  final List<String> onlyActiveFor;
+  final bool isLastActive;
+  final double openingBalance;
+  final double currentBalance;
+
+  /// True when it must stay active (and can't be deleted).
+  bool get isRequired => onlyActiveFor.isNotEmpty || isLastActive;
+
+  /// Why it can't be deactivated, or null.
+  String? deactivateBlockedReason(String name) {
+    if (onlyActiveFor.isNotEmpty) {
+      final types = onlyActiveFor.join('/');
+      return '"$name" is the only active $types account, so new $types payments would go to a different '
+          'account. Add or activate another $types account first.';
+    }
+    if (isLastActive) return '"$name" is the last active account; new payments need at least one.';
+    return null;
+  }
+
+  /// Why it can't be deleted, or null when deleting is safe.
+  String? deleteBlockedReason(String name) {
+    if (references.isNotEmpty) {
+      return '"$name" is used by ${references.join(', ')}, so deleting it would leave those records '
+          'pointing at a missing account and change the balances they count towards.';
+    }
+    if (openingBalance != 0 || currentBalance != 0) {
+      return '"$name" has an opening balance of ₹${openingBalance.toStringAsFixed(0)} and a current balance of '
+          '₹${currentBalance.toStringAsFixed(0)}, so deleting it would change the Closing Balance.';
+    }
+    return deactivateBlockedReason(name);
+  }
 }
