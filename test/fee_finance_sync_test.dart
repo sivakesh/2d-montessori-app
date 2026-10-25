@@ -24,6 +24,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:montessori_app/modules/fees/services/fee_service.dart';
 import 'package:montessori_app/modules/finance/services/finance_service.dart';
 
+import 'support/buffered_transaction_firestore.dart';
+
 Future<void> _seedClass(FakeFirebaseFirestore firestore, {String id = 'class-1'}) async {
   await firestore.collection('classes').doc(id).set({'name': 'Mont 1', 'isActive': true});
 }
@@ -73,7 +75,7 @@ class _Services {
 }
 
 Future<_Services> _setup() async {
-  final firestore = FakeFirebaseFirestore();
+  final firestore = BufferedTransactionFirestore(); // honours transactional merge writes, like real Firestore
   final auth = MockFirebaseAuth();
   final finance = FinanceService(firestore: firestore, auth: auth);
   await finance.ensureDefaults();

@@ -389,15 +389,13 @@ void main() {
       expect(find.text(DateFormat('dd MMM yyyy').format(tomorrow)), findsNothing);
     });
 
-    testWidgets('Salary tab is unchanged: no Edit/Delete, no Payment Date', (tester) async {
+    // Payment Date on Salary is covered in finance_salary_payment_date_test.dart.
+    testWidgets('Salary tab has no Edit/Delete actions', (tester) async {
       await service.createSalaryInvoice(_invoicePayload(amount: 1000, partyName: 'Staff A'));
       await pumpTab(tester, 'Salary');
 
       expect(find.byIcon(Icons.edit_outlined), findsNothing);
       expect(find.byIcon(Icons.delete_outline), findsNothing);
-      await tester.tap(find.widgetWithText(FilledButton, 'Pay'));
-      await tester.pumpAndSettle();
-      expect(find.text('Payment Date *'), findsNothing);
     });
   });
 }

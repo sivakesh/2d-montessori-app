@@ -7,7 +7,9 @@ import '../../../core/theme/app_sizes.dart';
 import '../../../core/widgets/responsive_dialog_shell.dart';
 import '../../admin/ui/admin_fab.dart';
 import '../../admin/ui/admin_layout.dart';
+import '../../fees/services/fee_service.dart';
 import '../models/finance_account_model.dart';
+import '../models/finance_cancelled_transactions_model.dart';
 import '../models/finance_category_model.dart';
 import '../models/finance_dashboard_summary_model.dart';
 import '../models/finance_invoice_model.dart';
@@ -26,9 +28,15 @@ import 'dialogs/add_salary_payment_dialog.dart';
 import 'dialogs/add_vendor_dialog.dart';
 
 class AdminFinanceScreen extends StatefulWidget {
-  const AdminFinanceScreen({super.key, FinanceService? service}) : _service = service;
+  const AdminFinanceScreen({super.key, FinanceService? service, FeeService? feeService})
+      : _service = service,
+        _feeService = feeService;
 
   final FinanceService? _service;
+
+  /// Optional injection seam (tests). Used only to void Fee-Collection-
+  /// sourced income entries through the Fees module's own void workflow.
+  final FeeService? _feeService;
 
   @override
   State<AdminFinanceScreen> createState() => _AdminFinanceScreenState();
@@ -36,6 +44,12 @@ class AdminFinanceScreen extends StatefulWidget {
 
 class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
   late final _service = widget._service ?? FinanceService();
+
+  // Built only when a fee-linked entry is actually voided: FeeService's
+  // constructor reaches Firebase Storage immediately, which nothing else on
+  // this screen needs.
+  FeeService? _defaultFeeService;
+  FeeService get _feeService => widget._feeService ?? (_defaultFeeService ??= FeeService(financeService: _service));
   int _tab = 0;
 
   @override
@@ -92,6 +106,7 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
   }
 
   Future<void> _voidIncome(FinanceIncomeModel income) async {
+    if (income.sourceModule == 'fees') return _voidFeeLinkedIncome(income);
     if (!await _confirmVoidIncome(income)) return;
     try {
       await _service.voidIncome(income.id);
@@ -106,6 +121,76 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
           SnackBar(content: Text('Failed to void income entry: $e')),
         );
       }
+    }
+  }
+
+  /// A Fee-Collection-sourced entry is never voided on the Finance side
+  /// alone (FinanceService.voidIncome refuses it). Instead this runs the
+  /// Fees module's own void (FeeService.voidReceipt) for the linked
+  /// collection, which reverses this Finance entry and its ledger entry and
+  /// restores the fee assignment balance — exactly what voiding it from
+  /// Fees -> Collections does. voidReceipt checks both sides first: if the
+  /// collection was already voided in Fees but this entry was left active
+  /// (an earlier partial failure), only the Finance side is brought in
+  /// line; missing, ambiguous or inconsistent records are refused before
+  /// anything is written. A missing collection is reported up front.
+  Future<void> _voidFeeLinkedIncome(FinanceIncomeModel income) async {
+    void showMessage(String text) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    }
+
+    final collectionId = income.sourceId;
+    final receipt = collectionId.isEmpty ? null : await _feeService.getReceiptById(collectionId);
+    if (!mounted) return;
+    if (receipt == null) {
+      showMessage(
+        'The linked Fee Collection could not be found, so this entry cannot be voided safely. '
+        'Nothing was changed.',
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Void Fee Collection'),
+        content: Text(
+          'This income was generated from Fee Collection '
+          '${receipt.receiptNo.isEmpty ? '' : '${receipt.receiptNo} '}'
+          '(₹${income.amount.toStringAsFixed(0)}'
+          '${receipt.studentName.isEmpty ? '' : ' from ${receipt.studentName}'}). '
+          'Voiding it voids that Fee Collection in Fees — adding the amount back '
+          "to the student's outstanding fee balance — and cancels this Finance "
+          'entry and its ledger entry. The original records are preserved for '
+          'audit.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Void'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      final outcome = await _feeService.voidReceipt(collectionId, expectedFinanceIncomeId: income.id);
+      showMessage(switch (outcome) {
+        FeeVoidOutcome.voided => 'Fee Collection voided',
+        FeeVoidOutcome.financeReconciled =>
+          'The Fee Collection was already voided; this Finance entry has now been voided to match.',
+      });
+    } on FeeVoidException catch (e) {
+      // Refused before anything was written; the message says what to do.
+      showMessage(e.message);
+    } catch (e) {
+      showMessage('Failed to void Fee Collection: $e');
     }
   }
 
@@ -429,6 +514,270 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
   }
 }
 
+const _warningColor = Color(0xFFB26A00);
+
+/// Whether the Unclassified card/note is shown: when unclassified balances
+/// or activity exist, even if they net to ₹0.
+bool _showsUnclassified(FinanceDashboardSummaryModel summary) =>
+    summary.hasUnclassifiedActivity || summary.unclassifiedBalance != 0;
+
+/// Shown under the Cash/Bank/UPI cards on both the Dashboard and the
+/// Ledger, straight from [FinanceDashboardSummaryModel] (nothing is
+/// recalculated here): how the account balances add up to the Closing
+/// Balance and, when there is one, what the unclassified amount is.
+class _AccountBalancesReconciliation extends StatelessWidget {
+  const _AccountBalancesReconciliation({required this.summary});
+
+  final FinanceDashboardSummaryModel summary;
+
+  @override
+  Widget build(BuildContext context) {
+    String amount(double v) => '₹${v.toStringAsFixed(0)}';
+    final unclassified = summary.unclassifiedBalance;
+    final showUnclassified = _showsUnclassified(summary);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        Text(
+          'Closing Balance ${amount(summary.closingBalance)} = Cash ${amount(summary.cashBalance)}'
+          ' + Bank ${amount(summary.bankBalance)} + UPI ${amount(summary.upiBalance)}'
+          '${showUnclassified ? ' + Unclassified ${amount(unclassified)}' : ''}',
+          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+        ),
+        if (showUnclassified) ...[
+          const SizedBox(height: 4),
+          Text(
+            '${amount(unclassified)} is not shown in Cash, Bank or UPI'
+            '${unclassified == 0 ? ' (its opening balances and transactions net to ₹0)' : ''}: it is the opening balances '
+            "and/or transactions of accounts whose type can't be classified as Cash, Bank or UPI, "
+            'or whose account is missing'
+            '${summary.unclassifiedOpeningBalance != 0 ? ' (includes ${amount(summary.unclassifiedOpeningBalance)} opening balance)' : ''}.',
+            style: const TextStyle(fontSize: 12, color: _warningColor),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Dashboard card: how many unique transactions were cancelled/voided and
+/// their original amount, from FinanceService.watchCancelledTransactions.
+/// Informational only — those amounts are already excluded from every
+/// total and balance above. Shows loading and failure explicitly rather
+/// than a zero; tapping opens a read-only list.
+class _CancelledTransactionsCard extends StatefulWidget {
+  const _CancelledTransactionsCard({required this.service});
+
+  final FinanceService service;
+
+  @override
+  State<_CancelledTransactionsCard> createState() => _CancelledTransactionsCardState();
+}
+
+class _CancelledTransactionsCardState extends State<_CancelledTransactionsCard> {
+  late final Stream<FinanceCancelledTransactionsSummary> _summary = widget.service.watchCancelledTransactions();
+
+  static const _accent = Color(0xFF607D8B);
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<FinanceCancelledTransactionsSummary>(
+      stream: _summary,
+      builder: (context, snap) {
+        final data = snap.data;
+        Widget metric(String value, String label) => Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: AppColors.textPrimary, letterSpacing: -0.3),
+                ),
+                const SizedBox(height: 2),
+                Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+              ],
+            );
+        final Widget body;
+        if (snap.hasError) {
+          body = const Text(
+            "Couldn't load cancelled transactions. Reopen the Dashboard to try again.",
+            style: TextStyle(fontSize: 13, color: _warningColor),
+          );
+        } else if (data == null) {
+          body = const Text('Loading…', style: TextStyle(fontSize: 13, color: AppColors.textSecondary));
+        } else {
+          body = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 28,
+                runSpacing: 8,
+                children: [
+                  metric('${data.count}', 'Cancelled count'),
+                  metric('₹${data.originalAmount.toStringAsFixed(0)}', 'Original amount cancelled'),
+                ],
+              ),
+              if (data.exclusions.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '${data.exclusions.length} record${data.exclusions.length == 1 ? '' : 's'} with an unclear status not counted',
+                  style: const TextStyle(fontSize: 12, color: _warningColor),
+                ),
+              ],
+            ],
+          );
+        }
+        return InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: data == null ? null : () => showDialog<void>(
+                context: context,
+                builder: (_) => _CancelledTransactionsDialog(summary: data),
+              ),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 112),
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(color: _accent.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)),
+                      child: const Icon(Icons.block_outlined, color: _accent, size: 19),
+                    ),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Cancelled / Voided Transactions',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                body,
+                const SizedBox(height: 8),
+                const Text(
+                  'Not included in any total or balance.',
+                  style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CancelledTransactionsDialog extends StatelessWidget {
+  const _CancelledTransactionsDialog({required this.summary});
+
+  final FinanceCancelledTransactionsSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    String day(DateTime? d) => d == null ? 'Not recorded' : DateFormat('dd MMM yyyy').format(d);
+    Widget row(String label, String value) => Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(width: 120, child: Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary))),
+              Expanded(child: Text(value, style: const TextStyle(fontSize: 12, color: AppColors.textPrimary))),
+            ],
+          ),
+        );
+    return ResponsiveDialogShell.form(
+      desktopWidth: 560,
+      desktopHeight: 620,
+      title: 'Cancelled / Voided Transactions',
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'Each voided or reversed Finance record is counted once, at its original amount; its ledger line and '
+            'Fees receipt are not counted again. These amounts are not included in any total or balance.',
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          ),
+          const Divider(height: 24),
+          if (summary.transactions.isEmpty)
+            const Text('No cancelled or voided transactions.', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          for (final t in summary.transactions)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text('${t.typeLabel} • ${t.title}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                      if (t.reviewNote.isNotEmpty) const FinanceStatusChip(label: 'NEEDS REVIEW', color: _warningColor),
+                    ],
+                  ),
+                  row('Source', t.sourceLabel),
+                  if (t.linkedDocumentLabel.isNotEmpty)
+                    row(
+                      t.linkedDocumentLabel,
+                      t.linkedDocumentNumber.isNotEmpty
+                          ? t.linkedDocumentNumber
+                          : t.linkedDocumentFound
+                              ? '${t.linkedDocumentLabel} number not recorded'
+                              : '${t.linkedDocumentLabel} record not found',
+                    ),
+                  if (t.linkedDocumentLabel == 'Receipt' && t.linkedDocumentId.isNotEmpty) row('Collection ID', t.linkedDocumentId),
+                  if (t.linkedDocumentLabel == 'Invoice' && t.linkedDocumentId.isNotEmpty) row('Invoice ID', t.linkedDocumentId),
+                  if (t.linkedDocumentStatus.isNotEmpty) row('${t.linkedDocumentLabel} status', t.linkedDocumentStatus),
+                  row('Reference', t.reference.isEmpty ? 'Reference not recorded' : t.reference),
+                  row(t.linkedDocumentLabel == 'Receipt' ? 'Finance record ID' : 'Record ID', t.id),
+                  row('Ledger entry', t.ledgerId.isEmpty ? 'None linked' : '${t.ledgerId} (${t.ledgerStatus.isEmpty ? 'not found' : t.ledgerStatus})'),
+                  row('Original date', day(t.originalDate)),
+                  row('Cancelled on', day(t.cancelledAt)),
+                  row('Original amount', '₹${t.amount.toStringAsFixed(0)}'),
+                  row('Reason', t.reason.isEmpty ? 'Not recorded' : t.reason),
+                  row('Status', t.statusLabel),
+                  if (t.reviewNote.isNotEmpty) row('Needs review', '${t.reviewNote}. Still counted: the voided Finance record is what totals used.'),
+                ],
+              ),
+            ),
+          if (summary.transactions.isNotEmpty)
+            Text(
+              'Counted: ${summary.count} transaction${summary.count == 1 ? '' : 's'}, '
+              '₹${summary.originalAmount.toStringAsFixed(0)} in total — the sum of the amounts listed above.',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+            ),
+          if (summary.exclusions.isNotEmpty) ...[
+            const Divider(height: 24),
+            const Text('Needs review — not counted', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _warningColor)),
+            for (final e in summary.exclusions)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  '${e.title}: ${e.reason}. Record ID ${e.id} (${e.collection}).',
+                  style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                ),
+              ),
+          ],
+        ],
+      ),
+      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
+    );
+  }
+}
+
 /// The Finance "Dashboard" tab: a premium at-a-glance overview built purely
 /// from FinanceService's existing streams — no new business logic, no new
 /// Firestore queries beyond the ones already used by the Expense/Salary tabs.
@@ -475,7 +824,7 @@ class _DashboardTab extends StatelessWidget {
                             color: const Color(0xFFD32F2F),
                           ),
                           FinanceSummaryCard(
-                            label: 'Net Balance',
+                            label: 'Net Movement',
                             value: '₹${(summary?.netBalance ?? 0).toStringAsFixed(0)}',
                             icon: Icons.account_balance_wallet_outlined,
                             color: AppColors.secondary,
@@ -513,7 +862,21 @@ class _DashboardTab extends StatelessWidget {
                             icon: Icons.qr_code_rounded,
                             color: const Color(0xFF5E35B1),
                           ),
+                          if (summary != null && _showsUnclassified(summary))
+                            FinanceSummaryCard(
+                              label: 'Unclassified',
+                              value: '₹${summary.unclassifiedBalance.toStringAsFixed(0)}',
+                              icon: Icons.help_outline,
+                              color: _warningColor,
+                            ),
                         ],
+                      ),
+                      if (summary != null) _AccountBalancesReconciliation(summary: summary),
+                      const SizedBox(height: 16),
+                      _ResponsiveCardGrid(
+                        desktopColumns: 3,
+                        tabletColumns: 2,
+                        children: [_CancelledTransactionsCard(service: service)],
                       ),
                       const SizedBox(height: 28),
                       Row(
@@ -895,13 +1258,15 @@ class _IncomeEntryCard extends StatelessWidget {
             icon: const Icon(Icons.edit_outlined, size: 20),
             onPressed: () => onEdit(income),
           ),
-          if (!isFeeSourced)
-            IconButton(
-              tooltip: 'Void',
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.block, size: 20, color: Colors.red),
-              onPressed: () => onVoid(income),
-            ),
+          // Only active entries are listed (watchIncome filters voided
+          // ones). Fee-sourced entries are voided through their Fee
+          // Collection (see _voidFeeLinkedIncome), never Finance-only.
+          IconButton(
+            tooltip: isFeeSourced ? 'Void Fee Collection' : 'Void',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.block, size: 20, color: Colors.red),
+            onPressed: () => onVoid(income),
+          ),
         ],
       ),
     );
@@ -1005,6 +1370,7 @@ class _ExpenseTab extends StatelessWidget {
                             onCancel: () => onCancel(invoice),
                             service: service,
                             onReversePayment: onReversePayment,
+                            showPaymentDates: true,
                             partyLabel: 'Vendor',
                           ),
                         ))
@@ -1044,6 +1410,7 @@ class _InvoiceCard extends StatelessWidget {
     this.onCancel,
     this.service,
     this.onReversePayment,
+    this.showPaymentDates = false,
   });
 
   final FinanceInvoiceModel invoice;
@@ -1056,6 +1423,11 @@ class _InvoiceCard extends StatelessWidget {
   final VoidCallback? onCancel;
   final FinanceService? service;
   final Future<void> Function(FinanceIncomeModel payment)? onReversePayment;
+
+  /// Salary and Expenses: show the actual date(s) of recorded payments on
+  /// the card (read from the payment records, never from the invoice's own
+  /// dates).
+  final bool showPaymentDates;
 
   /// Edit/Delete actions — passed only by the Expenses tab; the Salary tab
   /// omits them, so its cards render exactly as before.
@@ -1130,6 +1502,10 @@ class _InvoiceCard extends StatelessWidget {
                 _AmountStat(label: 'Balance', value: invoice.balanceAmount),
               ],
             ),
+            if (showPaymentDates && service != null && invoice.paidAmount > 0) ...[
+              const SizedBox(height: 10),
+              _InvoicePaymentDatesLine(invoice: invoice, service: service!),
+            ],
             if (isCancelled && invoice.cancellationReason.isNotEmpty) ...[
               const SizedBox(height: 10),
               Text(
@@ -1193,6 +1569,97 @@ class _InvoiceCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// A payment's recorded date, or "Not recorded" for older/malformed
+/// records — never a substitute such as the invoice or creation date.
+String _formatPaymentDate(DateTime? date) =>
+    date == null ? 'Not recorded' : DateFormat('dd MMM yyyy').format(date);
+
+/// Salary/Expenses card line listing the date of each active (non-reversed) payment
+/// recorded against [invoice], oldest first. Loads once per invoice and
+/// paid amount, so it refreshes after a new payment without re-querying on
+/// every rebuild. Its states are distinct: loading shows "Loading payment
+/// date…"; a failed lookup says so and offers Retry (read-only, never a
+/// substitute date); a successful lookup with no active payment shows
+/// nothing, as before; otherwise the date(s) are listed.
+class _InvoicePaymentDatesLine extends StatefulWidget {
+  const _InvoicePaymentDatesLine({required this.invoice, required this.service});
+
+  final FinanceInvoiceModel invoice;
+  final FinanceService service;
+
+  @override
+  State<_InvoicePaymentDatesLine> createState() => _InvoicePaymentDatesLineState();
+}
+
+class _InvoicePaymentDatesLineState extends State<_InvoicePaymentDatesLine> {
+  late Future<List<FinanceIncomeModel>> _payments;
+
+  @override
+  void initState() {
+    super.initState();
+    _payments = widget.service.getInvoicePayments(widget.invoice.id);
+  }
+
+  @override
+  void didUpdateWidget(covariant _InvoicePaymentDatesLine oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.invoice.id != widget.invoice.id || oldWidget.invoice.paidAmount != widget.invoice.paidAmount) {
+      _payments = widget.service.getInvoicePayments(widget.invoice.id);
+    }
+  }
+
+  void _retry() {
+    setState(() {
+      _payments = widget.service.getInvoicePayments(widget.invoice.id);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(fontSize: 13, color: AppColors.textSecondary);
+    return FutureBuilder<List<FinanceIncomeModel>>(
+      future: _payments,
+      builder: (context, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return const Text('Loading payment date…', style: style);
+        }
+        if (snap.hasError || !snap.hasData) {
+          return Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 4,
+            children: [
+              const Text("Payment date couldn't be loaded.", style: TextStyle(fontSize: 13, color: _warningColor)),
+              TextButton(
+                onPressed: _retry,
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  minimumSize: const Size(0, 28),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text('Retry'),
+              ),
+            ],
+          );
+        }
+        final active = snap.data!.where((p) => !p.isDeleted).toList()
+          ..sort((a, b) {
+            final aDate = a.incomeDate;
+            final bDate = b.incomeDate;
+            if (aDate == null && bDate == null) return 0;
+            if (aDate == null) return 1;
+            if (bDate == null) return -1;
+            return aDate.compareTo(bDate);
+          });
+        if (active.isEmpty) return const SizedBox.shrink();
+        final text = active.length == 1
+            ? 'Payment Date: ${_formatPaymentDate(active.single.incomeDate)}'
+            : 'Payment Dates: ${active.map((p) => '₹${p.amount.toStringAsFixed(0)} on ${_formatPaymentDate(p.incomeDate)}').join(', ')}';
+        return Text(text, style: style);
+      },
     );
   }
 }
@@ -1290,7 +1757,10 @@ class _InvoiceDetailsDialog extends StatelessWidget {
                     if (snap.hasError) {
                       return const Padding(
                         padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Text("Couldn't load payments.", style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                        child: Text(
+                          "Couldn't load payments, so the payment date can't be shown. Close and reopen this invoice to try again.",
+                          style: TextStyle(fontSize: 13, color: _warningColor),
+                        ),
                       );
                     }
                     if (!snap.hasData) {
@@ -1300,6 +1770,14 @@ class _InvoiceDetailsDialog extends StatelessWidget {
                       );
                     }
                     final payments = snap.data!;
+                    final active = payments.where((p) => !p.isDeleted).toList();
+                    // Salary/Expenses: a separate Payment Date row only when
+                    // there is exactly one active payment; with several, each
+                    // payment's own date is listed below instead of implying
+                    // one shared date.
+                    final paymentDateRow = (invoice.type == 'salary' || invoice.type == 'expense') && active.length == 1
+                        ? row('Payment Date', _formatPaymentDate(active.single.incomeDate))
+                        : null;
                     if (payments.isEmpty) {
                       return const Padding(
                         padding: EdgeInsets.symmetric(vertical: 8),
@@ -1307,7 +1785,10 @@ class _InvoiceDetailsDialog extends StatelessWidget {
                       );
                     }
                     return Column(
-                      children: payments.map((p) {
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ?paymentDateRow,
+                        ...payments.map((p) {
                         final details = [
                           if (p.incomeDate != null) DateFormat('dd MMM yyyy').format(p.incomeDate!),
                           p.paymentMode,
@@ -1330,7 +1811,8 @@ class _InvoiceDetailsDialog extends StatelessWidget {
                                       child: const Text('Reverse', style: TextStyle(color: Colors.red)),
                                     ),
                         );
-                      }).toList(),
+                      }),
+                      ],
                     );
                   },
                 ),
@@ -1423,7 +1905,13 @@ class _SalaryTab extends StatelessWidget {
                 children: items
                     .map((invoice) => Padding(
                           padding: const EdgeInsets.only(bottom: 12),
-                          child: _InvoiceCard(invoice: invoice, onPay: () => onPay(invoice), partyLabel: 'Staff'),
+                          child: _InvoiceCard(
+                            invoice: invoice,
+                            onPay: () => onPay(invoice),
+                            partyLabel: 'Staff',
+                            service: service,
+                            showPaymentDates: true,
+                          ),
                         ))
                     .toList(),
               ),
@@ -1607,15 +2095,22 @@ class _LedgerTab extends StatelessWidget {
                       color: AppColors.secondary,
                     ),
                     FinanceSummaryCard(
-                      // Reuses the Dashboard's own netBalance figure rather
-                      // than recomputing a second "closing balance".
+                      // Opening balances + Net Movement, computed once in
+                      // FinanceService.watchDashboardSummary (not here).
                       label: 'Closing Balance',
-                      value: '₹${(summary?.netBalance ?? 0).toStringAsFixed(0)}',
+                      value: '₹${(summary?.closingBalance ?? 0).toStringAsFixed(0)}',
                       icon: Icons.savings_outlined,
                       color: const Color(0xFF5E35B1),
                     ),
                   ],
                 ),
+                if ((summary?.openingBalance ?? 0) != 0) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Closing Balance includes ₹${summary!.openingBalance.toStringAsFixed(0)} in account opening balances.',
+                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  ),
+                ],
                 const SizedBox(height: 28),
                 const _DashboardSectionHeader(title: 'Account Balances'),
                 const SizedBox(height: 12),
@@ -1643,6 +2138,7 @@ class _LedgerTab extends StatelessWidget {
                     ),
                   ],
                 ),
+                if (summary != null) _AccountBalancesReconciliation(summary: summary),
                 const SizedBox(height: 28),
                 const _DashboardSectionHeader(title: 'Transactions'),
                 const SizedBox(height: 12),
@@ -1844,7 +2340,7 @@ class _AccountRow extends StatelessWidget {
                       style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.textPrimary),
                     ),
                     Text(
-                      account.type.toUpperCase(),
+                      account.type.isEmpty ? 'NO TYPE · UNCLASSIFIED' : account.type.toUpperCase(),
                       style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
                     ),
                   ],
@@ -2027,13 +2523,14 @@ class _PayInvoiceDialogState extends State<_PayInvoiceDialog> {
   String _paymentMode = 'cash';
   bool _saving = false;
 
-  /// The date the payment was actually made. Offered for expense invoices
-  /// only; Salary keeps its existing "today" behaviour. Starts at now —
-  /// exactly the value previously saved — and a picked date replaces it.
+  /// The date the payment was actually made. Offered for expense and salary
+  /// invoices; any other type keeps the existing "today" behaviour. Starts
+  /// at now — exactly the value previously saved — and a picked date
+  /// replaces it.
   DateTime _paidDate = DateTime.now();
   String? _paidDateError;
 
-  bool get _showsPaymentDate => widget.invoice.type == 'expense';
+  bool get _showsPaymentDate => widget.invoice.type == 'expense' || widget.invoice.type == 'salary';
 
   @override
   void initState() {

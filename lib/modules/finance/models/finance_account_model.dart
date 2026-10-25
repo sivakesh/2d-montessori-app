@@ -27,7 +27,9 @@ class FinanceAccountModel {
     return FinanceAccountModel(
       id: id,
       name: data['name']?.toString() ?? '',
-      type: data['type']?.toString() ?? 'cash',
+      // No fallback to 'cash': a missing type is unclassified in the
+      // Finance summary, so it must not be shown as Cash either.
+      type: data['type']?.toString().trim() ?? '',
       openingBalance: numVal(data['openingBalance']),
       currentBalance: numVal(data['currentBalance']),
       isActive: data['isActive'] != false,

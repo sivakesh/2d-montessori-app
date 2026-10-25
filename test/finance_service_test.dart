@@ -19,6 +19,8 @@ import 'package:montessori_app/modules/finance/models/finance_income_model.dart'
 import 'package:montessori_app/modules/finance/services/finance_service.dart';
 import 'package:montessori_app/modules/finance/ui/admin_finance_screen.dart';
 
+import 'support/buffered_transaction_firestore.dart';
+
 class _ThrowingVoidFinanceService extends FinanceService {
   _ThrowingVoidFinanceService(FirebaseFirestore firestore) : super(firestore: firestore, auth: MockFirebaseAuth());
 
@@ -56,7 +58,7 @@ void main() {
   late FinanceService service;
 
   setUp(() async {
-    firestore = FakeFirebaseFirestore();
+    firestore = BufferedTransactionFirestore(); // honours transactional merge writes, like real Firestore
     service = FinanceService(firestore: firestore, auth: MockFirebaseAuth());
     await service.ensureDefaults();
   });
@@ -243,9 +245,13 @@ void main() {
 
   group('E. Payment mode -> account', () {
     // Each scenario gets its own fresh Firestore instance/account set so
-    // scenarios can't interact with each other.
+    // scenarios can't interact with each other. Balances are classified by
+    // the account's stored `type` (D3), so these use a Firestore double whose
+    // transactions honour SetOptions(merge: true) like real Firestore —
+    // fake_cloud_firestore's own transaction set drops every other field,
+    // which would erase the account's `type` after the first payment.
     Future<FinanceService> freshService() async {
-      final fs = FakeFirebaseFirestore();
+      final fs = BufferedTransactionFirestore();
       final svc = FinanceService(firestore: fs, auth: MockFirebaseAuth());
       await svc.ensureDefaults();
       return svc;
@@ -394,11 +400,15 @@ void main() {
       final edited = incomeModel.firstWhere((i) => i.id == id);
       expect(edited.amount, 7500.0);
 
-      // Account balance reflects the corrected amount (created at 5000,
-      // edited to 7500 -> +2500 delta applied on top of the original +5000).
+      // The edit also changed the mode cash -> upi, so (D1) the money moves
+      // with it: the original 5000 leaves Cash and the corrected 7500 lands
+      // in UPI, rather than Cash keeping a UPI payment.
       final accounts = await service.watchAccounts().first;
       final cash = accounts.firstWhere((a) => a.type == 'cash');
-      expect(cash.currentBalance, 7500.0);
+      final upi = accounts.firstWhere((a) => a.type == 'upi');
+      expect(cash.currentBalance, 0.0);
+      expect(upi.currentBalance, 7500.0);
+      expect(doc.data()!['accountId'], upi.id);
     });
 
     test('4. Unrelated Finance entries remain unchanged after an edit', () async {

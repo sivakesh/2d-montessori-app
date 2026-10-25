@@ -435,13 +435,14 @@ void main() {
       expect(invoice.balanceAmount, 500.5);
     });
 
+    // Salary shows its payment history read-only (see
+    // finance_salary_payment_date_test.dart) but never offers reversal.
     testWidgets('Salary tab has no Cancel action or payment reversal', (tester) async {
       final id = await service.createSalaryInvoice(_invoicePayload(invoiceNo: 'SAL-1', partyName: 'Staff A'));
       await pay(id, 1000, type: 'salary');
       await pumpTab(tester, 'Salary');
       expect(find.byTooltip('Cancel Invoice'), findsNothing);
       await tapAndSettle(tester, find.text('SAL-1'));
-      expect(find.text('Payments'), findsNothing);
       expect(find.widgetWithText(TextButton, 'Reverse'), findsNothing);
     });
   });
