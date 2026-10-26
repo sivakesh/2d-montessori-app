@@ -34,7 +34,7 @@ class MontessoriApp extends StatelessWidget {
       home: const AuthGate(),
       routes: {
         '/login': (context) => const LoginScreen(),
-        '/dashboard': (context) => const RoleBasedHome(),
+        '/dashboard': (context) => const DashboardRoute(),
         '/admin_dashboard': (context) => const AdminDashboardScreen(),
         '/admin_session_logs': (context) => const AdminSessionLogsScreen(),
         '/admin_profile_form': (context) => const AdminProfileForm(),
