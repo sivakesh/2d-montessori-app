@@ -1,0 +1,25 @@
+// PROPOSAL — Storage rules for website images only (docs/website_content.md).
+// NEVER deploy this file on its own: a deploy replaces ALL Storage rules.
+// Merge into the project's real rules after review. Tested against the
+// Storage emulator by test/firebase_rules/website_rules_test.py.
+//
+// Visitors load images through the download URL (with its token) stored in
+// a published media record, which Storage serves without consulting these
+// rules, so no public read rule is needed: an unpublished image's URL exists
+// only in an admin-readable record.
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isWebsiteAdmin() {
+      return request.auth != null && request.auth.token.get('role', '') == 'admin';
+    }
+
+    match /website_media/{mediaId}/{fileName} {
+      allow read: if isWebsiteAdmin();
+      allow create, update: if isWebsiteAdmin()
+        && request.resource.size < 15 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if isWebsiteAdmin();
+    }
+  }
+}

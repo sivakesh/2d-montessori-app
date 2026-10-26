@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/providers/auth_provider.dart';
 import '../../ui/admin_layout.dart';
+import '../../website/data/website_content_admin_service.dart';
+import '../../website/ui/website_content_screen.dart';
 import '../data/academic_year_service.dart';
 import '../data/school_settings_service.dart';
 import 'access_restricted_view.dart';
@@ -13,12 +15,13 @@ import 'school_settings_screen.dart';
 /// Settings landing area (AdminSidebar/mobile "More Modules" destination
 /// 11) — a small hub of settings categories. Per SETTINGS-01's scope,
 /// "School" was the first category implemented; SETTINGS-02 adds "Academic
-/// Year" alongside it. Users & Roles, Notification Settings and Application
+/// Year" alongside it, and "Website" manages the public website's images,
+/// gallery and page content. Users & Roles, Notification Settings and Application
 /// Settings remain explicitly out of scope and are not stubbed here (unlike
 /// Reports, which keeps its own separate "coming soon" placeholder on the
 /// sidebar).
 class AdminSettingsScreen extends ConsumerWidget {
-  const AdminSettingsScreen({super.key, this.service, this.academicYearService});
+  const AdminSettingsScreen({super.key, this.service, this.academicYearService, this.websiteService});
 
   /// Threaded through to the pushed [SchoolSettingsScreen] — lets tests
   /// (and any future settings category added here) inject a fake service
@@ -30,6 +33,10 @@ class AdminSettingsScreen extends ConsumerWidget {
   /// [service] above.
   final AcademicYearService? academicYearService;
 
+  /// Threaded through to the pushed [WebsiteContentScreen] — same DI shape
+  /// as [service] above.
+  final WebsiteContentAdminService? websiteService;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final role = (ref.watch(currentUserProvider)?.role ?? '').toLowerCase();
@@ -39,17 +46,18 @@ class AdminSettingsScreen extends ConsumerWidget {
       selectedIndex: 11,
       title: 'Settings',
       body: isAdmin
-          ? _SettingsList(service: service, academicYearService: academicYearService)
+          ? _SettingsList(service: service, academicYearService: academicYearService, websiteService: websiteService)
           : const AccessRestrictedView(),
     );
   }
 }
 
 class _SettingsList extends StatelessWidget {
-  const _SettingsList({this.service, this.academicYearService});
+  const _SettingsList({this.service, this.academicYearService, this.websiteService});
 
   final SchoolSettingsService? service;
   final AcademicYearService? academicYearService;
+  final WebsiteContentAdminService? websiteService;
 
   @override
   Widget build(BuildContext context) {
@@ -110,6 +118,36 @@ class _SettingsList extends StatelessWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => AcademicYearScreen(service: academicYearService)),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          color: AppColors.card,
+          child: ListTile(
+            key: const Key('settings-website'),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            leading: Container(
+              width: 40,
+              height: 40,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.photo_library_outlined, color: AppColors.primary, size: 20),
+            ),
+            title: const Text(
+              'Website',
+              style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+            ),
+            subtitle: const Text(
+              'Public website images, gallery and page content',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => WebsiteContentScreen(service: websiteService)),
             ),
           ),
         ),
