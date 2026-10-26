@@ -1,0 +1,15 @@
+{
+  "//": "Emulator-only config for test/firebase_rules/website_rules_test.py. Run with a demo- project id (see docs/website_content.md); never use it to deploy.",
+  "firestore": {
+    "rules": "website_content.firestore.rules"
+  },
+  "storage": {
+    "rules": "website_content.storage.rules"
+  },
+  "emulators": {
+    "firestore": { "host": "127.0.0.1", "port": 8085 },
+    "storage": { "host": "127.0.0.1", "port": 9195 },
+    "ui": { "enabled": false },
+    "singleProjectMode": true
+  }
+}

@@ -30,6 +30,13 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Part of the Flutter SDK (already resolved through the Firebase web
+  # plugins): Flutter's path URL strategy for clean public URLs.
+  flutter_web_plugins:
+    sdk: flutter
+  # SHA-256 of website source text (translation change detection). Pure
+  # Dart, works on the web; already resolved through the Firebase packages.
+  crypto: ^3.0.7
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

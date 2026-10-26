@@ -1,0 +1,150 @@
+// PROPOSAL — Firestore rules for the public website content only
+// (docs/website_content.md). NEVER deploy this file on its own: a deploy
+// replaces ALL Firestore rules, and this file covers only the website
+// collections. Merge these matches into the project's real rules after
+// review. Tested against the Firestore emulator by
+// test/firebase_rules/website_rules_test.py (demo project only).
+//
+// Admins are identified by a custom claim `role: 'admin'` on their Firebase
+// Auth account (set with the Admin SDK). The app's user records are keyed by
+// phone number, so rules can't look a role up by uid without it.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isWebsiteAdmin() {
+      return request.auth != null && request.auth.token.get('role', '') == 'admin';
+    }
+
+    // Built-in pages: their managed content and, once converted in the
+    // visual editor, their blocks (`contact` holds blocks only).
+    function isBuiltInSlot(id) {
+      return id in ['home', 'admissions', 'teacher_training', 'programs', 'gallery', 'contact'];
+    }
+
+    // Fields that identify editors or uploads; never on a public record.
+    function hasNoPrivateFields(data) {
+      return !data.keys().hasAny(['updatedById', 'updatedByName', 'updatedBy', 'uploadedBy', 'createdBy', 'fileName']);
+    }
+
+    function isValidSlug(slug) {
+      return slug is string && slug.size() >= 2 && slug.size() <= 60
+        && slug.matches('^[a-z0-9]+(-[a-z0-9]+)*$');
+    }
+
+    // A media record: a known status, and a published one needs consent and
+    // English alt text (so `status == 'published'` alone is safe to serve).
+    function isValidMedia(data) {
+      return data.status in ['draft', 'published', 'hidden']
+        && data.url is string
+        && hasNoPrivateFields(data)
+        && (data.status != 'published'
+            || (data.consentConfirmed == true
+                && data.alt is map && data.alt.en is string && data.alt.en.size() > 0));
+    }
+
+    // A live additional page: well-formed, never archived, no editor fields.
+    function isValidLiveCustomPage(data) {
+      return data.kind == 'custom'
+        && isValidSlug(data.slug)
+        && data.title is map && data.title.en is string && data.title.en.size() > 0
+        && data.sections is list && data.sections.size() <= 20
+        && !('archived' in data)
+        && hasNoPrivateFields(data);
+    }
+
+    // An optional {en, ta} text field of at most [max] characters each.
+    function isOptionalText(data, key, max) {
+      return !(key in data)
+        || (data[key] is map
+            && data[key].get('en', '') is string && data[key].get('en', '').size() <= max
+            && data[key].get('ta', '') is string && data[key].get('ta', '').size() <= max);
+    }
+
+    // The site layout (header, navigation and footer): one document,
+    // `site_layout`. Rules check its shape and sizes; each link's target
+    // (built-in page id, page id or https URL) is validated by the app and
+    // checked again when shown, since rules can't loop over a list.
+    function isLayoutShape(data) {
+      return data.kind == 'layout' && data.schemaVersion == 1
+        && data.mainNav is list && data.mainNav.size() <= 10
+        && data.footerNav is list && data.footerNav.size() <= 16
+        && isOptionalText(data, 'siteName', 60)
+        && isOptionalText(data, 'tagline', 160)
+        && isOptionalText(data, 'footerText', 600)
+        && isOptionalText(data, 'copyright', 120);
+    }
+
+    // The live layout holds visitor-facing fields only: its text and links,
+    // and (when they differ from the site's own) the design and the
+    // header's and footer's look, each a map.
+    function isValidLiveLayout(data) {
+      return isLayoutShape(data)
+        && data.keys().hasOnly(['kind', 'schemaVersion', 'siteName', 'tagline', 'mainNav', 'footerNav', 'footerText', 'copyright', 'design', 'header', 'footer', 'publishedAt'])
+        && (!('design' in data) || data.design is map)
+        && (!('header' in data) || data.header is map)
+        && (!('footer' in data) || data.footer is map);
+    }
+
+    // The language registry: one document, `site_languages`. English is
+    // the source; the list and fallback are bounded. Each entry's code and
+    // names are validated by the app (rules can't loop over a list).
+    function isLanguagesShape(data) {
+      return data.kind == 'languages' && data.schemaVersion == 1
+        && data.source == 'en'
+        && data.fallback is string && data.fallback.size() >= 2 && data.fallback.size() <= 6
+        && data.languages is list && data.languages.size() >= 1 && data.languages.size() <= 20;
+    }
+
+    // The live registry holds visitor-facing fields only.
+    function isValidLiveLanguages(data) {
+      return isLanguagesShape(data)
+        && data.keys().hasOnly(['kind', 'schemaVersion', 'source', 'fallback', 'languages', 'publishedAt']);
+    }
+
+    match /website_media/{mediaId} {
+      // Visitors read published images only; their queries must filter on
+      // status == 'published' (the public site's does).
+      allow get, list: if resource.data.status == 'published' || isWebsiteAdmin();
+      allow create, update: if isWebsiteAdmin() && isValidMedia(request.resource.data);
+      allow delete: if isWebsiteAdmin();
+
+      match /audit/{entryId} {
+        allow read, create: if isWebsiteAdmin();
+        allow update: if false;                // entries are never edited
+        allow delete: if isWebsiteAdmin();     // removed together with their image
+      }
+    }
+
+    // Published content only: built-in pages' content (fixed slot ids),
+    // additional pages (automatic ids, kind == 'custom') and the site
+    // layout (id `site_layout`, kind == 'layout').
+    match /website_pages/{pageId} {
+      allow get, list: if true;
+      allow create, update: if isWebsiteAdmin()
+        && (pageId == 'site_layout'
+              ? isValidLiveLayout(request.resource.data)
+              : pageId == 'site_languages'
+              ? isValidLiveLanguages(request.resource.data)
+              : isBuiltInSlot(pageId)
+                  ? (!('kind' in request.resource.data) && hasNoPrivateFields(request.resource.data))
+                  : isValidLiveCustomPage(request.resource.data));
+      // An explicit delete rule (unpublishing), instead of testing
+      // `request.resource == null` inside the write rule.
+      allow delete: if isWebsiteAdmin();
+    }
+
+    // Drafts: admin only, never public.
+    match /website_page_drafts/{pageId} {
+      allow get, list: if isWebsiteAdmin();
+      allow create, update: if isWebsiteAdmin()
+        && (pageId == 'site_layout'
+              ? isLayoutShape(request.resource.data)
+              : pageId == 'site_languages'
+              ? isLanguagesShape(request.resource.data)
+              : isBuiltInSlot(pageId)
+                  ? !('kind' in request.resource.data)
+                  : (request.resource.data.kind == 'custom' && isValidSlug(request.resource.data.slug)));
+      allow delete: if isWebsiteAdmin();
+    }
+  }
+}
