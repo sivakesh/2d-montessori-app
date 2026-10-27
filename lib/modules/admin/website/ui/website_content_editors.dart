@@ -639,11 +639,15 @@ class _WebsitePageEditorScreenState extends ConsumerState<WebsitePageEditorScree
     return (saved.draft != null, saved.live != null);
   }
 
+  /// Runs [action]; afterwards — even when it failed part-way, e.g. the
+  /// draft saved but publication failed — the saved draft and live page
+  /// are read again, so the status shows what is actually stored. The form
+  /// fields are never touched here.
   Future<void> _run(Future<void> Function() action, String success) async {
     setState(() => _busy = true);
     final ok = await attempt(action, success: success);
-    if (ok) {
-      refreshPublicSite();
+    if (ok) refreshPublicSite();
+    try {
       final draft = await service.getSavedDraft(requesterRole: role, slot: widget.slot);
       final live = await service.getLive(requesterRole: role, slot: widget.slot);
       final blocks = await _blocksState();
@@ -652,11 +656,19 @@ class _WebsitePageEditorScreenState extends ConsumerState<WebsitePageEditorScree
           _savedDraft = draft;
           _live = live;
           _draftHasBlocks = blocks.$1;
-        _liveHasBlocks = blocks.$2;
+          _liveHasBlocks = blocks.$2;
         });
       }
+    } catch (_) {
+      // Offline: the status stays as last read; the error is shown.
     }
     if (mounted) setState(() => _busy = false);
+  }
+
+  /// Publishes the form; over published content, only once confirmed.
+  Future<void> _publish() async {
+    if (_live != null && !await confirmReplacePublished(const Key('website-page-publish-confirm'))) return;
+    await _run(() => service.publishPage(requesterRole: role, actor: user, content: _content), 'Published.');
   }
 
   Future<void> _openVisualEditor() async {
@@ -883,7 +895,7 @@ class _WebsitePageEditorScreenState extends ConsumerState<WebsitePageEditorScree
             ),
             FilledButton.icon(
               key: const Key('website-page-publish'),
-              onPressed: _liveHasBlocks ? null : () => _run(() => service.publishPage(requesterRole: role, actor: user, content: _content), 'Published.'),
+              onPressed: _liveHasBlocks ? null : _publish,
               icon: const Icon(Icons.public),
               label: const Text('Publish'),
               style: FilledButton.styleFrom(backgroundColor: AppColors.secondary),

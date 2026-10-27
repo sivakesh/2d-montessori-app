@@ -234,6 +234,8 @@ void main() {
       expect((await publicRepository().livePages())[WebsitePageSlot.admissions]!.headline.en, 'Join us', reason: 'nothing published yet');
 
       await tapAndSettle(tester, find.byKey(const Key('website-page-publish')));
+      // Content is already published: publishing over it is confirmed.
+      await tapAndSettle(tester, find.byKey(const Key('website-page-publish-confirm')));
       final live = (await publicRepository().livePages())[WebsitePageSlot.admissions]!;
       expect(live.headline.isEmpty, isTrue, reason: 'stored as "use built-in"');
       expect(live.intro.isEmpty, isTrue);

@@ -197,11 +197,18 @@ class _WebsiteSiteLayoutEditorScreenState extends ConsumerState<WebsiteSiteLayou
     footer: _footer,
   );
 
+  /// Runs [action]; afterwards — even when part of it failed (e.g. the
+  /// layout was published but tidying the draft failed) — the saved draft
+  /// and published layout are read again, so the status shows what is
+  /// actually stored. The fields being edited are never touched here.
   Future<void> _run(Future<void> Function() action, String success) async {
     setState(() => _busy = true);
-    final ok = await attempt(action, success: success);
-    if (ok) {
-      refreshPublicSite();
+    await attempt(action, success: success);
+    // Even after an error: a publication that worked reaches this session's
+    // public pages although tidying the draft failed afterwards (re-reading
+    // after a real failure is harmless).
+    refreshPublicSite();
+    try {
       final saved = await service.getSiteLayout(requesterRole: role);
       if (mounted) {
         setState(() {
@@ -210,6 +217,8 @@ class _WebsiteSiteLayoutEditorScreenState extends ConsumerState<WebsiteSiteLayou
           _liveUnreadable = saved.liveUnreadable;
         });
       }
+    } catch (_) {
+      // Offline: the status stays as last read; the error is shown.
     }
     if (mounted) setState(() => _busy = false);
   }

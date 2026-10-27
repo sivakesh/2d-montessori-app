@@ -122,6 +122,21 @@ draft, previewed, then published through the existing CMS service.
   - If publishing saves the draft but the live write fails, the message
     says so and the editor shows the saved state ("Draft not published"
     when an earlier version is still live).
+- **Publishing safeguards** (built-in pages, additional pages, the old
+  form editor):
+  - Publishing over a page visitors already see asks first ("Replace the
+    published page?"); Cancel writes nothing. A first publication isn't
+    asked about.
+  - A page built with blocks can't be published when nothing on it would
+    be shown (no blocks, or only hidden or unsupported ones). Its draft can
+    still be saved; pages made of sections are unchanged.
+  - "Draft saved, but publication failed." whenever the draft was written
+    but the live page wasn't, in every editor, which then shows the saved
+    state.
+  - Site layout: if the layout is published (or its draft saved) but
+    removing the default design, header or footer from the draft fails
+    afterwards, the message says it was published and to save the draft
+    again; the status shows it published.
 - **Parity check:** for every page, in English and Tamil, the converted
   page shows exactly the same text as today, through the same public page
   widget (`test/website_site_editor_test.dart`). On Home, the managed
