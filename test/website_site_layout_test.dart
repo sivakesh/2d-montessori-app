@@ -27,6 +27,7 @@ import 'package:montessori_app/modules/admin/website/ui/website_site_layout_edit
 import 'package:montessori_app/modules/auth/models/app_user.dart';
 import 'package:montessori_app/modules/auth/providers/auth_provider.dart';
 import 'package:montessori_app/modules/auth/providers/auth_state_provider.dart';
+import 'package:montessori_app/modules/public_website/content/blocks/block_registry.dart';
 import 'package:montessori_app/modules/public_website/content/website_content_models.dart';
 import 'package:montessori_app/modules/public_website/content/website_content_repository.dart';
 import 'package:montessori_app/modules/public_website/content/website_custom_page.dart';
@@ -197,7 +198,12 @@ void main() {
 
     Future<CustomPage> customPage(String slug, {bool publish = true, bool inNav = false}) async {
       final created = await service.createCustomPage(requesterRole: 'admin', actor: _admin, title: LocalizedText(en: 'Page $slug', ta: 'பக்கம் $slug'), slug: slug);
-      final page = created.copyWith(showInNavigation: inNav);
+      // One visible block: an empty page can't be published.
+      final text = BlockRegistry.create(BlockRegistry.text);
+      final page = created.copyWith(
+        showInNavigation: inNav,
+        blocks: () => [text.copyWith(values: {...text.values, 'heading': LocalizedText(en: 'About $slug')})],
+      );
       if (publish) {
         await service.publishCustomPage(requesterRole: 'admin', actor: _admin, page: page);
       } else {

@@ -161,6 +161,11 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
   /// self in the editor.
   List<WebsiteBlock>? _blocks;
   WebsitePageContent? _content;
+
+  /// The managed content published for the built-in page (heading,
+  /// introduction, image), as visitors see it while no blocks are
+  /// published; null when nothing is published (or for Contact).
+  WebsitePageContent? _liveContent;
   List<WebsiteMedia> _library = const [];
   List<PublicLanguage> _languages = PublicLanguage.builtIn;
   SiteLayout? _siteLayout;
@@ -193,6 +198,7 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
         _liveBlocks = page.live;
         _blocks = page.draft == null ? null : [...page.draft!];
         _content = page.content;
+        _liveContent = page.liveContent;
         _library = library;
         _languages = languages;
         _siteLayout = layout.draft ?? layout.live;
@@ -263,6 +269,7 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
         setState(() {
           _draftBlocks = page.draft;
           _liveBlocks = page.live;
+          _liveContent = page.liveContent;
         });
       }
     } catch (_) {
@@ -300,6 +307,25 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
       _blocks = _draftBlocks == null ? null : [..._draftBlocks!];
       _generation++;
     });
+  }
+
+  /// Whether visitors see something published for this page that
+  /// publishing blocks replaces: published blocks, or a heading,
+  /// introduction or (published) image published with the form editor.
+  /// Text stored blank means the site's own wording, which is not a
+  /// published version.
+  bool get _hasPublishedVersion {
+    if (_liveBlocks != null) return true;
+    final live = _liveContent;
+    if (live == null) return false;
+    final image = live.imageMediaId;
+    return !live.headline.isEmpty || !live.intro.isEmpty || (image != null && _library.any((m) => m.id == image && m.isPublished));
+  }
+
+  /// Publishes [blocks]; over a published version, only once confirmed.
+  Future<void> _publish(List<WebsiteBlock> blocks) async {
+    if (_hasPublishedVersion && !await confirmReplacePublished(const Key('website-builtin-publish-confirm'))) return;
+    await _run(() => service.publishBuiltInPage(requesterRole: role, actor: user, page: _pageId, blocks: blocks), 'Published at ${_pageId.route}.');
   }
 
   Future<void> _unpublish() async {
@@ -498,7 +524,7 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
       ),
       FilledButton.icon(
         key: const Key('website-builtin-publish'),
-        onPressed: () => _run(() => service.publishBuiltInPage(requesterRole: role, actor: user, page: _pageId, blocks: blocks), 'Published at ${_pageId.route}.'),
+        onPressed: () => _publish(blocks),
         icon: const Icon(Icons.public),
         label: const Text('Publish'),
         style: FilledButton.styleFrom(backgroundColor: AppColors.secondary),

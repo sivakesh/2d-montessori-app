@@ -320,12 +320,18 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
         archived: _draft?.archived ?? false,
       );
 
+  /// Runs [action]; afterwards — even when it failed part-way, e.g. the
+  /// draft saved but publication failed — the page is read again, so the
+  /// status shows what is actually stored. The fields being edited are
+  /// never touched here.
   Future<void> _run(Future<void> Function() action, String success) async {
     setState(() => _busy = true);
     final ok = await attempt(action, success: success);
-    if (ok) {
-      refreshPublicSite();
+    if (ok) refreshPublicSite();
+    try {
       await _refreshState();
+    } catch (_) {
+      // Offline: the status stays as last read; the error is shown.
     }
     if (mounted) setState(() => _busy = false);
   }
@@ -623,7 +629,11 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
         live == null ? 'Draft saved. It is not on the website yet.' : 'Draft saved. Visitors still see the published version.',
       );
 
-  void _publish(CustomPage page) => _run(() => service.publishCustomPage(requesterRole: role, actor: user, page: page), 'Published at ${page.route}.');
+  /// Publishes [page]; over a published page, only once confirmed.
+  Future<void> _publish(CustomPage page) async {
+    if (_live != null && !await confirmReplacePublished(const Key('website-custom-publish-confirm'))) return;
+    await _run(() => service.publishCustomPage(requesterRole: role, actor: user, page: page), 'Published at ${page.route}.');
+  }
 
   void _unpublish() => _run(() => service.unpublishCustomPage(requesterRole: role, actor: user, pageId: widget.pageId), 'Unpublished. Its address now shows “page not found”.');
 

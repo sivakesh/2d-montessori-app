@@ -57,6 +57,23 @@ mixin WebsiteContentActions<T extends ConsumerStatefulWidget> on ConsumerState<T
     ref.invalidate(liveWebsiteContentProvider);
   }
 
+  /// Asks before publishing over a page visitors already see; true to go
+  /// ahead. Cancel changes nothing.
+  Future<bool> confirmReplacePublished(Key confirmKey) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Replace the published page?'),
+        content: const Text('Visitors will see this new version straight away, instead of the one published now.'),
+        actions: [
+          TextButton(key: const Key('website-publish-cancel'), onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(key: confirmKey, onPressed: () => Navigator.pop(context, true), child: const Text('Publish')),
+        ],
+      ),
+    );
+    return confirmed == true && mounted;
+  }
+
   void showMessage(String message, {bool error = false}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(

@@ -262,7 +262,7 @@ service cloud.firestore {
       refuseWrites(WebsiteCollections.livePages);
       await tap(tester, key('website-builtin-publish'));
 
-      expect(find.textContaining('The draft was saved, but the page could not be published'), findsOneWidget);
+      expect(find.text(WebsiteContentAdminService.publishFailedMessage), findsOneWidget);
       expect(find.text('Published at /admissions.'), findsNothing);
       expect(key('website-builtin-unsaved'), findsNothing, reason: 'the draft was read back');
       expect(key('website-builtin-not-saved'), findsNothing);
@@ -282,7 +282,8 @@ service cloud.firestore {
       await editAdmissionsHeading(tester, 'Second version');
       refuseWrites(WebsiteCollections.livePages);
       await tap(tester, key('website-builtin-publish'));
-      expect(find.textContaining('The draft was saved, but the page could not be published'), findsOneWidget);
+      await tap(tester, key('website-builtin-publish-confirm'));
+      expect(find.text(WebsiteContentAdminService.publishFailedMessage), findsOneWidget);
       expect(key('website-builtin-unsaved'), findsNothing);
       expect(key('website-builtin-draft-unpublished'), findsOneWidget);
       expect(find.text('Published with blocks'), findsOneWidget, reason: 'the earlier version is still live');
@@ -294,7 +295,7 @@ service cloud.firestore {
       refuseWrites(WebsiteCollections.livePages);
       await expectLater(
         service.publishBuiltInPage(requesterRole: 'admin', actor: _admin, page: BuiltInPage.programs, blocks: blocks),
-        throwsA(isA<WebsiteContentException>().having((e) => e.message, 'message', contains('The draft was saved'))),
+        throwsA(isA<WebsiteContentException>().having((e) => e.message, 'message', WebsiteContentAdminService.publishFailedMessage)),
       );
       expect((await doc(WebsiteCollections.pageDrafts, 'programs'))!['blocks'], isNotNull);
 

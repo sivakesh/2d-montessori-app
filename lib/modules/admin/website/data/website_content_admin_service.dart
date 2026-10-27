@@ -35,6 +35,13 @@ class WebsiteContentException implements Exception {
   String toString() => message;
 }
 
+/// The site layout was published (or its draft saved), but removing the
+/// default design, header or footer from the saved draft afterwards
+/// failed. [message] says what did happen.
+class WebsiteLayoutCleanupException extends WebsiteContentException {
+  WebsiteLayoutCleanupException(super.message);
+}
+
 /// An image chosen in the file picker, not yet uploaded.
 class PickedWebsiteImage {
   const PickedWebsiteImage({required this.name, required this.bytes});
@@ -75,6 +82,12 @@ class WebsiteContentAdminService {
   static const maxCaptionLength = 300;
   static const maxHeadlineLength = 120;
   static const maxIntroLength = 600;
+
+  /// Why a draft was saved but its live page wasn't written.
+  static const publishFailedMessage = 'Draft saved, but publication failed. Visitors still see the previous version. Check your connection and try publishing again.';
+
+  /// Why a page built with blocks can't be published.
+  static const nothingVisibleMessage = 'Nothing on this page would be shown to visitors. Add visible content before publishing.';
 
   /// Uploaded files never change in place (a replacement is a new path), so
   /// browsers and the CDN may cache them for a long time.
@@ -550,12 +563,34 @@ class WebsiteContentAdminService {
     }
     await saveDraft(requesterRole: requesterRole, actor: actor, content: content);
     final ref = _live.doc(content.slot.id);
-    final data = {
-      ...content.normalized().toContentMap(),
-      'mediaIds': await _slotMediaIds(ref, content),
-      'publishedAt': FieldValue.serverTimestamp(),
-    };
-    await _writeFields(ref, data);
+    await _publishAfterDraft(() async {
+      final data = {
+        ...content.normalized().toContentMap(),
+        'mediaIds': await _slotMediaIds(ref, content),
+        'publishedAt': FieldValue.serverTimestamp(),
+      };
+      await _writeFields(ref, data);
+    });
+  }
+
+  /// Runs a publication's live write, once its draft is saved: a failure
+  /// says the draft was saved ([publishFailedMessage]).
+  static Future<void> _publishAfterDraft(Future<void> Function() write) async {
+    try {
+      await write();
+    } catch (_) {
+      throw WebsiteContentException(publishFailedMessage);
+    }
+  }
+
+  /// Throws unless [blocks] show visitors something: a block that isn't
+  /// hidden (sections and columns only hold blocks, so they count by what
+  /// they hold). Unsupported blocks aren't shown, so they don't count.
+  static void _requireVisibleContent(List<WebsiteBlock> blocks) {
+    final shown = BlockRegistry.flatten(BlockRegistry.withoutHidden(blocks));
+    if (!shown.any((b) => b is StructuredBlock && !containerTypes.contains(b.type))) {
+      throw WebsiteContentException(nothingVisibleMessage);
+    }
   }
 
   /// Removes the page's published content; the page returns to its
@@ -572,7 +607,11 @@ class WebsiteContentAdminService {
   /// isn't built with blocks there), and its managed content (the draft,
   /// else what is live; null for Contact or when there is none) — what a
   /// conversion starts from.
-  Future<({List<WebsiteBlock>? draft, List<WebsiteBlock>? live, WebsitePageContent? content})> getBuiltInPage({required String requesterRole, required BuiltInPage page}) async {
+  ///
+  /// `liveContent` is the managed content of the live page as published
+  /// (null for Contact, or when nothing is published): what visitors see
+  /// on the built-in page while no blocks are published.
+  Future<({List<WebsiteBlock>? draft, List<WebsiteBlock>? live, WebsitePageContent? content, WebsitePageContent? liveContent})> getBuiltInPage({required String requesterRole, required BuiltInPage page}) async {
     _requireAdmin(requesterRole);
     final draft = (await _drafts.doc(page.id).get()).data();
     final live = (await _live.doc(page.id).get()).data();
@@ -584,7 +623,12 @@ class WebsiteContentAdminService {
             : live != null
                 ? WebsitePageContent.fromMap(slot, live)
                 : null;
-    return (draft: builtInPageBlocks(draft), live: builtInPageBlocks(live), content: content);
+    return (
+      draft: builtInPageBlocks(draft),
+      live: builtInPageBlocks(live),
+      content: content,
+      liveContent: slot != null && _hasManagedContent(live) ? WebsitePageContent.fromMap(slot, live!) : null,
+    );
   }
 
   void _validateBlocks(List<WebsiteBlock> blocks) {
@@ -630,15 +674,14 @@ class WebsiteContentAdminService {
   Future<void> publishBuiltInPage({required String requesterRole, required AppUser actor, required BuiltInPage page, required List<WebsiteBlock> blocks}) async {
     _requireAdmin(requesterRole);
     _validateBlocks(blocks);
+    _requireVisibleContent(blocks);
     await _requirePublishedMedia(BlockRegistry.referencedMedia(blocks));
     await saveBuiltInPageDraft(requesterRole: requesterRole, actor: actor, page: page, blocks: blocks);
     final ref = _live.doc(page.id);
-    try {
+    await _publishAfterDraft(() async {
       final data = {...await _builtInFields(ref, blocks, live: true), 'publishedAt': FieldValue.serverTimestamp()};
       await _writeFields(ref, data);
-    } catch (_) {
-      throw WebsiteContentException('The draft was saved, but the page could not be published: visitors still see the previous version. Check your connection and try publishing again.');
-    }
+    });
   }
 
   /// Takes the blocks off the website: visitors see the built-in page
@@ -776,12 +819,14 @@ class WebsiteContentAdminService {
     if (current == null) throw WebsiteContentException('This page no longer exists.');
     if (current.draft.archived) throw WebsiteContentException('Restore this page before publishing it.');
     _validateCustomPage(page);
+    // Pages made of sections (the older format) are unchanged.
+    if (page.blocks case final blocks?) _requireVisibleContent(blocks);
     await _requirePublishedMedia(page.referencedMedia);
     await saveCustomPageDraft(requesterRole: requesterRole, actor: actor, page: page);
-    await _live.doc(page.id).set({
-      ...page.forVisitors.copyWith(navOrder: current.draft.navOrder).toContentMap(),
-      'publishedAt': FieldValue.serverTimestamp(),
-    });
+    await _publishAfterDraft(() => _live.doc(page.id).set({
+          ...page.forVisitors.copyWith(navOrder: current.draft.navOrder).toContentMap(),
+          'publishedAt': FieldValue.serverTimestamp(),
+        }));
   }
 
   /// Takes the page off the website (its address shows "page not found");
@@ -873,7 +918,7 @@ class WebsiteContentAdminService {
       'updatedByName': actor.name ?? '',
     };
     await _drafts.doc(SiteLayout.docId).set(data, _exactFields(data));
-    await _clearDefaultStyles(_drafts.doc(SiteLayout.docId), layout);
+    await _clearDefaultStyles(_drafts.doc(SiteLayout.docId), layout, done: 'The draft was saved');
   }
 
   /// Saves [layout] as the draft and publishes it, in one atomic batch:
@@ -899,19 +944,30 @@ class WebsiteContentAdminService {
     batch.set(_drafts.doc(SiteLayout.docId), draft, _exactFields(draft));
     batch.set(_live.doc(SiteLayout.docId), {...layout.toMap(), 'publishedAt': FieldValue.serverTimestamp()});
     await batch.commit();
-    await _clearDefaultStyles(_drafts.doc(SiteLayout.docId), layout);
+    await _clearDefaultStyles(_drafts.doc(SiteLayout.docId), layout, done: 'The layout was published and visitors see it');
   }
 
   /// The draft's design, header and footer are written only while they
   /// differ from the site's own look; back to it, they are removed (the
   /// live copy is replaced whole, so it never keeps them).
-  Future<void> _clearDefaultStyles(DocumentReference<Map<String, dynamic>> ref, SiteLayout layout) async {
+  ///
+  /// Runs after the write described by [done] succeeded, so a failure here
+  /// is a [WebsiteLayoutCleanupException] saying so, never a failed save or
+  /// publication.
+  Future<void> _clearDefaultStyles(DocumentReference<Map<String, dynamic>> ref, SiteLayout layout, {required String done}) async {
     final stale = {
       if (layout.design.isDefault) 'design': FieldValue.delete(),
       if (layout.header.isDefault) 'header': FieldValue.delete(),
       if (layout.footer.isDefault) 'footer': FieldValue.delete(),
     };
-    if (stale.isNotEmpty) await ref.update(stale);
+    if (stale.isEmpty) return;
+    try {
+      await ref.update(stale);
+    } catch (_) {
+      throw WebsiteLayoutCleanupException(
+        '$done, but the saved draft still holds the old design, header or footer settings, so the editor may show changes that aren’t there. Save the draft again to clear them.',
+      );
+    }
   }
 
   /// Removes the published layout: the site returns to its built-in header
