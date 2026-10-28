@@ -270,7 +270,8 @@ void main() {
       expect(key('website-canvas-toolbar-b_text000002'), findsOneWidget);
       expect(key('website-canvas-child-selected-b_sect000001'), findsOneWidget, reason: 'the section keeps an outline');
       expect(key('website-canvas-toolbar-b_sect000001'), findsNothing, reason: 'but not its whole-section actions');
-      await type(tester, field('website-block-b_text000002-heading-ta'), 'வலது');
+      expect(field('website-block-b_text000002-heading-ta'), findsNothing, reason: 'English only');
+      await type(tester, field('website-block-b_text000002-heading-en'), 'Right side');
 
       await tap(tester, key('website-inspector-parent'));
       expect(tester.widget<Text>(key('website-inspector-title')).data, 'Section');
@@ -289,7 +290,7 @@ void main() {
       final section = ((await doc(WebsiteCollections.pageDrafts, id))!['blocks'] as List).single as Map;
       expect(section['style'], {'background': 'token:sageLight', 'padding': '72'});
       final right = (((section['columns'] as List)[1] as Map)['blocks'] as List).single as Map;
-      expect(right['heading'], {'en': 'Right', 'ta': 'வலது'});
+      expect(right['heading'], {'en': 'Right side', 'ta': ''});
     });
 
     testWidgets('a section runs edge to edge on the public page; its columns stack on phones', (tester) async {
@@ -647,7 +648,8 @@ void main() {
       await type(tester, key('website-header-background-hex'), '#FFF7E0');
       await tap(tester, key('website-header-background-hex-apply'));
       await type(tester, key('website-footer-phone'), '044 1234 5678');
-      await type(tester, key('website-footer-address-ta'), 'பள்ளி சாலை');
+      expect(key('website-footer-address-ta'), findsNothing, reason: 'English only');
+      expect(key('website-header-cta-label-ta'), findsNothing);
       await type(tester, key('website-footer-address-en'), 'School Road');
       expect(find.descendant(of: key('website-layout-preview'), matching: find.text('044 1234 5678')), findsOneWidget, reason: 'previewed before publishing');
 
@@ -655,7 +657,7 @@ void main() {
       final draft = (await doc(WebsiteCollections.pageDrafts, SiteLayout.docId))!;
       expect(draft['futureLayoutKey'], {'kept': true});
       expect((draft['header'] as Map)['background'], '#FFF7E0');
-      expect((draft['footer'] as Map)['address'], {'en': 'School Road', 'ta': 'பள்ளி சாலை'});
+      expect((draft['footer'] as Map)['address'], {'en': 'School Road', 'ta': ''});
       expect(((draft['design'] as Map)['palette'] as List).any((c) => (c as Map)['hex'] == '#0A7E8C'), isTrue);
       expect(await doc(WebsiteCollections.livePages, SiteLayout.docId), isNull, reason: 'nothing public yet');
 

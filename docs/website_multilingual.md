@@ -1,5 +1,8 @@
 # Website languages (multilingual foundation)
 
+> **Current status: editing is English only.** `multilingualEditing = false` (in `website_content_editors.dart`) hides every Tamil and other-language field, the preview-language switches and the translation-readiness panel. The Languages tab (Settings → Website → Languages) stays available, so admins still choose which languages visitors are offered; it notes that, while editing is English only, a page without text in a visitor's language shows the fallback language's text. Stored translations are kept and still shown on the public website. The design below returns with the language module, which adds AI translation and review.
+
+
 > **Status:** phases L0 and L1 are done in the app. They are tested
 > locally (unit, widget and Firestore-emulator tests) and not deployed.
 > Translation workflow, AI translation and language URL prefixes are later

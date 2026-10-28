@@ -175,7 +175,7 @@ void main() {
       final textId = editorBlocks(tester).single.id;
       expect(textId, matches(RegExp(r'^b_[a-z0-9]{10}$')));
       await type(tester, 'website-block-$textId-heading-en', 'Welcome');
-      await type(tester, 'website-block-$textId-body-ta', 'வரவேற்பு');
+      expect(field('website-block-$textId-body-ta'), findsNothing, reason: 'English only: no Tamil fields');
       await type(tester, 'website-block-$textId-body-en', 'Come and visit.');
       expect(find.descendant(of: key('website-custom-preview'), matching: find.text('Welcome')), findsOneWidget);
 
@@ -183,10 +183,10 @@ void main() {
       final saved = await draft(created.id);
       expect(saved['schemaVersion'], 2);
       expect(_plain(saved['blocks']), [
-        {'id': textId, 'type': 'text', 'v': 1, 'heading': {'en': 'Welcome', 'ta': ''}, 'body': {'en': 'Come and visit.', 'ta': 'வரவேற்பு'}},
+        {'id': textId, 'type': 'text', 'v': 1, 'heading': {'en': 'Welcome', 'ta': ''}, 'body': {'en': 'Come and visit.', 'ta': ''}},
       ]);
       expect(_plain(saved['sections']), [
-        {'id': textId, 'type': 'text', 'heading': {'en': 'Welcome', 'ta': ''}, 'body': {'en': 'Come and visit.', 'ta': 'வரவேற்பு'}},
+        {'id': textId, 'type': 'text', 'heading': {'en': 'Welcome', 'ta': ''}, 'body': {'en': 'Come and visit.', 'ta': ''}},
       ], reason: 'the sections copy for older versions, derived from the blocks');
       await open(tester, created.id);
       expect([for (final b in editorBlocks(tester)) b.id], [textId], reason: 'reloads');
@@ -270,7 +270,6 @@ void main() {
       await tap(tester, key('website-block-$textId-edit'));
       await type(tester, 'website-block-$textId-heading-en', 'Our day');
       await type(tester, 'website-block-$textId-body-en', 'Our routine');
-      await type(tester, 'website-block-$textId-body-ta', 'எங்கள் நாள்');
       expect((editorBlocks(tester)[0] as StructuredBlock).text('heading').en, 'Our day');
 
       await tap(tester, key('website-block-$dividerId-up'));
@@ -295,9 +294,9 @@ void main() {
       await tap(tester, key('website-custom-save-draft'));
       final saved = await draft(id);
       expect((saved['blocks'] as List).single['heading'], {'en': 'Our day', 'ta': ''});
-      expect((saved['blocks'] as List).single['body'], {'en': 'Our routine', 'ta': 'எங்கள் நாள்'});
+      expect((saved['blocks'] as List).single['body'], {'en': 'Our routine', 'ta': ''});
       expect(_plain(saved['sections']), [
-        {'id': textId, 'type': 'text', 'heading': {'en': 'Our day', 'ta': ''}, 'body': {'en': 'Our routine', 'ta': 'எங்கள் நாள்'}},
+        {'id': textId, 'type': 'text', 'heading': {'en': 'Our day', 'ta': ''}, 'body': {'en': 'Our routine', 'ta': ''}},
       ], reason: 'the sections copy, derived from the blocks');
       await open(tester, id);
       expect([for (final b in editorBlocks(tester)) b.id], [textId], reason: 'reloads');
@@ -389,7 +388,7 @@ void main() {
       expect(editorBlocks(tester), hasLength(1));
     });
 
-    testWidgets('the preview is the public renderer with published images, at desktop or mobile width; readiness shown, nothing created', (tester) async {
+    testWidgets('the preview is the public renderer with published images, at desktop or mobile width; no translation status, nothing created', (tester) async {
       final id = await page(blocks: [
         {'id': 'b_text000001', 'type': 'text', 'v': 1, 'heading': {'en': 'About', 'ta': 'பற்றி'}, 'body': {'en': 'Body', 'ta': ''}},
         {'id': 'b_image00001', 'type': 'image', 'v': 1, 'mediaId': 'm1'},
@@ -416,7 +415,7 @@ void main() {
       await tap(tester, key('website-custom-preview-mobile'));
       expect(tester.getSize(key('website-custom-preview-mobile-frame')).width, 390);
 
-      expect(tester.widget<Text>(key('website-custom-readiness-ta')).data, startsWith('Tamil: 1 of 3 texts have Tamil text (required: 1 of 2)'));
+      expect(key('website-custom-readiness'), findsNothing, reason: 'translation status comes with the language module');
       expect((await firestore.collection('website_translation_drafts').get()).docs, isEmpty);
       expect((await firestore.collection('website_translations').get()).docs, isEmpty);
     });

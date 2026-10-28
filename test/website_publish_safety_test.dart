@@ -393,7 +393,8 @@ service cloud.firestore {
       expect((await service.getBuiltInPage(requesterRole: 'admin', page: BuiltInPage.admissions)).content!.headline.en, 'Join us');
       await pumpForm(tester);
       expect(tester.widget<TextField>(key('website-page-headline-en')).controller!.text, 'Join us');
-      expect(tester.widget<TextField>(key('website-page-headline-ta')).controller!.text, 'சேருங்கள்');
+      expect(key('website-page-headline-ta'), findsNothing, reason: 'English only');
+      expect((await service.getBuiltInPage(requesterRole: 'admin', page: BuiltInPage.admissions)).content!.headline.ta, 'சேருங்கள்', reason: 'stored Tamil is kept');
     });
   });
 

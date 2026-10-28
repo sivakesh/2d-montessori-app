@@ -6,6 +6,7 @@ import '../content/website_content_models.dart';
 import '../content/website_content_repository.dart';
 import '../public_routes.dart';
 import '../public_strings.dart';
+import '../content/website_design.dart';
 import '../public_website_theme.dart';
 import '../widgets/public_scaffold.dart';
 import '../widgets/public_website_image.dart';
@@ -44,7 +45,7 @@ class PublicSectionPage extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(headline.isNotEmpty ? headline : strings.labelFor(route), key: const Key('public-section-title'), style: layout.isMobile ? PublicText.displayMobile : PublicText.display),
+              Text(headline.isNotEmpty ? headline : strings.labelFor(route), key: const Key('public-section-title'), style: WebsiteDesignScope.of(context).titleStyle(mobile: layout.isMobile)),
               const SizedBox(height: 16),
               Text(intro.isNotEmpty ? intro : strings.introFor(route), key: const Key('public-section-intro'), style: PublicText.body.copyWith(fontSize: 17)),
               if (slot != null) ...[

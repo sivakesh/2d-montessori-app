@@ -7,10 +7,14 @@ import '../../../core/theme/app_spacing.dart';
 import '../../admin/ui/admin_fab.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../finance/widgets/finance_status_chip.dart';
+import '../../public_website/content/website_content_repository.dart';
+import '../../public_website/content/website_public_item.dart';
 import '../models/calendar_event_model.dart';
 import '../services/calendar_service.dart';
+import '../services/calendar_website_publisher.dart';
 import 'calendar_event_detail_dialog.dart';
 import 'calendar_event_style.dart';
+import 'calendar_website_controls.dart';
 import 'calendar_month_view.dart';
 import 'calendar_week_view.dart';
 import 'dialogs/calendar_event_dialog.dart';
@@ -25,15 +29,21 @@ DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 ///    and an "Add" FAB.
 ///  - Staff/Parent see only Published items whose audience matches them
 ///    (or 'Public'), read-only — never a Draft or Admin-only item.
+///  - Admin also sees which items are on the public website, and can show,
+///    update or remove them there (CalendarWebsitePublisher). Nothing about
+///    the website is read or shown for Staff/Parent.
 ///
 /// Offers three views over the exact same [CalendarEventModel] list fetched
 /// once per load — Month (default), Week, and List (the original
 /// chronological list) — so switching views is purely a presentation
 /// choice, never a second data fetch or a second model.
 class CalendarView extends ConsumerStatefulWidget {
-  const CalendarView({super.key, this.service});
+  const CalendarView({super.key, this.service, this.websitePublisher});
 
   final CalendarService? service;
+
+  /// Defaults to one using [service]'s Firestore.
+  final CalendarWebsitePublisher? websitePublisher;
 
   @override
   ConsumerState<CalendarView> createState() => _CalendarViewState();
@@ -43,7 +53,12 @@ enum _CalendarViewMode { month, week, list }
 
 class _CalendarViewState extends ConsumerState<CalendarView> {
   late final _service = widget.service ?? CalendarService();
+  late final _websitePublisher = widget.websitePublisher ?? CalendarWebsitePublisher(calendar: _service);
   bool _loading = true;
+
+  /// Admin only: the website copies of events, by event id; null when they
+  /// couldn't be loaded (the website actions are then unavailable).
+  Map<String, WebsitePublicItem>? _websiteItems;
   bool _loadError = false;
   List<CalendarEventModel> _events = const [];
   _CalendarViewMode _viewMode = _CalendarViewMode.month;
@@ -57,6 +72,8 @@ class _CalendarViewState extends ConsumerState<CalendarView> {
 
   bool get _isAdmin =>
       (ref.read(currentUserProvider)?.role.toLowerCase() ?? '') == 'admin';
+
+  String get _role => ref.read(currentUserProvider)?.role ?? '';
 
   Map<DateTime, List<CalendarEventModel>> get _eventsByDay {
     final map = <DateTime, List<CalendarEventModel>>{};
@@ -80,9 +97,24 @@ class _CalendarViewState extends ConsumerState<CalendarView> {
           : await _service.getEventsForAudience(
               role == 'parent' ? 'Parents' : 'Staff',
             );
+      // Best-effort: the calendar works without it, only the website
+      // actions don't.
+      Map<String, WebsitePublicItem>? websiteItems;
+      if (_isAdmin) {
+        try {
+          websiteItems = await _websitePublisher.loadItems(requesterRole: _role);
+        } catch (_) {
+          websiteItems = null;
+        }
+        // The website's Upcoming events (if open in this session) then
+        // shows what was just shown, updated or removed.
+        ref.invalidate(publicEventItemsProvider);
+        ref.invalidate(publicEventProvider);
+      }
       if (!mounted) return;
       setState(() {
         _events = events;
+        _websiteItems = websiteItems;
         _loading = false;
       });
     } catch (_) {
@@ -104,6 +136,11 @@ class _CalendarViewState extends ConsumerState<CalendarView> {
         createdBy: user?.id ?? '',
         createdByName: user?.name ?? user?.phone ?? 'Admin',
         service: _service,
+        websitePublisher: _isAdmin ? _websitePublisher : null,
+        requesterRole: _role,
+        websiteItem: event == null ? null : _websiteItems?[event.id],
+        websiteStatusKnown: _websiteItems != null,
+        actor: _isAdmin ? user : null,
       ),
     );
     if (saved == true) await _load();
@@ -132,7 +169,10 @@ class _CalendarViewState extends ConsumerState<CalendarView> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Remove calendar item?'),
-        content: Text('"${event.title}" will be archived and hidden from Parents/Staff.'),
+        content: Text(
+          '"${event.title}" will be archived and hidden from Parents/Staff.'
+          '${_onWebsite(event) == true ? ' It will also be removed from the public website.' : ''}',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -147,11 +187,22 @@ class _CalendarViewState extends ConsumerState<CalendarView> {
     );
     if (confirmed != true) return;
     try {
-      await _service.archiveEvent(event.id);
+      final websiteChecked = await _websitePublisher.archive(
+        requesterRole: _role,
+        event: event,
+        onWebsite: _onWebsite(event),
+      );
       await _load();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Calendar item archived')),
+          SnackBar(
+            content: Text(
+              websiteChecked
+                  ? 'Calendar item archived'
+                  : 'Calendar item archived. The public website couldn’t be checked: '
+                      'if this item is shown there, remove it once the calendar shows its website status.',
+            ),
+          ),
         );
       }
     } catch (e) {
@@ -169,7 +220,8 @@ class _CalendarViewState extends ConsumerState<CalendarView> {
       builder: (dialogContext) => AlertDialog(
         title: const Text('Delete calendar item?'),
         content: Text(
-          '"${event.title}" will be permanently deleted. This cannot be undone.',
+          '"${event.title}" will be permanently deleted. This cannot be undone.'
+          '${_onWebsite(event) == true ? ' It will also be removed from the public website.' : ''}',
         ),
         actions: [
           TextButton(
@@ -186,7 +238,11 @@ class _CalendarViewState extends ConsumerState<CalendarView> {
     );
     if (confirmed != true) return;
     try {
-      await _service.deleteEvent(event.id);
+      await _websitePublisher.delete(
+        requesterRole: _role,
+        event: event,
+        onWebsite: _onWebsite(event),
+      );
       await _load();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -200,6 +256,117 @@ class _CalendarViewState extends ConsumerState<CalendarView> {
         );
       }
     }
+  }
+
+  /// Whether [event] is on the website; null when that couldn't be loaded.
+  bool? _onWebsite(CalendarEventModel event) => _websiteItems?.containsKey(event.id);
+
+  /// Admin only: [event]'s website state and actions.
+  CalendarWebsiteActions? _websiteActions(CalendarEventModel event) {
+    if (!_isAdmin) return null;
+    final items = _websiteItems;
+    if (items == null) return const CalendarWebsiteActions(state: null);
+    final item = items[event.id];
+    final state = CalendarWebsitePublisher.stateOf(event, item);
+    final ended = CalendarWebsitePublisher.endedReason(event);
+    // Not offered when visitors wouldn't see it: not Published for
+    // everyone, or already over.
+    final reason = CalendarWebsitePublisher.ineligibility(event) ?? ended;
+    // An invalid copy of an event that isn't over can be replaced.
+    final replaceable = state == CalendarWebsiteState.notVisible && item!.validationErrors().isNotEmpty && ended == null;
+    return CalendarWebsiteActions(
+      state: state,
+      unavailableReason: reason,
+      differences: item == null ? const [] : CalendarWebsitePublisher.differences(event, item),
+      visibilityReason: item == null ? null : CalendarWebsitePublisher.visibilityProblem(item),
+      onShow: state == CalendarWebsiteState.notShown && reason == null ? () => _showOnWebsite(event) : null,
+      onUpdate: state == CalendarWebsiteState.outOfDate || replaceable ? () => _updateWebsite(event) : null,
+      onRemove: state == CalendarWebsiteState.notShown ? null : () => _removeFromWebsite(event),
+    );
+  }
+
+  Future<bool> _confirm({required String title, required String content, required String action, required Key actionKey}) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(content),
+        actions: [
+          TextButton(
+            key: const Key('calendar-website-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: actionKey,
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
+  /// Runs one website action, then reloads (also after a failure, so the
+  /// calendar shows what the website actually has). [action] returns why
+  /// visitors don't see the result, if they don't: success is then never
+  /// reported as [done].
+  Future<void> _websiteAction(Future<String?> Function() action, {required String done, required String failed}) async {
+    String message;
+    try {
+      final notVisible = await action();
+      message = notVisible == null ? done : 'Saved to the public website, but not shown to visitors. $notVisible';
+    } catch (e) {
+      message = '$failed: $e';
+    }
+    await _load();
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _showOnWebsite(CalendarEventModel event) async {
+    final approved = await _confirm(
+      title: 'Show on the public website?',
+      content: '"${event.title}" will be visible to anyone on the internet: its title, date and times, '
+          'location, type and description. Who created it stays in the app.',
+      action: 'Show on website',
+      actionKey: const Key('calendar-website-show-confirm'),
+    );
+    if (!approved) return;
+    await _websiteAction(
+      () => _showAndCheck(event),
+      done: 'Shown on the public website',
+      failed: 'Could not show it on the website',
+    );
+  }
+
+  /// Shows or updates [event]'s copy; then why visitors don't see it, if
+  /// they don't.
+  Future<String?> _showAndCheck(CalendarEventModel event) async =>
+      CalendarWebsitePublisher.visibilityProblem(await _websitePublisher.show(requesterRole: _role, event: event, approvedForWebsite: true));
+
+  Future<void> _updateWebsite(CalendarEventModel event) => _websiteAction(
+        () => _showAndCheck(event),
+        done: 'Public website updated',
+        failed: 'Could not update the website',
+      );
+
+  Future<void> _removeFromWebsite(CalendarEventModel event) async {
+    final confirmed = await _confirm(
+      title: 'Remove from the public website?',
+      content: '"${event.title}" will no longer be shown on the public website. The calendar item is unchanged.',
+      action: 'Remove from website',
+      actionKey: const Key('calendar-website-remove-confirm'),
+    );
+    if (!confirmed) return;
+    await _websiteAction(
+      () async {
+        await _websitePublisher.withdraw(requesterRole: _role, eventId: event.id);
+        return null;
+      },
+      done: 'Removed from the public website',
+      failed: 'Could not remove it from the website',
+    );
   }
 
   void _openEventDetail(CalendarEventModel event) {
@@ -216,6 +383,7 @@ class _CalendarViewState extends ConsumerState<CalendarView> {
           ? () => _archive(event)
           : null,
       onDelete: isAdmin ? () => _delete(event) : null,
+      website: _websiteActions(event),
     );
   }
 
@@ -354,6 +522,7 @@ class _CalendarViewState extends ConsumerState<CalendarView> {
                                   ? () => _archive(event)
                                   : null,
                               onDelete: isAdmin ? () => _delete(event) : null,
+                              website: _websiteActions(event),
                             );
                           },
                         ),
@@ -486,6 +655,7 @@ class _CalendarEventCard extends StatelessWidget {
     this.onPublish,
     this.onArchive,
     this.onDelete,
+    this.website,
   });
 
   final CalendarEventModel event;
@@ -495,6 +665,7 @@ class _CalendarEventCard extends StatelessWidget {
   final VoidCallback? onPublish;
   final VoidCallback? onArchive;
   final VoidCallback? onDelete;
+  final CalendarWebsiteActions? website;
 
   @override
   Widget build(BuildContext context) {
@@ -505,6 +676,7 @@ class _CalendarEventCard extends StatelessWidget {
             ? '${event.startTime} - ${event.endTime}'
             : event.startTime
         : null;
+    final website = isAdmin ? this.website : null;
 
     return Card(
       elevation: 0,
@@ -575,8 +747,18 @@ class _CalendarEventCard extends StatelessWidget {
                   style: const TextStyle(fontSize: 13, color: AppColors.textPrimary),
                 ),
               ],
+              if (website != null &&
+                  website.state != null &&
+                  website.state != CalendarWebsiteState.notShown) ...[
+                const SizedBox(height: 10),
+                CalendarWebsiteChip(state: website.state),
+              ],
               if (isAdmin &&
-                  (onEdit != null || onPublish != null || onArchive != null || onDelete != null)) ...[
+                  (onEdit != null ||
+                      onPublish != null ||
+                      onArchive != null ||
+                      onDelete != null ||
+                      (website?.hasActions ?? false))) ...[
                 const Divider(height: 24),
                 Wrap(
                   alignment: WrapAlignment.end,
@@ -595,6 +777,7 @@ class _CalendarEventCard extends StatelessWidget {
                         icon: const Icon(Icons.edit_outlined, size: 18),
                         label: const Text('Edit'),
                       ),
+                    ...calendarWebsiteButtons(website),
                     if (onArchive != null)
                       TextButton.icon(
                         onPressed: onArchive,

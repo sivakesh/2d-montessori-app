@@ -588,7 +588,8 @@ void main() {
       await service.publishCustomPage(requesterRole: 'admin', actor: _admin, page: (await service.getCustomPage(requesterRole: 'admin', pageId: id))!.draft);
       await open(tester, id, size: const Size(390, 1400));
       expect(tester.takeException(), isNull);
-      for (final k in ['website-custom-save-draft', 'website-custom-publish', 'website-custom-more', 'website-preview-ta']) {
+      expect(key('website-preview-ta'), findsNothing, reason: 'English only');
+      for (final k in ['website-custom-save-draft', 'website-custom-publish', 'website-custom-more']) {
         expect(key(k), findsOneWidget, reason: k);
       }
       for (final k in ['website-custom-unpublish', 'website-custom-archive', 'website-preview-source', 'website-custom-preview-toggle', 'website-custom-preview-mobile']) {
@@ -628,21 +629,20 @@ void main() {
   });
 
   group('languages', () {
-    testWidgets('English and Tamil are edited; the canvas follows the language; other languages are kept', (tester) async {
+    testWidgets('English only: no Tamil fields or language switch; editing English keeps stored Tamil and other languages', (tester) async {
       final id = await page(blocks: [
         {'id': 'b_text000001', 'type': 'text', 'v': 1, 'heading': {'en': 'About', 'ta': 'பற்றி', 'hi': 'परिचय'}},
       ]);
       await open(tester, id);
-      expect(onCanvas(find.text('About')), findsOneWidget);
-      await tap(tester, key('website-preview-ta'));
-      expect(onCanvas(find.text('பற்றி')), findsOneWidget);
-      expect(onCanvas(find.text('சுற்றுலா')), findsOneWidget, reason: 'the page title in Tamil');
+      expect(onCanvas(find.text('About')), findsOneWidget, reason: 'the canvas is in English');
+      expect(key('website-preview-ta'), findsNothing, reason: 'no preview-language switch');
 
       await tap(tester, key('website-canvas-block-b_text000001'));
-      await type(tester, 'website-block-b_text000001-heading-ta', 'எங்களைப் பற்றி');
-      expect(onCanvas(find.text('எங்களைப் பற்றி')), findsOneWidget);
+      expect(find.byWidgetPredicate((w) => w is TextFormField && (w.key as ValueKey?)?.value.toString().startsWith('website-block-b_text000001-heading-ta') == true), findsNothing);
+      await type(tester, 'website-block-b_text000001-heading-en', 'About us');
+      expect(onCanvas(find.text('About us')), findsOneWidget);
       await tap(tester, key('website-custom-save-draft'));
-      expect(((await draft(id))['blocks'] as List).single['heading'], {'en': 'About', 'ta': 'எங்களைப் பற்றி', 'hi': 'परिचय'});
+      expect(((await draft(id))['blocks'] as List).single['heading'], {'en': 'About us', 'ta': 'பற்றி', 'hi': 'परिचय'}, reason: 'stored translations are kept');
     });
   });
 

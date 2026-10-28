@@ -9,6 +9,25 @@ import '../public_routes.dart';
 import '../public_strings.dart';
 import '../public_website_theme.dart';
 
+/// The top bar's text size and colour, for the controls inside it (the
+/// language switch and the login controls). Without one, the site's own
+/// (13 px, forest green).
+class PublicUtilityBarTheme extends InheritedWidget {
+  const PublicUtilityBarTheme({super.key, this.fontSize = standardFontSize, this.color, required super.child});
+
+  static const standardFontSize = 13.0;
+
+  final double fontSize;
+
+  /// The login and logout text and icons; null: the site's own.
+  final Color? color;
+
+  static PublicUtilityBarTheme? of(BuildContext context) => context.dependOnInheritedWidgetOfExactType<PublicUtilityBarTheme>();
+
+  @override
+  bool updateShouldNotify(PublicUtilityBarTheme old) => old.fontSize != fontSize || old.color != color;
+}
+
 /// What the public site's account controls show.
 enum PublicAccountStatus {
   /// Still finding out (auth or profile loading): show nothing rather than
@@ -121,12 +140,14 @@ class PublicAccountControls extends ConsumerWidget {
     Widget button({required Key key, required IconData icon, required String label, required VoidCallback onPressed}) {
       switch (style) {
         case PublicAccountControlsStyle.utilityBar:
+          final bar = PublicUtilityBarTheme.of(context);
+          final size = bar?.fontSize ?? PublicUtilityBarTheme.standardFontSize;
           return TextButton.icon(
             key: key,
             onPressed: onPressed,
-            icon: Icon(icon, size: 15),
-            label: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-            style: TextButton.styleFrom(foregroundColor: PublicColors.forest, visualDensity: VisualDensity.compact),
+            icon: Icon(icon, size: size + 2),
+            label: Text(label, style: TextStyle(fontSize: size, fontWeight: FontWeight.w600)),
+            style: TextButton.styleFrom(foregroundColor: bar?.color ?? PublicColors.forest, visualDensity: VisualDensity.compact),
           );
         case PublicAccountControlsStyle.menu:
           return OutlinedButton.icon(

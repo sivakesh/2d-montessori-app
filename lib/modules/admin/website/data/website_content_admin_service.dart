@@ -9,8 +9,10 @@ import '../../../public_website/content/blocks/block_registry.dart';
 import '../../../public_website/content/blocks/website_block.dart';
 import '../../../public_website/content/built_in_pages.dart';
 import '../../../public_website/content/website_content_models.dart';
+import '../../../public_website/content/website_public_item.dart';
 import '../../../public_website/content/website_content_repository.dart';
 import '../../../public_website/content/website_custom_page.dart';
+import '../../../public_website/content/website_page_style.dart';
 import '../../../public_website/content/website_languages.dart';
 import '../../../public_website/content/website_site_layout.dart';
 import 'website_image_processor.dart';
@@ -405,14 +407,51 @@ class WebsiteContentAdminService {
   }
 
   /// Labels of the pages (built-in or additional, draft or live) whose
-  /// content uses [mediaId].
+  /// content uses [mediaId], of the events and announcements on the
+  /// website showing it, and of the website forms (any status) using it.
   Future<Set<String>> pagesUsing({required String requesterRole, required String mediaId}) async {
     _requireAdmin(requesterRole);
     final labels = <String>{};
     for (final collection in [_drafts, _live]) {
       labels.addAll(await _labelsUsing(collection, mediaId));
     }
+    labels.addAll((await _websiteItemsUsing(mediaId)).labels);
+    labels.addAll(await _formsUsing(_formsCollection, mediaId));
     return labels;
+  }
+
+  // Website forms (`website_forms`, `website_public_forms`), named here so
+  // this service doesn't depend on the forms module.
+  static const _formsCollection = 'website_forms';
+  static const _publicFormsCollection = 'website_public_forms';
+
+  /// Website forms in [collection] whose cover or image blocks use
+  /// [mediaId] (by their `mediaIds`).
+  Future<Set<String>> _formsUsing(String collection, String mediaId) async {
+    final snapshot = await _firestore.collection(collection).where('mediaIds', arrayContains: mediaId).get();
+    return {for (final doc in snapshot.docs) 'the “${LocalizedText.fromMap(doc.data()['title']).en}” form'};
+  }
+
+  /// The events and announcements on the website (their public copies,
+  /// which are live) whose image is [mediaId]: labels such as "the “Annual
+  /// Day” event", and where each is changed (Calendar, Notifications).
+  Future<({Set<String> labels, Set<String> places})> _websiteItemsUsing(String mediaId) async {
+    final snapshot = await _firestore.collection(WebsitePublicItem.collection).where('imageMediaId', isEqualTo: mediaId).get();
+    final labels = <String>{};
+    final places = <String>{};
+    for (final doc in snapshot.docs) {
+      final kind = WebsitePublicItemKind.parse(doc.data()['kind']);
+      final title = LocalizedText.fromMap(doc.data()['title']).en;
+      switch (kind) {
+        case WebsitePublicItemKind.announcement:
+          labels.add('the “$title” announcement');
+          places.add('Notifications');
+        case WebsitePublicItemKind.event || null:
+          labels.add('the “$title” event');
+          places.add('Calendar');
+      }
+    }
+    return (labels: labels, places: places);
   }
 
   /// Pages in [collection] using [mediaId]: by `mediaIds` (every image a
@@ -430,9 +469,22 @@ class WebsiteContentAdminService {
   }
 
   Future<void> _requireNotUsedByLivePage(String mediaId, String verb) async {
+    final items = await _websiteItemsUsing(mediaId);
+    if (items.labels.isNotEmpty) {
+      throw WebsiteContentException(
+        'You can’t $verb this image while ${items.labels.join(', ')} on the website shows it. '
+        'Choose a different image for it, or remove the image, in the ${(items.places.toList()..sort()).join(' or ')} first.',
+      );
+    }
     final labels = await _labelsUsing(_live, mediaId);
     if (labels.isNotEmpty) {
       throw WebsiteContentException('You can’t $verb this image while the published ${labels.join(', ')} page shows it. Choose a different image there, or unpublish that page, first.');
+    }
+    final forms = await _formsUsing(_publicFormsCollection, mediaId);
+    if (forms.isNotEmpty) {
+      throw WebsiteContentException(
+        'You can’t $verb this image while the active ${forms.join(', ')} shows it. Choose a different image in Website forms (and activate the change), or deactivate the form, first.',
+      );
     }
   }
 
@@ -587,10 +639,24 @@ class WebsiteContentAdminService {
   /// hidden (sections and columns only hold blocks, so they count by what
   /// they hold). Unsupported blocks aren't shown, so they don't count.
   static void _requireVisibleContent(List<WebsiteBlock> blocks) {
-    final shown = BlockRegistry.flatten(BlockRegistry.withoutHidden(blocks));
-    if (!shown.any((b) => b is StructuredBlock && !containerTypes.contains(b.type))) {
-      throw WebsiteContentException(nothingVisibleMessage);
-    }
+    if (!showsVisitorsSomething(blocks)) throw WebsiteContentException(nothingVisibleMessage);
+  }
+
+  /// Whether [blocks] show visitors something (see [_requireVisibleContent]):
+  /// publishing pages built with blocks is refused otherwise.
+  static bool showsVisitorsSomething(List<WebsiteBlock> blocks) =>
+      BlockRegistry.flatten(BlockRegistry.withoutHidden(blocks)).any((b) => b is StructuredBlock && !containerTypes.contains(b.type));
+
+  /// Whether visitors see something published for a built-in page that
+  /// publishing blocks would replace: published blocks ([liveBlocks]), or
+  /// a heading, introduction or (published) image published with the form
+  /// editor ([liveContent]). Text stored blank means the site's own
+  /// wording, which is not a published version.
+  static bool builtInHasPublishedVersion({List<WebsiteBlock>? liveBlocks, WebsitePageContent? liveContent, required Iterable<WebsiteMedia> media}) {
+    if (liveBlocks != null) return true;
+    if (liveContent == null) return false;
+    final image = liveContent.imageMediaId;
+    return !liveContent.headline.isEmpty || !liveContent.intro.isEmpty || (image != null && media.any((m) => m.id == image && m.isPublished));
   }
 
   /// Removes the page's published content; the page returns to its
@@ -611,7 +677,11 @@ class WebsiteContentAdminService {
   /// `liveContent` is the managed content of the live page as published
   /// (null for Contact, or when nothing is published): what visitors see
   /// on the built-in page while no blocks are published.
-  Future<({List<WebsiteBlock>? draft, List<WebsiteBlock>? live, WebsitePageContent? content, WebsitePageContent? liveContent})> getBuiltInPage({required String requesterRole, required BuiltInPage page}) async {
+  ///
+  /// `draftStyle` and `liveStyle` are the page's own look ([PageStyle]) in
+  /// each.
+  Future<({List<WebsiteBlock>? draft, List<WebsiteBlock>? live, WebsitePageContent? content, WebsitePageContent? liveContent, PageStyle draftStyle, PageStyle liveStyle})> getBuiltInPage(
+      {required String requesterRole, required BuiltInPage page}) async {
     _requireAdmin(requesterRole);
     final draft = (await _drafts.doc(page.id).get()).data();
     final live = (await _live.doc(page.id).get()).data();
@@ -628,6 +698,8 @@ class WebsiteContentAdminService {
       live: builtInPageBlocks(live),
       content: content,
       liveContent: slot != null && _hasManagedContent(live) ? WebsitePageContent.fromMap(slot, live!) : null,
+      draftStyle: PageStyle.fromMap(draft?[PageStyle.field]),
+      liveStyle: PageStyle.fromMap(live?[PageStyle.field]),
     );
   }
 
@@ -636,10 +708,11 @@ class WebsiteContentAdminService {
     if (errors.isNotEmpty) throw WebsiteContentException(errors.first);
   }
 
-  /// [blocks] as fields of built-in page document [ref], with every image
-  /// the document uses (its managed image too). The live page leaves out
-  /// hidden blocks ([BlockRegistry.withoutHidden]).
-  Future<Map<String, dynamic>> _builtInFields(DocumentReference<Map<String, dynamic>> ref, List<WebsiteBlock> all, {bool live = false}) async {
+  /// [blocks] and [style] as fields of built-in page document [ref], with
+  /// every image the document uses (its managed image too). The live page
+  /// leaves out hidden blocks ([BlockRegistry.withoutHidden]). A page
+  /// without its own look stores none (a stored one is removed).
+  Future<Map<String, dynamic>> _builtInFields(DocumentReference<Map<String, dynamic>> ref, List<WebsiteBlock> all, PageStyle style, {bool live = false}) async {
     final blocks = live ? BlockRegistry.withoutHidden(all) : all;
     final existing = (await ref.get()).data();
     final image = existing?['imageMediaId'];
@@ -647,19 +720,29 @@ class WebsiteContentAdminService {
       'schemaVersion': 2,
       'blocks': BlockRegistry.toMapList(blocks),
       'mediaIds': {if (image is String && image.isNotEmpty) image, ...BlockRegistry.referencedMedia(blocks)}.toList(),
+      if (!style.isDefault)
+        PageStyle.field: style.toMap()
+      else if (existing?.containsKey(PageStyle.field) ?? false)
+        PageStyle.field: FieldValue.delete(),
     };
+  }
+
+  void _validatePageStyle(PageStyle style) {
+    final errors = style.validationErrors();
+    if (errors.isNotEmpty) throw WebsiteContentException(errors.first);
   }
 
   /// Saves [blocks] as built-in [page]'s draft. Only the blocks fields are
   /// written: the page's managed headline, introduction and image (what
   /// older versions of the app show) are kept as they are. Visitors keep
   /// seeing the published page.
-  Future<void> saveBuiltInPageDraft({required String requesterRole, required AppUser actor, required BuiltInPage page, required List<WebsiteBlock> blocks}) async {
+  Future<void> saveBuiltInPageDraft({required String requesterRole, required AppUser actor, required BuiltInPage page, required List<WebsiteBlock> blocks, PageStyle style = const PageStyle()}) async {
     _requireAdmin(requesterRole);
     _validateBlocks(blocks);
+    _validatePageStyle(style);
     final ref = _drafts.doc(page.id);
     final data = {
-      ...await _builtInFields(ref, blocks),
+      ...await _builtInFields(ref, blocks, style),
       'updatedAt': FieldValue.serverTimestamp(),
       'updatedById': actor.id,
       'updatedByName': actor.name ?? '',
@@ -671,15 +754,16 @@ class WebsiteContentAdminService {
   /// page built with blocks (the live copy leaves out hidden blocks). Every
   /// image must be published. If the draft is saved but the live page
   /// can't be written, the error says so.
-  Future<void> publishBuiltInPage({required String requesterRole, required AppUser actor, required BuiltInPage page, required List<WebsiteBlock> blocks}) async {
+  Future<void> publishBuiltInPage({required String requesterRole, required AppUser actor, required BuiltInPage page, required List<WebsiteBlock> blocks, PageStyle style = const PageStyle()}) async {
     _requireAdmin(requesterRole);
     _validateBlocks(blocks);
+    _validatePageStyle(style);
     _requireVisibleContent(blocks);
     await _requirePublishedMedia(BlockRegistry.referencedMedia(blocks));
-    await saveBuiltInPageDraft(requesterRole: requesterRole, actor: actor, page: page, blocks: blocks);
+    await saveBuiltInPageDraft(requesterRole: requesterRole, actor: actor, page: page, blocks: blocks, style: style);
     final ref = _live.doc(page.id);
     await _publishAfterDraft(() async {
-      final data = {...await _builtInFields(ref, blocks, live: true), 'publishedAt': FieldValue.serverTimestamp()};
+      final data = {...await _builtInFields(ref, blocks, style, live: true), 'publishedAt': FieldValue.serverTimestamp()};
       await _writeFields(ref, data);
     });
   }
@@ -713,6 +797,9 @@ class WebsiteContentAdminService {
     await ref.update({
       'schemaVersion': FieldValue.delete(),
       'blocks': FieldValue.delete(),
+      // The page's look goes with its blocks: the built-in page looks as
+      // it always has.
+      PageStyle.field: FieldValue.delete(),
       'mediaIds': [if (image is String && image.isNotEmpty) image],
       if (actor != null) ...{'updatedAt': FieldValue.serverTimestamp(), 'updatedById': actor.id, 'updatedByName': actor.name ?? ''},
     });
@@ -802,6 +889,9 @@ class WebsiteContentAdminService {
     await _requireAvailableSlug(page.slug.trim(), exceptPageId: page.id);
     await _drafts.doc(page.id).set({
       ...page.copyWith(navOrder: current.draft.navOrder).toContentMap(),
+      // A merge keeps fields that aren't written: a cleared page look is
+      // removed explicitly.
+      if (page.pageStyle.isDefault) PageStyle.field: FieldValue.delete(),
       'archived': current.draft.archived,
       'updatedAt': FieldValue.serverTimestamp(),
       'updatedById': actor.id,

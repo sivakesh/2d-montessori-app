@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -6,6 +8,7 @@ import '../../../core/widgets/app_logo.dart';
 import '../content/website_content_repository.dart';
 import '../content/website_design.dart';
 import '../content/website_site_layout.dart';
+import '../content/website_site_style.dart';
 import '../public_routes.dart';
 import '../public_strings.dart';
 import '../public_website_theme.dart';
@@ -77,8 +80,9 @@ void openPublicNavEntry(BuildContext context, PublicNavEntry entry) {
 class PublicLanguageSwitch extends ConsumerWidget {
   const PublicLanguageSwitch({super.key});
 
-  static const _labelStyle = TextStyle(fontSize: 13, fontWeight: FontWeight.w600);
-  static const _strut = StrutStyle(fontSize: 13, height: 1.4, forceStrutHeight: true);
+  // At the top bar's text size (13 px unless the header sets one).
+  static TextStyle _labelStyle(double size) => TextStyle(fontSize: size, fontWeight: FontWeight.w600);
+  static StrutStyle _strut(double size) => StrutStyle(fontSize: size, height: 1.4, forceStrutHeight: true);
 
   /// Up to this many languages show as segments.
   static const maxSegments = 3;
@@ -97,19 +101,20 @@ class PublicLanguageSwitch extends ConsumerWidget {
         ),
       );
 
-  Widget _label(String text, {required bool selected}) => Text(
+  Widget _label(String text, {required bool selected, required double size}) => Text(
         text,
         maxLines: 1,
         softWrap: false,
         textAlign: TextAlign.center,
-        strutStyle: _strut,
-        style: _labelStyle.copyWith(color: selected ? Colors.white : PublicColors.forest),
+        strutStyle: _strut(size),
+        style: _labelStyle(size).copyWith(color: selected ? Colors.white : PublicColors.forest),
       );
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final languages = ref.watch(publicLanguagesProvider);
     final chosen = ref.watch(publicLanguageProvider);
+    final size = PublicUtilityBarTheme.of(context)?.fontSize ?? PublicUtilityBarTheme.standardFontSize;
     final offered = languages.contains(chosen);
     final selected = offered ? chosen : (languages.contains(PublicLanguage.english) ? PublicLanguage.english : languages.first);
     if (!offered) {
@@ -153,7 +158,7 @@ class PublicLanguageSwitch extends ConsumerWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _label(selected.shortLabel, selected: false),
+                      _label(selected.shortLabel, selected: false, size: size),
                       const SizedBox(width: 4),
                       const Icon(Icons.expand_more_rounded, size: 16, color: PublicColors.forest),
                     ],
@@ -186,7 +191,7 @@ class PublicLanguageSwitch extends ConsumerWidget {
                   constraints: const BoxConstraints(minHeight: 34, minWidth: 44),
                   alignment: Alignment.center,
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                  child: _label(language.shortLabel, selected: isSelected),
+                  child: _label(language.shortLabel, selected: isSelected, size: size),
                 ),
               ),
             ),
@@ -224,7 +229,7 @@ class PublicHeader extends ConsumerWidget {
   static const _linkChrome = 28.0;
 
   static double _textWidth(BuildContext context, String text) => (TextPainter(
-        text: TextSpan(text: text, style: PublicText.nav),
+        text: TextSpan(text: text, style: WebsiteDesignScope.of(context).navStyle),
         textDirection: TextDirection.ltr,
         textScaler: MediaQuery.textScalerOf(context),
         maxLines: 1,
@@ -233,10 +238,11 @@ class PublicHeader extends ConsumerWidget {
 
   static bool _linksFit(BuildContext context, List<String> labels, double available) {
     final scaler = MediaQuery.textScalerOf(context);
+    final style = WebsiteDesignScope.of(context).navStyle;
     var total = _brandMinWidth;
     for (final label in labels) {
       final painter = TextPainter(
-        text: TextSpan(text: label, style: PublicText.nav),
+        text: TextSpan(text: label, style: style),
         textDirection: TextDirection.ltr,
         textScaler: scaler,
         maxLines: 1,
@@ -262,6 +268,7 @@ class PublicHeader extends ConsumerWidget {
     final currentColor = design.resolve(style.linkColor) ?? design.colorOf('forest');
     final accent = design.resolve(style.accentColor) ?? design.colorOf('gold');
     final vertical = switch (style.height) { 'compact' => 8.0, 'spacious' => 22.0, _ => 14.0 };
+    final barColor = design.resolve(style.utilityBackground) ?? design.colorOf('sageLight');
     Widget? cta() => button == null
         ? null
         : Builder(
@@ -274,7 +281,7 @@ class PublicHeader extends ConsumerWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
-              child: Text(buttonLabel, maxLines: 1, overflow: TextOverflow.ellipsis),
+              child: Text(buttonLabel, maxLines: 1, overflow: TextOverflow.ellipsis, style: design.buttonSize == null ? null : TextStyle(fontSize: design.buttonSize)),
             ),
           );
     return Container(
@@ -288,18 +295,36 @@ class PublicHeader extends ConsumerWidget {
         children: [
           Container(
             key: const Key('public-utility-bar'),
-            color: design.resolve(style.utilityBackground) ?? design.colorOf('sageLight'),
-            padding: const EdgeInsets.symmetric(vertical: 6),
+            color: barColor,
+            padding: EdgeInsets.symmetric(vertical: style.utilityPaddingY ?? SiteHeaderStyle.utilityPaddingYRange.standard),
             child: PublicContentWidth(
-              child: Wrap(
-                alignment: WrapAlignment.end,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 12,
-                runSpacing: 6,
-                children: [
-                  const PublicLanguageSwitch(),
-                  if (!layout.isMobile) const PublicAccountControls(style: PublicAccountControlsStyle.utilityBar),
-                ],
+              child: Padding(
+                // Inside the page gutter; at most 16 px on phones, so the
+                // controls keep their room.
+                padding: EdgeInsets.symmetric(horizontal: math.min(style.utilityPaddingX ?? 0, layout.isMobile ? 16 : double.infinity)),
+                child: PublicUtilityBarTheme(
+                  fontSize: style.utilityFontSize ?? PublicUtilityBarTheme.standardFontSize,
+                  // Unset: the site's own green, or white where the green
+                  // would be hard to read on this bar.
+                  color: design.resolve(style.utilityTextColor) ?? readableTextOn(barColor, preferred: PublicColors.forest, alternative: Colors.white),
+                  // Wraps onto a second line when the controls don't fit.
+                  // The full width, so the alignment can move them (a Wrap
+                  // on its own is only as wide as its controls, centred).
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: Wrap(
+                      key: const Key('public-utility-bar-controls'),
+                      alignment: switch (style.utilityAlign) { 'start' => WrapAlignment.start, 'end' => WrapAlignment.end, _ => WrapAlignment.center },
+                      crossAxisAlignment: switch (style.utilityVerticalAlign) { 'top' => WrapCrossAlignment.start, 'bottom' => WrapCrossAlignment.end, _ => WrapCrossAlignment.center },
+                      spacing: style.utilitySpacing ?? SiteHeaderStyle.utilitySpacingRange.standard,
+                      runSpacing: 6,
+                      children: [
+                        const PublicLanguageSwitch(),
+                        if (!layout.isMobile) const PublicAccountControls(style: PublicAccountControlsStyle.utilityBar),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
@@ -420,7 +445,7 @@ class _NavLink extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label, style: PublicText.nav.copyWith(color: selected ? currentColor : color)),
+          Text(label, style: WebsiteDesignScope.of(context).navStyle.copyWith(color: selected ? currentColor : color)),
           const SizedBox(height: 4),
           Container(height: 2, width: 18, color: selected ? accent : Colors.transparent),
         ],
@@ -455,7 +480,7 @@ class PublicMenuDrawer extends ConsumerWidget {
                 key: Key('public-menu-${entry.route}'),
                 title: Text(
                   entry.label(strings, language),
-                  style: PublicText.nav.copyWith(fontSize: 17, color: entry.route == currentRoute ? PublicColors.forest : PublicColors.ink),
+                  style: PublicText.nav.copyWith(fontSize: (WebsiteDesignScope.of(context).navSize ?? 15) + 2, color: entry.route == currentRoute ? PublicColors.forest : PublicColors.ink),
                 ),
                 trailing: entry.route == currentRoute ? const Icon(Icons.circle, size: 8, color: PublicColors.gold) : null,
                 onTap: () {

@@ -13,6 +13,7 @@ import '../../../public_website/content/built_in_pages.dart';
 import '../../../public_website/content/website_content_models.dart';
 import '../../../public_website/content/website_content_repository.dart';
 import '../../../public_website/content/website_custom_page.dart';
+import '../../../public_website/content/website_page_style.dart';
 import '../../../public_website/content/website_site_layout.dart';
 import '../../../public_website/public_strings.dart';
 import '../../../public_website/ui/public_gallery_page.dart';
@@ -25,6 +26,7 @@ import 'page_builder/website_visual_editor.dart';
 import 'website_content_editors.dart';
 import 'website_content_screen.dart';
 import 'website_custom_page_editor.dart';
+import 'website_design_editors.dart';
 
 /// The public page widget for [page] (what visitors open at its address),
 /// drawn with [content] — the same code path as the live site, so a
@@ -160,6 +162,12 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
   /// The blocks being edited; null while the page is still its built-in
   /// self in the editor.
   List<WebsiteBlock>? _blocks;
+
+  /// The page's own look (its background): saved draft, published, and
+  /// being edited.
+  PageStyle _draftStyle = const PageStyle();
+  PageStyle _liveStyle = const PageStyle();
+  PageStyle _pageStyle = const PageStyle();
   WebsitePageContent? _content;
 
   /// The managed content published for the built-in page (heading,
@@ -173,6 +181,9 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
   int _generation = 0;
   PublicLanguage _language = PublicLanguage.english;
   bool _mobile = false;
+
+  /// The canvas at a tablet's width (pages built with blocks).
+  bool _tablet = false;
   bool _previewOnly = false;
 
   @override
@@ -197,6 +208,9 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
         _draftBlocks = page.draft;
         _liveBlocks = page.live;
         _blocks = page.draft == null ? null : [...page.draft!];
+        _draftStyle = page.draftStyle;
+        _liveStyle = page.liveStyle;
+        _pageStyle = page.draftStyle;
         _content = page.content;
         _liveContent = page.liveContent;
         _library = library;
@@ -238,16 +252,18 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
       customPages: _publishedPages,
       layout: _siteLayout,
       builtInBlocks: {_pageId.id: ?blocks},
+      builtInStyles: {if (blocks != null && !_pageStyle.isDefault) _pageId.id: _pageStyle},
     );
   }
 
   static String _encode(List<WebsiteBlock>? blocks) => blocks == null ? 'null' : jsonEncode(BlockRegistry.toMapList(blocks), toEncodable: (o) => o.toString());
 
-  bool get _unsaved => _encode(_blocks) != _encode(_draftBlocks);
+  bool get _unsaved => _encode(_blocks) != _encode(_draftBlocks) || (_blocks != null && _pageStyle != _draftStyle);
 
-  /// The published blocks aren't what publishing the saved draft would
-  /// store (hidden blocks are never published).
-  bool get _draftUnpublished => _liveBlocks != null && _draftBlocks != null && _encode(_liveBlocks) != _encode(BlockRegistry.withoutHidden(_draftBlocks!));
+  /// The published blocks or look aren't what publishing the saved draft
+  /// would store (hidden blocks are never published).
+  bool get _draftUnpublished =>
+      _liveBlocks != null && _draftBlocks != null && (_encode(_liveBlocks) != _encode(BlockRegistry.withoutHidden(_draftBlocks!)) || _liveStyle != _draftStyle);
 
   /// Runs [action]; whether it succeeded. Afterwards — even when it
   /// failed part-way — the saved draft and published blocks are read
@@ -270,6 +286,8 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
           _draftBlocks = page.draft;
           _liveBlocks = page.live;
           _liveContent = page.liveContent;
+          _draftStyle = page.draftStyle;
+          _liveStyle = page.liveStyle;
         });
       }
     } catch (_) {
@@ -305,6 +323,7 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
     if (!await _confirm('Discard unsaved changes?', 'The page goes back to its last saved draft.', 'Discard', const Key('website-builtin-discard-confirm'))) return;
     setState(() {
       _blocks = _draftBlocks == null ? null : [..._draftBlocks!];
+      _pageStyle = _draftStyle;
       _generation++;
     });
   }
@@ -314,18 +333,13 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
   /// introduction or (published) image published with the form editor.
   /// Text stored blank means the site's own wording, which is not a
   /// published version.
-  bool get _hasPublishedVersion {
-    if (_liveBlocks != null) return true;
-    final live = _liveContent;
-    if (live == null) return false;
-    final image = live.imageMediaId;
-    return !live.headline.isEmpty || !live.intro.isEmpty || (image != null && _library.any((m) => m.id == image && m.isPublished));
-  }
+  bool get _hasPublishedVersion =>
+      WebsiteContentAdminService.builtInHasPublishedVersion(liveBlocks: _liveBlocks, liveContent: _liveContent, media: _library);
 
   /// Publishes [blocks]; over a published version, only once confirmed.
   Future<void> _publish(List<WebsiteBlock> blocks) async {
     if (_hasPublishedVersion && !await confirmReplacePublished(const Key('website-builtin-publish-confirm'))) return;
-    await _run(() => service.publishBuiltInPage(requesterRole: role, actor: user, page: _pageId, blocks: blocks), 'Published at ${_pageId.route}.');
+    await _run(() => service.publishBuiltInPage(requesterRole: role, actor: user, page: _pageId, blocks: blocks, style: _pageStyle), 'Published at ${_pageId.route}.');
   }
 
   Future<void> _unpublish() async {
@@ -366,6 +380,10 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
       _draftBlocks = null;
       _liveBlocks = null;
       _blocks = null;
+      // Its look goes with its blocks.
+      _draftStyle = const PageStyle();
+      _liveStyle = const PageStyle();
+      _pageStyle = const PageStyle();
       _generation++;
     });
   }
@@ -413,14 +431,19 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           WebsiteLanguagePicker(languages: _languages, selected: _language, onChanged: (l) => setState(() => _language = l), keyPrefix: 'website-preview'),
-          SegmentedButton<bool>(
+          SegmentedButton<String>(
             showSelectedIcon: false,
-            segments: const [
-              ButtonSegment(value: false, icon: Icon(Icons.desktop_windows_outlined), label: Text('Desktop', key: Key('website-builtin-desktop'))),
-              ButtonSegment(value: true, icon: Icon(Icons.phone_iphone), label: Text('Mobile', key: Key('website-builtin-mobile'))),
+            segments: [
+              const ButtonSegment(value: 'desktop', icon: Icon(Icons.desktop_windows_outlined), label: Text('Desktop', key: Key('website-builtin-desktop'))),
+              // Tablets: in the visual editor's canvas.
+              if (_blocks != null) const ButtonSegment(value: 'tablet', icon: Icon(Icons.tablet_mac_outlined), label: Text('Tablet', key: Key('website-builtin-tablet'))),
+              const ButtonSegment(value: 'mobile', icon: Icon(Icons.phone_iphone), label: Text('Mobile', key: Key('website-builtin-mobile'))),
             ],
-            selected: {_mobile},
-            onSelectionChanged: (s) => setState(() => _mobile = s.first),
+            selected: {_mobile ? 'mobile' : (_tablet && _blocks != null ? 'tablet' : 'desktop')},
+            onSelectionChanged: (s) => setState(() {
+              _mobile = s.first == 'mobile';
+              _tablet = s.first == 'tablet';
+            }),
           ),
         ],
       );
@@ -518,7 +541,7 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
     final actions = [
       OutlinedButton.icon(
         key: const Key('website-builtin-save-draft'),
-        onPressed: () => _run(() => service.saveBuiltInPageDraft(requesterRole: role, actor: user, page: _pageId, blocks: blocks), 'Draft saved. Visitors see no change until you publish.'),
+        onPressed: () => _run(() => service.saveBuiltInPageDraft(requesterRole: role, actor: user, page: _pageId, blocks: blocks, style: _pageStyle), 'Draft saved. Visitors see no change until you publish.'),
         icon: const Icon(Icons.save_outlined),
         label: const Text('Save draft'),
       ),
@@ -586,8 +609,10 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
             language: _language,
             generation: _generation,
             mobilePreview: _mobile,
+            tabletPreview: _tablet,
             previewView: preview,
             design: chrome.design,
+            pageStyle: _pageStyle,
             siteHeader: WebsiteChromeScope(chrome: chrome, language: _language, child: PublicHeader(currentRoute: _pageId.route)),
             siteFooter: WebsiteChromeScope(chrome: chrome, language: _language, child: const PublicFooter()),
             siteChromeInfo: (part) => openSiteDesignButton(context, service: service, user: user, onReturn: _reloadSiteLayout),
@@ -615,6 +640,8 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
                       : 'Older versions of the app show the page’s built-in content with its managed heading, introduction and image, which are kept.',
                   style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                 ),
+                const SizedBox(height: 12),
+                WebsitePageBackgroundField(style: _pageStyle, design: chrome.design, onChanged: (v) => setState(() => _pageStyle = v)),
               ],
             ),
             checks: Column(

@@ -5,6 +5,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../content/website_content_models.dart';
 import '../content/website_content_repository.dart';
 import '../content/website_custom_page.dart';
+import '../content/website_design.dart';
+import '../content/website_page_style.dart';
 import '../public_routes.dart';
 import '../public_strings.dart';
 import '../public_website_theme.dart';
@@ -37,7 +39,7 @@ class PublicCustomPage extends ConsumerWidget {
             children: [
               Icon(icon, size: 36, color: PublicColors.gold),
               const SizedBox(height: 16),
-              Text(title, style: layout.isMobile ? PublicText.displayMobile : PublicText.display),
+              Text(title, style: WebsiteDesignScope.of(context).titleStyle(mobile: layout.isMobile)),
               const SizedBox(height: 12),
               Text(body, style: PublicText.body.copyWith(fontSize: 17)),
               const SizedBox(height: 28),
@@ -61,34 +63,38 @@ class PublicCustomPage extends ConsumerWidget {
 
     return PublicScaffold(
       currentRoute: PublicRoutes.customPage(slug),
-      body: Padding(
-        padding: EdgeInsets.symmetric(vertical: layout.isMobile ? 48 : 88),
-        child: page.when(
-          skipLoadingOnRefresh: false,
-          loading: () => Semantics(
-            key: const Key('public-page-loading'),
-            label: strings.pageLoading,
-            child: const Padding(
-              padding: EdgeInsets.symmetric(vertical: 64),
-              child: Center(child: SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 2.5, color: PublicColors.sage))),
+      // The page's own background, behind its content only.
+      body: PageBackground(
+        style: page.valueOrNull?.pageStyle ?? const PageStyle(),
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: layout.isMobile ? 48 : 88),
+          child: page.when(
+            skipLoadingOnRefresh: false,
+            loading: () => Semantics(
+              key: const Key('public-page-loading'),
+              label: strings.pageLoading,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 64),
+                child: Center(child: SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 2.5, color: PublicColors.sage))),
+              ),
             ),
-          ),
-          error: (_, _) => message(
-            key: const Key('public-page-error'),
-            icon: Icons.cloud_off_outlined,
-            title: strings.pageLoadErrorTitle,
-            body: strings.pageLoadErrorBody,
-            action: OutlinedButton.icon(
-              key: const Key('public-page-retry'),
-              onPressed: () => ref.invalidate(liveWebsiteContentProvider),
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: Text(strings.galleryRetry),
-              style: OutlinedButton.styleFrom(foregroundColor: PublicColors.forest, side: const BorderSide(color: PublicColors.line)),
+            error: (_, _) => message(
+              key: const Key('public-page-error'),
+              icon: Icons.cloud_off_outlined,
+              title: strings.pageLoadErrorTitle,
+              body: strings.pageLoadErrorBody,
+              action: OutlinedButton.icon(
+                key: const Key('public-page-retry'),
+                onPressed: () => ref.invalidate(liveWebsiteContentProvider),
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: Text(strings.galleryRetry),
+                style: OutlinedButton.styleFrom(foregroundColor: PublicColors.forest, side: const BorderSide(color: PublicColors.line)),
+              ),
             ),
+            data: (page) => page == null
+                ? message(key: const Key('public-page-not-found'), icon: Icons.search_off_rounded, title: strings.pageNotFoundTitle, body: strings.pageNotFoundBody)
+                : PublicCustomPageBody(page: page, media: {for (final m in media) m.id: m}, language: language),
           ),
-          data: (page) => page == null
-              ? message(key: const Key('public-page-not-found'), icon: Icons.search_off_rounded, title: strings.pageNotFoundTitle, body: strings.pageNotFoundBody)
-              : PublicCustomPageBody(page: page, media: {for (final m in media) m.id: m}, language: language),
         ),
       ),
     );
@@ -119,7 +125,7 @@ class PublicCustomPageBody extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(page.title.resolve(language), key: const Key('public-page-title'), style: layout.isMobile ? PublicText.displayMobile : PublicText.display),
+          Text(page.title.resolve(language), key: const Key('public-page-title'), style: WebsiteDesignScope.of(context).titleStyle(mobile: layout.isMobile)),
           if (intro.isNotEmpty) ...[
             const SizedBox(height: 16),
             ConstrainedBox(
@@ -202,7 +208,7 @@ class PublicCustomPageBody extends StatelessWidget {
             LayoutBuilder(builder: (context, constraints) {
               final columns = layout.isMobile ? 2 : 3;
               final gap = layout.isMobile ? 12.0 : 20.0;
-              final width = ((constraints.maxWidth - gap * (columns - 1)) / columns).floorToDouble();
+              final width = PublicLayout.tileWidth(constraints.maxWidth, columns, gap);
               return Wrap(
                 spacing: gap,
                 runSpacing: gap,

@@ -250,7 +250,7 @@ void main() {
       expect(errors, contains('Block 3 (Call to action): Heading must be 120 characters or fewer.'));
       expect(errors, contains('Block 3 (Call to action): Button 1: Links must start with https://'));
       expect(errors, contains('Block 4 (Buttons): Button 1: This is a protected part of the app'));
-      expect(errors, contains('Block 5 (Image grid): add at least 1 image.'));
+      expect(errors, contains('Block 5 (Photo gallery): add at least 1 image.'));
       expect(errors, contains('Block 6 (Columns): it needs 3 columns for this layout.'));
       expect(errors, contains('Block 6 (Columns): columns can’t contain columns.'));
       expect(errors, contains('blocks can be nested only 1 level deep'));

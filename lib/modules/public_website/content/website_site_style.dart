@@ -16,6 +16,13 @@ class SiteHeaderStyle {
     this.accentColor,
     this.brandColor,
     this.utilityBackground,
+    this.utilityTextColor,
+    this.utilityAlign = 'center',
+    this.utilityVerticalAlign = 'center',
+    this.utilityFontSize,
+    this.utilityPaddingX,
+    this.utilityPaddingY,
+    this.utilitySpacing,
     this.navAlign = 'end',
     this.showLogo = true,
     this.height = 'normal',
@@ -27,6 +34,14 @@ class SiteHeaderStyle {
   });
 
   static const navAligns = ['end', 'center'];
+  static const utilityAligns = ['start', 'center', 'end'];
+  static const utilityVerticalAligns = ['top', 'center', 'bottom'];
+
+  /// The top bar's ranges (px); each `standard` is today's look.
+  static const utilityFontRange = FontSizeRange(11, 18, 13);
+  static const utilityPaddingXRange = FontSizeRange(0, 48, 0);
+  static const utilityPaddingYRange = FontSizeRange(0, 24, 6);
+  static const utilitySpacingRange = FontSizeRange(0, 40, 12);
   static const heights = ['compact', 'normal', 'spacious'];
   static const maxCtaLabelLength = 40;
 
@@ -41,6 +56,23 @@ class SiteHeaderStyle {
 
   /// The slim bar above (language switch, login).
   final String? utilityBackground;
+
+  /// Its login and logout text and icons (the language switch keeps its
+  /// own pill colours, so it stays readable on any bar colour). Null: the
+  /// site's own green, or white on a bar too dark for it.
+  final String? utilityTextColor;
+
+  /// Where its controls sit: `start`, `center` (today's) or `end`, and,
+  /// when they differ in height, `top`, `center` (today's) or `bottom`.
+  final String utilityAlign;
+  final String utilityVerticalAlign;
+
+  /// Its text size, extra space at the sides, space above and below, and
+  /// between its controls (px); null: today's ([utilityFontRange] …).
+  final double? utilityFontSize;
+  final double? utilityPaddingX;
+  final double? utilityPaddingY;
+  final double? utilitySpacing;
 
   /// Where the links sit on wide screens: after the name (`end`), or
   /// centred between the name and the button.
@@ -64,18 +96,27 @@ class SiteHeaderStyle {
 
   static const _keys = {
     'background', 'linkColor', 'accentColor', 'brandColor', 'utilityBackground', 'navAlign', 'showLogo', 'height', 'ctaLabel', 'ctaTarget', 'ctaBackground', 'ctaTextColor', //
+    'utilityTextColor', 'utilityAlign', 'utilityVerticalAlign', 'utilityFontSize', 'utilityPaddingX', 'utilityPaddingY', 'utilitySpacing',
   };
 
   static SiteHeaderStyle fromMap(Object? raw) {
     if (raw is! Map) return const SiteHeaderStyle();
     String? color(String key) => raw[key] is String && (raw[key] as String).isNotEmpty ? raw[key] as String : null;
     String choice(String key, List<String> options, String fallback) => options.contains(raw[key]) ? raw[key] as String : fallback;
+    double? number(String key) => raw[key] is num ? (raw[key] as num).toDouble() : null;
     return SiteHeaderStyle(
       background: color('background'),
       linkColor: color('linkColor'),
       accentColor: color('accentColor'),
       brandColor: color('brandColor'),
       utilityBackground: color('utilityBackground'),
+      utilityTextColor: color('utilityTextColor'),
+      utilityAlign: choice('utilityAlign', utilityAligns, 'center'),
+      utilityVerticalAlign: choice('utilityVerticalAlign', utilityVerticalAligns, 'center'),
+      utilityFontSize: number('utilityFontSize'),
+      utilityPaddingX: number('utilityPaddingX'),
+      utilityPaddingY: number('utilityPaddingY'),
+      utilitySpacing: number('utilitySpacing'),
       navAlign: choice('navAlign', navAligns, 'end'),
       showLogo: raw['showLogo'] != false,
       height: choice('height', heights, 'normal'),
@@ -94,6 +135,15 @@ class SiteHeaderStyle {
         'accentColor': ?accentColor,
         'brandColor': ?brandColor,
         'utilityBackground': ?utilityBackground,
+        'utilityTextColor': ?utilityTextColor,
+        // Written only when changed, so a header saved before these
+        // existed is stored exactly as before.
+        if (utilityAlign != 'center') 'utilityAlign': utilityAlign,
+        if (utilityVerticalAlign != 'center') 'utilityVerticalAlign': utilityVerticalAlign,
+        'utilityFontSize': ?utilityFontSize,
+        'utilityPaddingX': ?utilityPaddingX,
+        'utilityPaddingY': ?utilityPaddingY,
+        'utilitySpacing': ?utilitySpacing,
         'navAlign': navAlign,
         'showLogo': showLogo,
         'height': height,
@@ -111,6 +161,13 @@ class SiteHeaderStyle {
     String? Function()? accentColor,
     String? Function()? brandColor,
     String? Function()? utilityBackground,
+    String? Function()? utilityTextColor,
+    String? utilityAlign,
+    String? utilityVerticalAlign,
+    double? Function()? utilityFontSize,
+    double? Function()? utilityPaddingX,
+    double? Function()? utilityPaddingY,
+    double? Function()? utilitySpacing,
     String? navAlign,
     bool? showLogo,
     String? height,
@@ -125,6 +182,13 @@ class SiteHeaderStyle {
         accentColor: accentColor == null ? this.accentColor : accentColor(),
         brandColor: brandColor == null ? this.brandColor : brandColor(),
         utilityBackground: utilityBackground == null ? this.utilityBackground : utilityBackground(),
+        utilityTextColor: utilityTextColor == null ? this.utilityTextColor : utilityTextColor(),
+        utilityAlign: utilityAlign ?? this.utilityAlign,
+        utilityVerticalAlign: utilityVerticalAlign ?? this.utilityVerticalAlign,
+        utilityFontSize: utilityFontSize == null ? this.utilityFontSize : utilityFontSize(),
+        utilityPaddingX: utilityPaddingX == null ? this.utilityPaddingX : utilityPaddingX(),
+        utilityPaddingY: utilityPaddingY == null ? this.utilityPaddingY : utilityPaddingY(),
+        utilitySpacing: utilitySpacing == null ? this.utilitySpacing : utilitySpacing(),
         navAlign: navAlign ?? this.navAlign,
         showLogo: showLogo ?? this.showLogo,
         height: height ?? this.height,
@@ -145,10 +209,19 @@ class SiteHeaderStyle {
       ('current page colour', accentColor),
       ('site name colour', brandColor),
       ('top bar colour', utilityBackground),
+      ('top bar text colour', utilityTextColor),
       ('button colour', ctaBackground),
       ('button text colour', ctaTextColor),
     ]) {
       if (value != null && !SiteDesign.isColorValue(value)) errors.add('Header $name: choose a colour from the palette or enter #RRGGBB.');
+    }
+    for (final (name, value, range) in [
+      ('text size', utilityFontSize, utilityFontRange),
+      ('side padding', utilityPaddingX, utilityPaddingXRange),
+      ('top and bottom padding', utilityPaddingY, utilityPaddingYRange),
+      ('space between controls', utilitySpacing, utilitySpacingRange),
+    ]) {
+      if (value != null && !range.allows(value)) errors.add('Top bar $name: choose a whole number of pixels from ${range.min.round()} to ${range.max.round()}.');
     }
     errors.addAll(ctaLabel.problems(maxCtaLabelLength, 'The header button label'));
     if (ctaTarget.trim().isNotEmpty) {

@@ -9,6 +9,7 @@ import '../../../public_website/content/website_content_models.dart';
 import '../../../public_website/content/website_content_repository.dart';
 import '../../settings/ui/access_restricted_view.dart';
 import '../data/website_content_admin_service.dart';
+import '../data/website_publishing_manager.dart';
 import '../../../public_website/content/website_custom_page.dart';
 import '../../../public_website/content/website_languages.dart';
 import '../../../public_website/content/website_site_layout.dart';
@@ -16,15 +17,19 @@ import 'website_built_in_page_editor.dart';
 import 'website_content_editors.dart';
 import 'website_custom_page_editor.dart';
 import 'website_languages_editor.dart';
+import 'website_publishing_manager_screen.dart';
 import 'website_site_layout_editor.dart';
 
 /// Settings -> Website: the public website's media library, gallery order,
 /// page content and site layout (header, navigation and footer). Admin only (the screen shows the locked view to
 /// anyone else, and every service call re-checks the role).
 class WebsiteContentScreen extends ConsumerWidget {
-  const WebsiteContentScreen({super.key, this.service});
+  const WebsiteContentScreen({super.key, this.service, this.publishingManager});
 
   final WebsiteContentAdminService? service;
+
+  /// For the Publishing manager (built from [service] when not given).
+  final WebsitePublishingManager? publishingManager;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -37,7 +42,8 @@ class WebsiteContentScreen extends ConsumerWidget {
         body: const AccessRestrictedView(),
       );
     }
-    return _WebsiteContentBody(service: service ?? WebsiteContentAdminService(), user: user);
+    final content = service ?? WebsiteContentAdminService();
+    return _WebsiteContentBody(service: content, user: user, publishingManager: publishingManager ?? WebsitePublishingManager(content: content));
   }
 }
 
@@ -55,6 +61,10 @@ mixin WebsiteContentActions<T extends ConsumerStatefulWidget> on ConsumerState<T
     // The built-in pages' content, additional pages and navigation all
     // derive from this one read.
     ref.invalidate(liveWebsiteContentProvider);
+    ref.invalidate(publicEventItemsProvider);
+    ref.invalidate(publicEventProvider);
+    ref.invalidate(publicAnnouncementItemsProvider);
+    ref.invalidate(publicAnnouncementProvider);
   }
 
   /// Asks before publishing over a page visitors already see; true to go
@@ -100,10 +110,11 @@ mixin WebsiteContentActions<T extends ConsumerStatefulWidget> on ConsumerState<T
 }
 
 class _WebsiteContentBody extends ConsumerStatefulWidget {
-  const _WebsiteContentBody({required this.service, required this.user});
+  const _WebsiteContentBody({required this.service, required this.user, required this.publishingManager});
 
   final WebsiteContentAdminService service;
   final AppUser user;
+  final WebsitePublishingManager publishingManager;
 
   @override
   ConsumerState<_WebsiteContentBody> createState() => _WebsiteContentBodyState();
@@ -218,6 +229,13 @@ class _WebsiteContentBodyState extends ConsumerState<_WebsiteContentBody> with W
     await _load();
   }
 
+  Future<void> _openPublishingManager() async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => WebsitePublishingManagerScreen(manager: widget.publishingManager),
+    ));
+    await _load();
+  }
+
   Future<void> _createCustomPage() async {
     final created = await showCreateCustomPageDialog(context, service: service, user: user);
     if (created == null || !mounted) return;
@@ -260,15 +278,25 @@ class _WebsiteContentBodyState extends ConsumerState<_WebsiteContentBody> with W
         backgroundColor: Colors.grey[50],
         appBar: AppBar(
           title: const Text('Website Content'),
-          bottom: const TabBar(
+          actions: [
+            TextButton.icon(
+              key: const Key('website-open-publishing-manager'),
+              onPressed: _openPublishingManager,
+              icon: const Icon(Icons.fact_check_outlined),
+              label: const Text('Publishing manager'),
+            ),
+          ],
+          bottom: TabBar(
             isScrollable: true,
             tabAlignment: TabAlignment.start,
             tabs: [
-              Tab(key: Key('website-tab-media'), text: 'Media library'),
-              Tab(key: Key('website-tab-gallery'), text: 'Gallery order'),
-              Tab(key: Key('website-tab-pages'), text: 'Pages'),
-              Tab(key: Key('website-tab-layout'), text: 'Site layout'),
-              Tab(key: Key('website-tab-languages'), text: 'Languages'),
+              const Tab(key: Key('website-tab-media'), text: 'Media library'),
+              const Tab(key: Key('website-tab-gallery'), text: 'Gallery order'),
+              const Tab(key: Key('website-tab-pages'), text: 'Pages'),
+              const Tab(key: Key('website-tab-layout'), text: 'Site layout'),
+              // Shown whatever the editing languages ([multilingualEditing]):
+              // which languages visitors are offered is set here.
+              const Tab(key: Key('website-tab-languages'), text: 'Languages'),
             ],
           ),
         ),

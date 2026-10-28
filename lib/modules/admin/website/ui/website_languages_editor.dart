@@ -224,6 +224,20 @@ class _WebsiteLanguagesEditorScreenState extends ConsumerState<WebsiteLanguagesE
               style: TextStyle(fontSize: 13),
             ),
           ),
+        // While editing is English only, a language made public shows the
+        // fallback language's text wherever no translation is stored.
+        if (!multilingualEditing)
+          Container(
+            key: const Key('website-languages-english-only'),
+            margin: const EdgeInsets.only(top: 12),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: const Color(0xFFF3EADB), borderRadius: BorderRadius.circular(10)),
+            child: const Text(
+              'Website text is edited in English only for now. If visitors can choose another language, pages without text in that language '
+              'show the fallback language’s text instead (English unless you change it below). Text already saved in Tamil is kept and still shown.',
+              style: TextStyle(fontSize: 13),
+            ),
+          ),
         const WebsiteEditorSectionTitle('Languages'),
         const Text(
           'Enabled: offered in the website editors. Public: offered in the visitors’ language switch (enabled languages only). '
