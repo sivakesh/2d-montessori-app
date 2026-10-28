@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 
 import '../website_content_models.dart';
@@ -8,7 +10,7 @@ import '../website_content_models.dart';
 /// so a new block type needs no bespoke code for any of them.
 @immutable
 sealed class FieldSpec {
-  const FieldSpec(this.key, this.label, {this.required = false});
+  const FieldSpec(this.key, this.label, {this.required = false, this.omitDefault = false});
 
   /// The key in the stored block map.
   final String key;
@@ -16,6 +18,11 @@ sealed class FieldSpec {
   /// For admin messages ("Heading", "Button label").
   final String label;
   final bool required;
+
+  /// Not stored while it holds its default (fields added after their
+  /// block type's first version): a block saved before the field existed
+  /// is written back exactly as it was stored.
+  final bool omitDefault;
 
   /// The value when the field is absent.
   Object? get defaultValue;
@@ -37,6 +44,7 @@ final class TextFieldSpec extends FieldSpec {
     super.label, {
     required this.maxLength,
     super.required,
+    super.omitDefault,
     this.multiline = false,
     this.translatable = true,
     this.translationRequired = false,
@@ -84,7 +92,28 @@ final class MediaFieldSpec extends FieldSpec {
 
 /// Where a button leads (checked with `SafeLinkTarget`).
 final class LinkFieldSpec extends FieldSpec {
-  const LinkFieldSpec(super.key, super.label, {super.required});
+  const LinkFieldSpec(super.key, super.label, {super.required, super.omitDefault});
+
+  @override
+  Object? get defaultValue => '';
+
+  @override
+  bool accepts(Object? raw) => raw is String;
+
+  @override
+  Object? parse(Object? raw) => raw as String;
+
+  @override
+  Object? serialize(Object? value) => (value as String? ?? '').trim();
+}
+
+/// A website form (Settings → Website forms), by id ('' = none). The page
+/// stores only the id: the form itself is read from its active version
+/// when the page is shown, so one form can be on many pages.
+final class FormRefFieldSpec extends FieldSpec {
+  const FormRefFieldSpec(super.key, super.label, {super.required});
+
+  static final idPattern = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
 
   @override
   Object? get defaultValue => '';
@@ -102,10 +131,13 @@ final class LinkFieldSpec extends FieldSpec {
 /// One of a fixed set of options. An unknown option is kept as stored (so a
 /// newer app's option survives) and reported by validation.
 final class ChoiceFieldSpec extends FieldSpec {
-  const ChoiceFieldSpec(super.key, super.label, {required this.options, required this.initial});
+  const ChoiceFieldSpec(super.key, super.label, {required this.options, required this.initial, this.optionLabels = const {}, super.omitDefault});
 
   final List<String> options;
   final String initial;
+
+  /// How the editor names an option (the stored value when not listed).
+  final Map<String, String> optionLabels;
 
   @override
   Object? get defaultValue => initial;
@@ -122,7 +154,7 @@ final class ChoiceFieldSpec extends FieldSpec {
 
 /// On or off.
 final class ToggleFieldSpec extends FieldSpec {
-  const ToggleFieldSpec(super.key, super.label, {this.initial = false});
+  const ToggleFieldSpec(super.key, super.label, {this.initial = false, super.omitDefault});
 
   final bool initial;
 
@@ -239,8 +271,12 @@ class BlockItem {
 }
 
 /// The stored form of [values] for [fields], with [preserved] raw values
-/// written back unchanged.
+/// written back unchanged. A field that is [FieldSpec.omitDefault] and
+/// holds its default isn't written.
 Map<String, dynamic> serializeFieldValues(Map<String, Object?> values, Map<String, Object?> preserved, List<FieldSpec> fields) => {
-      for (final field in fields) field.key: field.serialize(values[field.key] ?? field.defaultValue),
+      for (final field in fields)
+        if (field.serialize(values[field.key] ?? field.defaultValue) case final stored
+            when !field.omitDefault || jsonEncode(stored) != jsonEncode(field.serialize(field.defaultValue)))
+          field.key: stored,
       ...preserved,
     };

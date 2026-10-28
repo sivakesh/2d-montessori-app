@@ -10,6 +10,7 @@ import '../../../../public_website/content/blocks/section_presets.dart';
 import '../../../../public_website/content/blocks/website_block.dart';
 import '../../../../public_website/content/website_content_models.dart';
 import '../../../../public_website/content/website_design.dart';
+import '../../../../public_website/content/website_page_style.dart';
 import '../../../../public_website/public_strings.dart';
 import '../../../../public_website/public_website_theme.dart';
 import '../../../../public_website/widgets/blocks/website_blocks_view.dart';
@@ -55,12 +56,14 @@ class WebsiteVisualEditor extends StatefulWidget {
     required this.language,
     required this.generation,
     required this.mobilePreview,
+    this.tabletPreview = false,
     required this.pageSettings,
     required this.checks,
     required this.banner,
     this.previewView,
     this.pageHeader,
     this.design = SiteDesign.defaults,
+    this.pageStyle = const PageStyle(),
     this.siteHeader,
     this.siteFooter,
     this.siteChromeInfo,
@@ -76,6 +79,10 @@ class WebsiteVisualEditor extends StatefulWidget {
 
   /// The site design the canvas and the colour settings use (the draft).
   final SiteDesign design;
+
+  /// The page's own look (its background), as being edited: shown behind
+  /// the page on the canvas, between the site header and footer.
+  final PageStyle pageStyle;
 
   /// The site's real header and footer (with the draft layout), shown on
   /// the canvas and selectable.
@@ -94,8 +101,13 @@ class WebsiteVisualEditor extends StatefulWidget {
   final PublicLanguage language;
   final int generation;
 
-  /// The canvas at a phone's width (390 px).
+  /// The canvas at a phone's width (390 px), or a tablet's (820 px,
+  /// when not [mobilePreview]).
   final bool mobilePreview;
+  final bool tabletPreview;
+
+  /// The tablet frame's width: the public site's tablet layout.
+  static const tabletCanvasWidth = 820.0;
   final Widget pageSettings;
   final Widget checks;
 
@@ -218,6 +230,36 @@ class _WebsiteVisualEditorState extends State<WebsiteVisualEditor> {
       ),
     );
     if (confirmed == true && mounted) _apply(BlockListOps.remove(_blocks, path), null);
+  }
+
+  /// On a School gallery: it can't choose photographs, so it points to a
+  /// Photo gallery and adds one right after it (the School gallery stays).
+  Widget _photoGalleryHint(BlockPath path) {
+    final next = path.isNested ? BlockPath.nested(path.index, path.column!, path.child! + 1) : BlockPath(path.index + 1);
+    final room = path.isNested ? BlockListOps.columnHasRoom(_blocks, path.index, path.column!) : BlockListOps.pageHasRoom(_blocks);
+    return Container(
+      key: const Key('website-inspector-gallery-feed-hint'),
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(color: const Color(0xFFF3EADB), borderRadius: BorderRadius.circular(8)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'This block shows every published gallery photograph automatically, with filters. '
+            'To choose specific photographs, their order, captions, links and images per row, use a Photo gallery block.',
+            style: TextStyle(fontSize: 13),
+          ),
+          const SizedBox(height: 6),
+          TextButton.icon(
+            key: const Key('website-inspector-add-photo-gallery'),
+            onPressed: room ? () => _apply(BlockListOps.insert(_blocks, next, BlockRegistry.create(BlockRegistry.gallery)), next, edit: true) : null,
+            icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
+            label: Text(room ? 'Add a Photo gallery below' : 'No room for another block here'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Selects the first block that has a problem.
@@ -360,11 +402,27 @@ class _WebsiteVisualEditorState extends State<WebsiteVisualEditor> {
                 clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(color: PublicColors.background, borderRadius: BorderRadius.circular(12), border: Border.all(color: PublicColors.line)),
                 child: widget.mobilePreview
-                    ? SizedBox(
-                        key: const Key('website-custom-preview-mobile-frame'),
-                        width: 390,
-                        child: MediaQuery(data: MediaQuery.of(context).copyWith(size: const Size(390, 844)), child: content),
-                      )
+                    ? LayoutBuilder(builder: (context, c) {
+                        // A phone's width, scaled down when the canvas is
+                        // narrower, so the page is laid out at the width
+                        // it is told it has (never squeezed below it).
+                        final page = SizedBox(
+                          key: const Key('website-custom-preview-mobile-frame'),
+                          width: 390,
+                          child: MediaQuery(data: MediaQuery.of(context).copyWith(size: const Size(390, 844)), child: content),
+                        );
+                        return c.maxWidth >= 390 ? page : FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.topCenter, child: page);
+                      })
+                    : widget.tabletPreview
+                    ? LayoutBuilder(builder: (context, c) {
+                        const width = WebsiteVisualEditor.tabletCanvasWidth;
+                        final page = SizedBox(
+                          key: const Key('website-custom-preview-tablet-frame'),
+                          width: width,
+                          child: MediaQuery(data: MediaQuery.of(context).copyWith(size: const Size(width, 1180)), child: content),
+                        );
+                        return c.maxWidth >= width ? page : FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.topCenter, child: page);
+                      })
                     : LayoutBuilder(builder: (context, c) {
                         // Laid out at least as wide as a desktop browser, so
                         // the public renderer uses its desktop layout, then
@@ -466,41 +524,51 @@ class _WebsiteVisualEditorState extends State<WebsiteVisualEditor> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (widget.siteHeader case final header?) _ChromeFrame(part: 'header', selected: _chrome == 'header', onTap: () => _selectChrome('header'), child: header),
-          // The page's title, introduction and banner image, as visitors see
-          // them; clicking there shows the page settings.
-          if (widget.pageHeader case final pageHeader?)
-            GestureDetector(
-              key: const Key('website-canvas-page-header'),
-              behavior: HitTestBehavior.opaque,
-              onTap: () => _select(null),
-              child: Padding(padding: EdgeInsets.only(top: widget.siteHeader == null ? 0 : (mobile ? 32 : 56)), child: pageHeader),
+          // The page itself, in its own background (the header and footer
+          // keep theirs).
+          PageBackground(
+            style: widget.pageStyle,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // The page's title, introduction and banner image, as visitors see
+                // them; clicking there shows the page settings.
+                if (widget.pageHeader case final pageHeader?)
+                  GestureDetector(
+                    key: const Key('website-canvas-page-header'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _select(null),
+                    child: Padding(padding: EdgeInsets.only(top: widget.siteHeader == null ? 0 : (mobile ? 32 : 56)), child: pageHeader),
+                  ),
+                if (blocks.isEmpty)
+                  PublicContentWidth(
+                    maxWidth: 960,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 32),
+                      child: WebsiteBlocksEmptyState(addKey: 'website-blocks-add', canAdd: canAdd, onAdd: _add, sections: SectionPreset.all, onAddSection: _addSection),
+                    ),
+                  ),
+                for (final (i, b) in blocks.indexed) ...[
+                  _InsertPoint(
+                    index: i,
+                    height: WebsiteBlocksView.spaceAbove(b, mobile: mobile),
+                    canAdd: canAdd,
+                    onAdd: (d) => _add(d, at: BlockPath(i)),
+                    onAddSection: (p) => _addSection(p, at: BlockPath(i)),
+                  ),
+                  block(i, b),
+                ],
+                if (blocks.isNotEmpty)
+                  _InsertPoint(
+                    index: blocks.length,
+                    height: 48,
+                    canAdd: canAdd,
+                    onAdd: (d) => _add(d, at: BlockPath(blocks.length)),
+                    onAddSection: (p) => _addSection(p, at: BlockPath(blocks.length)),
+                  ),
+              ],
             ),
-          if (blocks.isEmpty)
-            PublicContentWidth(
-              maxWidth: 960,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 32),
-                child: WebsiteBlocksEmptyState(addKey: 'website-blocks-add', canAdd: canAdd, onAdd: _add, sections: SectionPreset.all, onAddSection: _addSection),
-              ),
-            ),
-          for (final (i, b) in blocks.indexed) ...[
-            _InsertPoint(
-              index: i,
-              height: WebsiteBlocksView.spaceAbove(b, mobile: mobile),
-              canAdd: canAdd,
-              onAdd: (d) => _add(d, at: BlockPath(i)),
-              onAddSection: (p) => _addSection(p, at: BlockPath(i)),
-            ),
-            block(i, b),
-          ],
-          if (blocks.isNotEmpty)
-            _InsertPoint(
-              index: blocks.length,
-              height: 48,
-              canAdd: canAdd,
-              onAdd: (d) => _add(d, at: BlockPath(blocks.length)),
-              onAddSection: (p) => _addSection(p, at: BlockPath(blocks.length)),
-            ),
+          ),
           if (widget.siteFooter case final footer?) _ChromeFrame(part: 'footer', selected: _chrome == 'footer', onTap: () => _selectChrome('footer'), child: footer),
         ],
       );
@@ -681,6 +749,7 @@ class _WebsiteVisualEditorState extends State<WebsiteVisualEditor> {
               ],
             ),
           ),
+        if (block is StructuredBlock && block.type == BlockRegistry.galleryFeed.type) _photoGalleryHint(path),
         const SizedBox(height: 4),
         if (block is StructuredBlock)
           WebsiteBlockForm(
@@ -730,7 +799,13 @@ class _AddMenu extends StatelessWidget {
           PopupMenuItem(
             key: Key('$menuKey-${d.type}'),
             value: d,
-            child: Row(children: [Icon(blockIcon(StructuredBlock(definition: d, id: '')), size: 18), const SizedBox(width: 10), Text(d.label)]),
+            child: ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(blockIcon(StructuredBlock(definition: d, id: '')), size: 20),
+              title: Text(d.label),
+              subtitle: Text(d.description),
+            ),
           ),
       ],
       child: Padding(
@@ -813,7 +888,8 @@ class _InsertPoint extends StatelessWidget {
               for (final p in SectionPreset.all) PopupMenuItem<Object>(key: Key('$k-section-${p.id}'), value: p, child: Text(p.label)),
               const PopupMenuDivider(),
               const PopupMenuItem<Object>(enabled: false, height: 32, child: Text('ADD A BLOCK', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1))),
-              for (final d in BlockRegistry.all) PopupMenuItem<Object>(key: Key('$k-${d.type}'), value: d, child: Text(d.label)),
+              for (final d in BlockRegistry.all)
+                PopupMenuItem<Object>(key: Key('$k-${d.type}'), value: d, child: Tooltip(message: d.description, child: Text(d.label))),
             ],
             child: Container(
               width: 28,

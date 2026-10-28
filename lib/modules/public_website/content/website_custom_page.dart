@@ -8,6 +8,7 @@ import 'blocks/block_registry.dart';
 import 'blocks/legacy_sections.dart';
 import 'blocks/website_block.dart';
 import 'website_content_models.dart';
+import 'website_page_style.dart';
 
 /// The kinds of content block an additional page can contain.
 enum CustomSectionType {
@@ -169,6 +170,7 @@ class CustomPage {
     this.heroMediaId,
     this.sections = const [],
     this.blocks,
+    this.pageStyle = const PageStyle(),
     this.showInNavigation = false,
     this.navOrder = 0,
     this.archived = false,
@@ -204,6 +206,7 @@ class CustomPage {
             ]
           : const [],
       blocks: map['blocks'] is List ? BlockRegistry.parseList(map['blocks']) : null,
+      pageStyle: PageStyle.fromMap(map[PageStyle.field]),
       showInNavigation: map['showInNavigation'] == true,
       navOrder: map['navOrder'] is num ? (map['navOrder'] as num).toInt() : 0,
       archived: map['archived'] == true,
@@ -224,6 +227,9 @@ class CustomPage {
   /// far). When set, they are what the page shows; [sections] are kept as
   /// stored. Unsupported blocks are kept and saved back unchanged.
   final List<WebsiteBlock>? blocks;
+
+  /// The page's own look (its background); optional.
+  final PageStyle pageStyle;
 
   /// Whether this page is made of page-builder [blocks].
   bool get usesBlocks => blocks != null;
@@ -264,6 +270,7 @@ class CustomPage {
     String? Function()? heroMediaId,
     List<CustomPageSection>? sections,
     List<WebsiteBlock>? Function()? blocks,
+    PageStyle? pageStyle,
     bool? showInNavigation,
     int? navOrder,
     bool? archived,
@@ -276,6 +283,7 @@ class CustomPage {
         heroMediaId: heroMediaId == null ? this.heroMediaId : heroMediaId(),
         sections: sections ?? this.sections,
         blocks: blocks == null ? this.blocks : blocks(),
+        pageStyle: pageStyle ?? this.pageStyle,
         showInNavigation: showInNavigation ?? this.showInNavigation,
         navOrder: navOrder ?? this.navOrder,
         archived: archived ?? this.archived,
@@ -296,6 +304,8 @@ class CustomPage {
         'sections': [for (final s in blocks == null ? sections : LegacySections.mirror(blocks!)) s.toMap()],
         // Only pages saved with blocks have these (existing pages unchanged).
         if (blocks != null) ...{'schemaVersion': 2, 'blocks': BlockRegistry.toMapList(blocks!)},
+        // Only when set: a page without its own look is stored as before.
+        if (!pageStyle.isDefault) PageStyle.field: pageStyle.toMap(),
         'showInNavigation': showInNavigation,
         'navOrder': navOrder,
         'mediaIds': referencedMedia,
@@ -335,6 +345,7 @@ class CustomPage {
     final errors = <String>[];
     final slugError = validateSlugFormat(slug.trim());
     if (slugError != null) errors.add(slugError);
+    errors.addAll(pageStyle.validationErrors());
     if (title.en.trim().isEmpty) errors.add('Enter an English title.');
     // Every language is checked: English, Tamil and any other.
     void limit(LocalizedText text, int max, String what) {

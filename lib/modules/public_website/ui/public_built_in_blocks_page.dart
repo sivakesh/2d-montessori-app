@@ -5,6 +5,7 @@ import '../content/blocks/website_block.dart';
 import '../content/built_in_pages.dart';
 import '../content/website_content_models.dart';
 import '../content/website_content_repository.dart';
+import '../content/website_page_style.dart';
 import '../public_strings.dart';
 import '../widgets/blocks/website_blocks_view.dart';
 import '../widgets/public_scaffold.dart';
@@ -23,12 +24,15 @@ class PublicBuiltInBlocksPage extends ConsumerWidget {
     final media = ref.watch(publishedWebsiteMediaProvider).valueOrNull ?? const <WebsiteMedia>[];
     return PublicScaffold(
       currentRoute: page.route,
-      body: WebsiteBlocksView(
-        key: Key('public-built-in-blocks-${page.id}'),
-        blocks: blocks,
-        media: {for (final m in media) m.id: m},
-        language: language,
-        fullBleed: true,
+      body: PageBackground(
+        style: ref.watch(publicBuiltInPageStyleProvider(page.id)),
+        child: WebsiteBlocksView(
+          key: Key('public-built-in-blocks-${page.id}'),
+          blocks: blocks,
+          media: {for (final m in media) m.id: m},
+          language: language,
+          fullBleed: true,
+        ),
       ),
     );
   }

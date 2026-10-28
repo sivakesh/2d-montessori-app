@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../public_website/content/website_custom_page.dart';
 import '../../../public_website/content/website_design.dart';
+import '../../../public_website/content/website_page_style.dart';
 import '../../../public_website/content/website_site_style.dart';
 import 'page_builder/website_color_field.dart';
+import 'page_builder/website_size_field.dart';
 import 'website_content_editors.dart';
 
 /// The site design: the palette (the site's own colours, renamed and
@@ -14,9 +16,10 @@ import 'website_content_editors.dart';
 /// they are.
 ///
 /// Keys: `website-design-color-<id>-name`, `-hex`, `-remove`;
-/// `website-design-add-color`, `website-design-body-size`,
-/// `website-design-heading-size`, `website-design-line-height`,
-/// `website-design-reset`.
+/// `website-design-add-color`, `website-design-reset`; typography
+/// ([WebsiteSizeField]): `website-design-title-size`,
+/// `-title-size-mobile`, `-heading-size`, `-body-size`, `-nav-size`,
+/// `-button-size`; `website-design-line-height`.
 class WebsiteDesignEditor extends StatelessWidget {
   const WebsiteDesignEditor({super.key, required this.design, required this.onChanged});
 
@@ -126,13 +129,48 @@ class WebsiteDesignEditor extends StatelessWidget {
           spacing: 12,
           runSpacing: 12,
           children: [
-            _sizes('website-design-body-size', 'Body text size', SiteDesign.bodySizes, design.bodySize, (v) => onChanged(design.copyWith(bodySize: v))),
-            _sizes('website-design-heading-size', 'Section heading size', SiteDesign.headingSizes, design.headingSize, (v) => onChanged(design.copyWith(headingSize: v))),
             _sizes('website-design-line-height', 'Line height', SiteDesign.lineHeights, design.lineHeight, (v) => onChanged(design.copyWith(lineHeight: v)), text: (v) => v.toStringAsFixed(1)),
           ],
         ),
+        const SizedBox(height: 8),
+        const Text(
+          'Sizes for the whole website, in pixels. A block can set its own heading or text size, which then takes the place of these.',
+          style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+        ),
+        const SizedBox(height: 8),
+        ..._typography(),
       ],
     );
+  }
+}
+
+extension on WebsiteDesignEditor {
+  /// One size control: [value] null is "the site's own" ([range]'s
+  /// standard size).
+  Widget _size(String key, String label, FontSizeRange range, double? value, ValueChanged<double?> onPick) => WebsiteSizeField(
+        fieldKey: 'website-design-$key',
+        label: label,
+        range: range,
+        value: value,
+        inheritedValue: range.standard,
+        inheritedFrom: 'the site’s own size',
+        onChanged: onPick,
+      );
+
+  List<Widget> _typography() {
+    // Body and heading sizes are always stored; their standard size is
+    // shown as "not set".
+    double? own(double v, FontSizeRange r) => v == r.standard ? null : v;
+    return [
+      _size('title-size', 'Page titles and hero headings', SiteDesign.titleRange, design.titleSize, (v) => onChanged(design.copyWith(titleSize: () => v))),
+      _size('title-size-mobile', 'Page titles on phones', SiteDesign.titleMobileRange, design.titleSizeMobile, (v) => onChanged(design.copyWith(titleSizeMobile: () => v))),
+      _size('heading-size', 'Section headings', SiteDesign.headingRange, own(design.headingSize, SiteDesign.headingRange),
+          (v) => onChanged(design.copyWith(headingSize: v ?? SiteDesign.headingRange.standard))),
+      _size('body-size', 'Body text and descriptions', SiteDesign.bodyRange, own(design.bodySize, SiteDesign.bodyRange),
+          (v) => onChanged(design.copyWith(bodySize: v ?? SiteDesign.bodyRange.standard))),
+      _size('nav-size', 'Header navigation', SiteDesign.navRange, design.navSize, (v) => onChanged(design.copyWith(navSize: () => v))),
+      _size('button-size', 'Buttons', SiteDesign.buttonRange, design.buttonSize, (v) => onChanged(design.copyWith(buttonSize: () => v))),
+    ];
   }
 }
 
@@ -181,8 +219,41 @@ class WebsiteHeaderStyleEditor extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const Text('Top bar (language and login)', style: TextStyle(fontWeight: FontWeight.w600)),
+        const Text('The slim bar above the header. On phones, login and logout move to the menu.', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+        const SizedBox(height: 8),
+        color('utility-background', 'Top bar background', style.utilityBackground, (v) => style.copyWith(utilityBackground: () => v)),
+        color('utility-text-color', 'Top bar text and icons', style.utilityTextColor, (v) => style.copyWith(utilityTextColor: () => v)),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            _choice('website-header-utility-align', 'Top bar alignment', const {'start': 'Left', 'center': 'Centred', 'end': 'Right'}, style.utilityAlign,
+                (v) => onChanged(style.copyWith(utilityAlign: v))),
+            _choice('website-header-utility-vertical-align', 'Vertical alignment', const {'top': 'Top', 'center': 'Middle', 'bottom': 'Bottom'}, style.utilityVerticalAlign,
+                (v) => onChanged(style.copyWith(utilityVerticalAlign: v))),
+          ],
+        ),
+        const SizedBox(height: 8),
+        for (final (key, label, range, value, apply) in <(String, String, FontSizeRange, double?, SiteHeaderStyle Function(double?))>[
+          ('utility-font-size', 'Top bar text size', SiteHeaderStyle.utilityFontRange, style.utilityFontSize, (v) => style.copyWith(utilityFontSize: () => v)),
+          ('utility-padding-y', 'Top bar padding (top and bottom)', SiteHeaderStyle.utilityPaddingYRange, style.utilityPaddingY, (v) => style.copyWith(utilityPaddingY: () => v)),
+          ('utility-padding-x', 'Top bar padding (sides)', SiteHeaderStyle.utilityPaddingXRange, style.utilityPaddingX, (v) => style.copyWith(utilityPaddingX: () => v)),
+          ('utility-spacing', 'Space between controls', SiteHeaderStyle.utilitySpacingRange, style.utilitySpacing, (v) => style.copyWith(utilitySpacing: () => v)),
+        ])
+          WebsiteSizeField(
+            fieldKey: 'website-header-$key',
+            label: label,
+            range: range,
+            value: value,
+            inheritedValue: range.standard,
+            inheritedFrom: 'the site’s own',
+            onChanged: (v) => onChanged(apply(v)),
+          ),
+        const SizedBox(height: 4),
+        const Text('Header bar (site name and links)', style: TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
         color('background', 'Background', style.background, (v) => style.copyWith(background: () => v)),
-        color('utility-background', 'Top bar (language and login)', style.utilityBackground, (v) => style.copyWith(utilityBackground: () => v)),
         color('brand-color', 'Site name', style.brandColor, (v) => style.copyWith(brandColor: () => v)),
         color('link-color', 'Links', style.linkColor, (v) => style.copyWith(linkColor: () => v)),
         color('accent-color', 'Current page underline', style.accentColor, (v) => style.copyWith(accentColor: () => v)),
@@ -206,7 +277,8 @@ class WebsiteHeaderStyleEditor extends StatelessWidget {
         const Text('Shown at the end of the header on wide screens, and in the mobile menu.', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
         const SizedBox(height: 8),
         _text('website-header-cta-label-en', 'Button label (English)', style.ctaLabel.en, (v) => onChanged(style.copyWith(ctaLabel: style.ctaLabel.copyWith(en: v))), maxLength: SiteHeaderStyle.maxCtaLabelLength),
-        _text('website-header-cta-label-ta', 'Button label (Tamil)', style.ctaLabel.ta, (v) => onChanged(style.copyWith(ctaLabel: style.ctaLabel.copyWith(ta: v))),
+        if (multilingualEditing)
+          _text('website-header-cta-label-ta', 'Button label (Tamil)', style.ctaLabel.ta, (v) => onChanged(style.copyWith(ctaLabel: style.ctaLabel.copyWith(ta: v))),
             maxLength: SiteHeaderStyle.maxCtaLabelLength, helper: 'If left blank, Tamil visitors see the English.'),
         _text(
           'website-header-cta-target',
@@ -258,11 +330,44 @@ class WebsiteFooterStyleEditor extends StatelessWidget {
         const SizedBox(height: 8),
         _text('website-footer-address-en', 'Address (English)', style.address.en, (v) => onChanged(style.copyWith(address: style.address.copyWith(en: v))),
             maxLength: SiteFooterStyle.maxAddressLength, lines: 2),
-        _text('website-footer-address-ta', 'Address (Tamil)', style.address.ta, (v) => onChanged(style.copyWith(address: style.address.copyWith(ta: v))),
+        if (multilingualEditing)
+          _text('website-footer-address-ta', 'Address (Tamil)', style.address.ta, (v) => onChanged(style.copyWith(address: style.address.copyWith(ta: v))),
             maxLength: SiteFooterStyle.maxAddressLength, lines: 2, helper: 'If left blank, Tamil visitors see the English.'),
         _text('website-footer-phone', 'Phone', style.phone, (v) => onChanged(style.copyWith(phone: v)), error: style.phone.trim().isEmpty ? null : errorFor('phone')),
         _text('website-footer-email', 'Email', style.email, (v) => onChanged(style.copyWith(email: v)), error: style.email.trim().isEmpty ? null : errorFor('email')),
       ],
     );
   }
+}
+
+/// A page's own background ([PageStyle.background]): the palette, a custom
+/// `#RRGGBB` or the site's own, behind the page's content only (the
+/// header, top bar, footer and sections keep theirs). Shown at once on the
+/// canvas; saved and published with the page. Key:
+/// `website-page-background` ([WebsiteColorField]).
+class WebsitePageBackgroundField extends StatelessWidget {
+  const WebsitePageBackgroundField({super.key, required this.style, required this.design, required this.onChanged});
+
+  final PageStyle style;
+  final SiteDesign design;
+  final ValueChanged<PageStyle> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          WebsiteColorField(
+            fieldKey: 'website-page-background',
+            label: 'Page background',
+            value: style.background,
+            design: design,
+            inheritedLabel: 'the site’s own page background',
+            onChanged: (v) => onChanged(style.copyWith(background: () => v)),
+          ),
+          const Text(
+            'Behind this page’s content only. The header, top bar, footer and sections with their own background keep theirs.',
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          ),
+        ],
+      );
 }

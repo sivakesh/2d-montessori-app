@@ -61,7 +61,6 @@ AppUser _user(String role) => AppUser(id: '9000000002', phone: '9000000002', rol
 final _admin = _user('admin');
 
 final _en = PublicStrings.of(PublicLanguage.english);
-final _ta = PublicStrings.of(PublicLanguage.tamil);
 
 void main() {
   late FakeFirebaseFirestore firestore;
@@ -150,14 +149,15 @@ void main() {
   // ------------------------------------------------------------ Part A
 
   group('built-in page editor', () {
-    testWidgets('nothing saved: fields hold the exact built-in English and Tamil copy', (tester) async {
+    testWidgets('nothing saved: fields hold the exact built-in English copy; no Tamil fields', (tester) async {
       await pumpAdmin(tester, WebsitePageEditorScreen(service: service, user: _admin, slot: WebsitePageSlot.home));
       expect(fieldText(tester, 'website-page-headline-en'), _en.heroTitle);
-      expect(fieldText(tester, 'website-page-headline-ta'), _ta.heroTitle);
       expect(fieldText(tester, 'website-page-intro-en'), _en.heroBody);
-      expect(fieldText(tester, 'website-page-intro-ta'), _ta.heroBody);
+      expect(find.byKey(const Key('website-page-headline-ta')), findsNothing, reason: 'English only');
+      expect(find.byKey(const Key('website-page-intro-ta')), findsNothing);
+      expect(find.byKey(const Key('website-preview-ta')), findsNothing, reason: 'no preview-language switch');
       expect(text(tester, 'website-edit-source-text'), contains('built-in content'));
-      expect(find.text('Built-in text'), findsNWidgets(4));
+      expect(find.text('Built-in text'), findsNWidgets(2));
       expect(text(tester, 'website-preview-title'), _en.heroTitle);
       expect(find.byKey(const Key('website-page-unsaved')), findsNothing);
     });
@@ -167,16 +167,15 @@ void main() {
       (WebsitePageSlot.teacherTraining, PublicRoutes.teacherTraining),
       (WebsitePageSlot.programs, PublicRoutes.programs),
     ]) {
-      testWidgets('${slot.adminLabel}: built-in title and introduction prefilled in both languages', (tester) async {
+      testWidgets('${slot.adminLabel}: built-in title and introduction prefilled in English', (tester) async {
         await pumpAdmin(tester, WebsitePageEditorScreen(service: service, user: _admin, slot: slot));
         expect(fieldText(tester, 'website-page-headline-en'), _en.labelFor(route));
-        expect(fieldText(tester, 'website-page-headline-ta'), _ta.labelFor(route));
         expect(fieldText(tester, 'website-page-intro-en'), _en.introFor(route));
-        expect(fieldText(tester, 'website-page-intro-ta'), _ta.introFor(route));
+        expect(find.byKey(const Key('website-page-headline-ta')), findsNothing);
       });
     }
 
-    testWidgets('published content loads as published, with its Tamil left as saved', (tester) async {
+    testWidgets('published content loads as published; its stored Tamil is kept when English is edited', (tester) async {
       await service.publishPage(
         requesterRole: 'admin',
         actor: _admin,
@@ -184,9 +183,15 @@ void main() {
       );
       await pumpAdmin(tester, WebsitePageEditorScreen(service: service, user: _admin, slot: WebsitePageSlot.home));
       expect(fieldText(tester, 'website-page-headline-en'), 'Welcome families');
-      expect(fieldText(tester, 'website-page-headline-ta'), '', reason: 'saved blank Tamil (shows the English) is not replaced by built-in Tamil');
-      expect(fieldText(tester, 'website-page-intro-ta'), 'புதிய அறிமுகம்');
+      expect(find.byKey(const Key('website-page-intro-ta')), findsNothing);
       expect(text(tester, 'website-edit-source-text'), contains('published content'));
+      await tester.enterText(find.byKey(const Key('website-page-headline-en')), 'Welcome, families');
+      await tester.pumpAndSettle();
+      await tapAndSettle(tester, find.byKey(const Key('website-page-save-draft')));
+      final saved = (await service.getSavedDraft(requesterRole: 'admin', slot: WebsitePageSlot.home))!;
+      expect(saved.headline.en, 'Welcome, families');
+      expect(saved.intro.ta, 'புதிய அறிமுகம்', reason: 'Tamil already stored is kept, not cleared');
+      expect(saved.headline.ta, '', reason: 'saved blank Tamil is not replaced by built-in Tamil');
     });
 
     testWidgets('draft vs published: the editor loads the draft; the preview switches between it and the live version', (tester) async {
@@ -208,8 +213,7 @@ void main() {
       expect(text(tester, 'website-preview-title'), 'Edited now', reason: 'preview follows edits');
       expect(find.byKey(const Key('website-page-unsaved')), findsOneWidget);
 
-      await tapAndSettle(tester, find.byKey(const Key('website-preview-ta')));
-      expect(text(tester, 'website-preview-intro'), _ta.introFor(PublicRoutes.programs), reason: 'Tamil preview');
+      expect(find.byKey(const Key('website-preview-ta')), findsNothing, reason: 'English-only preview');
 
       await tapAndSettle(tester, find.byKey(const Key('website-page-save-draft')));
       expect((await publicRepository().livePages())[WebsitePageSlot.programs]!.headline.en, 'Live heading', reason: 'saving a draft leaves the live site alone');
@@ -229,7 +233,7 @@ void main() {
       await tapAndSettle(tester, find.byKey(const Key('website-page-reset')));
       await tapAndSettle(tester, find.byKey(const Key('website-page-reset-confirm')));
       expect(fieldText(tester, 'website-page-headline-en'), _en.admissions);
-      expect(fieldText(tester, 'website-page-intro-ta'), _ta.introFor(PublicRoutes.admissions));
+      expect(fieldText(tester, 'website-page-intro-en'), _en.introFor(PublicRoutes.admissions));
       expect(find.byKey(const Key('website-page-remove-image')), findsNothing, reason: 'image removed');
       expect((await publicRepository().livePages())[WebsitePageSlot.admissions]!.headline.en, 'Join us', reason: 'nothing published yet');
 
@@ -513,7 +517,7 @@ void main() {
       expect(tester.widget<FilledButton>(find.byKey(const Key('website-new-page-create'))).onPressed, isNull);
 
       await tester.enterText(find.byKey(const Key('website-new-page-slug')), 'visit-us');
-      await tester.enterText(find.byKey(const Key('website-new-page-title-ta')), 'வருகை');
+      expect(find.byKey(const Key('website-new-page-title-ta')), findsNothing, reason: 'English only');
       await tester.pumpAndSettle();
       await tapAndSettle(tester, find.byKey(const Key('website-new-page-create')));
       expect(find.byType(WebsiteCustomPageEditorScreen), findsOneWidget);
@@ -527,8 +531,7 @@ void main() {
       await tester.enterText(headingField, 'Welcome visitors');
       await tester.pumpAndSettle();
       expect(find.descendant(of: find.byKey(const Key('website-custom-preview')), matching: find.text('Welcome visitors')), findsOneWidget, reason: 'live preview');
-      await tapAndSettle(tester, find.byKey(const Key('website-preview-ta')));
-      expect(find.descendant(of: find.byKey(const Key('website-custom-preview')), matching: find.text('வருகை')), findsOneWidget);
+      expect(find.byKey(const Key('website-preview-ta')), findsNothing);
 
       await tapAndSettle(tester, find.byKey(const Key('website-inspector-close')));
       await tapAndSettle(tester, find.byKey(const Key('website-custom-show-in-nav')));

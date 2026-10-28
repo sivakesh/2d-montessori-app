@@ -442,14 +442,14 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('11. opens on the current navigation; the desktop/mobile, EN/Tamil preview follows the draft without publishing', (tester) async {
+    testWidgets('11. opens on the current navigation; the desktop/mobile preview follows the draft without publishing; English only', (tester) async {
       await pumpEditor(tester);
       expect(tester.widget<Text>(key('website-edit-source-text')).data, contains('reproduces the website’s current header and footer'));
       expect(key('website-layout-main-entry-main-home'), findsOneWidget);
       expect(key('website-layout-footer-entry-footer-contact'), findsOneWidget);
 
       await tester.enterText(key('website-layout-site-name-en'), 'Preview School');
-      await tester.enterText(key('website-layout-site-name-ta'), 'முன்னோட்டப் பள்ளி');
+      expect(key('website-layout-site-name-ta'), findsNothing, reason: 'English only');
       await tester.enterText(key('website-layout-copyright-en'), '© Preview');
       await tester.pumpAndSettle();
       expect(key('website-layout-preview-frame-desktop'), findsOneWidget);
@@ -462,8 +462,7 @@ void main() {
       expect(inPreview(key('public-menu-/gallery')), findsOneWidget);
       expect(inPreview(key('public-menu-button')), findsOneWidget, reason: 'the mobile header uses the menu');
 
-      await tap(tester, key('website-layout-preview-ta'));
-      expect(inPreview(find.text('முன்னோட்டப் பள்ளி')), findsNWidgets(2));
+      expect(key('website-layout-preview-ta'), findsNothing, reason: 'no preview-language switch');
 
       expect((await firestore.collection(WebsiteCollections.livePages).doc(SiteLayout.docId).get()).exists, isFalse);
       expect((await firestore.collection(WebsiteCollections.pageDrafts).doc(SiteLayout.docId).get()).exists, isFalse);
@@ -476,6 +475,7 @@ void main() {
       await tap(tester, key('website-layout-footer-add'));
       await tap(tester, key('website-link-kind-external'));
       await tester.enterText(key('website-link-url'), 'http://example.org');
+      expect(key('website-link-label-ta'), findsNothing, reason: 'English only');
       await tester.enterText(key('website-link-label-en'), 'Partner');
       await tap(tester, key('website-link-save'));
       expect(key('website-link-error'), findsOneWidget);

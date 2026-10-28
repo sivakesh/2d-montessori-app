@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../../../../public_website/content/blocks/block_ids.dart';
 import '../../../../public_website/content/blocks/block_limits.dart';
 import '../../../../public_website/content/blocks/block_registry.dart';
 import '../../../../public_website/content/blocks/field_spec.dart';
@@ -150,5 +151,106 @@ class BlockListOps {
     final added = BlockRegistry.flatten([block]).length;
     if (BlockRegistry.flatten(blocks).length + added > limits.maxBlocks) return false;
     return !path.isNested || siblings(blocks, path).length < limits.maxColumnBlocks;
+  }
+}
+
+/// Column edits of a section or columns block, as pure functions. The
+/// number of columns is the block's layout ([columnLayouts]), so adding,
+/// removing or reordering columns also sets the layout; every column
+/// that stays keeps its id and blocks. Blocks are never dropped unless
+/// the caller asks: those of a removed column move into another column,
+/// or go only with `deleteBlocks`.
+class ColumnOps {
+  ColumnOps._();
+
+  static List<String> _layouts(StructuredBlock block) => (block.definition.field('layout') as ChoiceFieldSpec).options;
+
+  /// The layout of [count] equal columns, if [block] offers it.
+  static String? equalLayout(StructuredBlock block, int count) {
+    final layout = List.filled(count, '1').join(':');
+    return _layouts(block).contains(layout) ? layout : null;
+  }
+
+  /// The fewest and most columns [block] can have (a section 1 to 4, a
+  /// columns block 2 to 4).
+  static (int, int) range(StructuredBlock block) {
+    final counts = [for (final l in _layouts(block)) columnLayouts[l]!.length];
+    return (counts.reduce((a, b) => a < b ? a : b), counts.reduce((a, b) => a > b ? a : b));
+  }
+
+  static List<BlockColumn> _cols(StructuredBlock block) => block.columns('columns');
+
+  /// Whether column [from]'s blocks fit into column [into] (one column
+  /// holds at most [BlockLimits.maxColumnBlocks]).
+  static bool canMerge(StructuredBlock block, int from, int into, {BlockLimits limits = BlockLimits.defaults}) {
+    final cols = _cols(block);
+    return from != into && cols[from].blocks.length + cols[into].blocks.length <= limits.maxColumnBlocks;
+  }
+
+  /// The blocks in the columns layout [layout] would remove.
+  static int blocksRemovedBy(StructuredBlock block, String layout) =>
+      _cols(block).skip(columnLayouts[layout]!.length).fold(0, (n, c) => n + c.blocks.length);
+
+  /// [block] with layout [layout]: the first columns kept, new empty ones
+  /// added. The blocks of columns it removes are added to the end of the
+  /// last column kept when [moveBlocks]; otherwise there must be none.
+  static StructuredBlock withLayout(StructuredBlock block, String layout, {bool moveBlocks = false, BlockLimits limits = BlockLimits.defaults}) {
+    final count = columnLayouts[layout]!.length;
+    final cols = _cols(block);
+    final removed = [for (final c in cols.skip(count)) ...c.blocks];
+    if (removed.isNotEmpty && !moveBlocks) throw StateError('The columns removed hold blocks.');
+    final kept = [...cols.take(count), for (var i = cols.length; i < count; i++) BlockColumn(id: BlockIds.column())];
+    if (removed.isNotEmpty) {
+      final last = kept[count - 1];
+      if (last.blocks.length + removed.length > limits.maxColumnBlocks) throw StateError('The blocks don’t fit in one column.');
+      kept[count - 1] = last.copyWith(blocks: [...last.blocks, ...removed]);
+    }
+    return block.withValue('layout', layout).withValue('columns', kept);
+  }
+
+  /// [block] with an empty column added at the end; the columns become
+  /// equal widths. Null when it has as many columns as it can.
+  static StructuredBlock? withColumnAdded(StructuredBlock block) {
+    final layout = equalLayout(block, _cols(block).length + 1);
+    return layout == null ? null : withLayout(block, layout);
+  }
+
+  /// [block] without column [index]. Its blocks are added to the end of
+  /// column [moveInto] (an index before the removal) or, when
+  /// [deleteBlocks], removed with it; an empty column needs neither. The
+  /// remaining columns keep their widths when a layout has them, else
+  /// become equal. Null when [block] can't have fewer columns.
+  static StructuredBlock? withColumnRemoved(StructuredBlock block, int index, {int? moveInto, bool deleteBlocks = false, BlockLimits limits = BlockLimits.defaults}) {
+    final cols = [..._cols(block)];
+    if (cols.length <= range(block).$1) return null;
+    final removed = cols[index];
+    if (removed.blocks.isNotEmpty && !deleteBlocks) {
+      if (moveInto == null) throw StateError('The column holds blocks.');
+      if (!canMerge(block, index, moveInto, limits: limits)) throw StateError('The blocks don’t fit in that column.');
+      cols[moveInto] = cols[moveInto].copyWith(blocks: [...cols[moveInto].blocks, ...removed.blocks]);
+    }
+    cols.removeAt(index);
+    final widths = [...?columnLayouts[block.string('layout')]];
+    if (widths.length > index) widths.removeAt(index);
+    final kept = widths.join(':');
+    final layout = widths.length == cols.length && _layouts(block).contains(kept) ? kept : equalLayout(block, cols.length)!;
+    return block.withValue('layout', layout).withValue('columns', cols);
+  }
+
+  /// [block] with column [index] moved [delta] places (each column keeps
+  /// its width: "wider right" becomes "wider left"); unchanged when it
+  /// can't move that far.
+  static StructuredBlock withColumnMoved(StructuredBlock block, int index, int delta) {
+    final cols = [..._cols(block)];
+    final to = index + delta;
+    if (to < 0 || to >= cols.length) return block;
+    cols.insert(to, cols.removeAt(index));
+    final widths = [...?columnLayouts[block.string('layout')]];
+    var layout = block.string('layout');
+    if (widths.length == cols.length) {
+      widths.insert(to, widths.removeAt(index));
+      if (_layouts(block).contains(widths.join(':'))) layout = widths.join(':');
+    }
+    return block.withValue('layout', layout).withValue('columns', cols);
   }
 }

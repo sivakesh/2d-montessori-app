@@ -452,8 +452,10 @@ class _WebsiteSiteLayoutEditorScreenState extends ConsumerState<WebsiteSiteLayou
             maxLines: lines,
             decoration: websiteField('$label (English)', hint: hint),
           ),
-          const SizedBox(height: 8),
-          TextField(key: Key('$key-ta'), controller: ta, maxLength: max, maxLines: lines, decoration: websiteField('$label (Tamil)')),
+          if (multilingualEditing) ...[
+            const SizedBox(height: 8),
+            TextField(key: Key('$key-ta'), controller: ta, maxLength: max, maxLines: lines, decoration: websiteField('$label (Tamil)')),
+          ],
         ],
       ),
     );
@@ -563,7 +565,7 @@ class _NavListEditor extends StatelessWidget {
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           Text(e.target.kind == SiteNavTargetKind.external ? kind : '$kind · $name', style: const TextStyle(fontSize: 12)),
-                          if (e.label.ta.trim().isNotEmpty) Text('தமிழ்: ${e.label.ta.trim()}', style: const TextStyle(fontSize: 12)),
+                          if (multilingualEditing && e.label.ta.trim().isNotEmpty) Text('தமிழ்: ${e.label.ta.trim()}', style: const TextStyle(fontSize: 12)),
                           if (reason != null) WebsiteStatusChip(key: Key('$keyPrefix-status-${e.id}'), label: reason, color: reason == 'Hidden' ? const Color(0xFF6E6E73) : const Color(0xFFB3261E)),
                         ],
                       ),
@@ -781,8 +783,10 @@ class _NavEntryDialogState extends State<_NavEntryDialog> {
                 maxLength: SiteLayout.maxLabelLength,
                 decoration: websiteField('Label (English)', helper: _kind == SiteNavTargetKind.external ? 'Required.' : 'Leave blank to use the page’s own name.'),
               ),
-              const SizedBox(height: 8),
-              TextField(key: const Key('website-link-label-ta'), controller: _labelTa, maxLength: SiteLayout.maxLabelLength, decoration: websiteField('Label (Tamil)')),
+              if (multilingualEditing) ...[
+                const SizedBox(height: 8),
+                TextField(key: const Key('website-link-label-ta'), controller: _labelTa, maxLength: SiteLayout.maxLabelLength, decoration: websiteField('Label (Tamil)')),
+              ],
               if (_error != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),

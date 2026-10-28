@@ -69,6 +69,16 @@ InputDecoration websiteField(String label, {String? helper, String? hint}) => In
       fillColor: Colors.white,
     );
 
+/// Whether admins edit website and form text in more than one language.
+///
+/// English only for now: Tamil (and other languages) will come back with
+/// the language module, which enables a language, translates the English
+/// with AI and lets admins review it. Meanwhile no editor shows a Tamil
+/// field or a preview-language switch. Text already stored in another
+/// language is kept as it is (the editors still carry it when saving),
+/// and the public website still shows it.
+const multilingualEditing = false;
+
 // ------------------------------------------------------------------ media
 
 /// Edits one library image: focal point (with crop previews at each
@@ -303,7 +313,8 @@ class _WebsiteMediaEditorScreenState extends ConsumerState<WebsiteMediaEditorScr
               helper: 'Describe what the photograph shows for people using screen readers, e.g. “Children arranging coloured beads on a mat”. Do not include names.'),
         ),
         const SizedBox(height: 8),
-        TextField(key: const Key('website-media-alt-ta'), controller: _altTa, maxLength: WebsiteContentAdminService.maxAltLength, decoration: websiteField('Alt text (Tamil, optional)')),
+        if (multilingualEditing)
+          TextField(key: const Key('website-media-alt-ta'), controller: _altTa, maxLength: WebsiteContentAdminService.maxAltLength, decoration: websiteField('Alt text (Tamil, optional)')),
         const SizedBox(height: 8),
         TextField(
           key: const Key('website-media-caption-en'),
@@ -313,7 +324,8 @@ class _WebsiteMediaEditorScreenState extends ConsumerState<WebsiteMediaEditorScr
           decoration: websiteField('Caption (English, optional)', helper: 'Shown under the photograph in the gallery.'),
         ),
         const SizedBox(height: 8),
-        TextField(
+        if (multilingualEditing)
+          TextField(
           key: const Key('website-media-caption-ta'),
           controller: _captionTa,
           maxLength: WebsiteContentAdminService.maxCaptionLength,
@@ -823,8 +835,7 @@ class _WebsitePageEditorScreenState extends ConsumerState<WebsitePageEditorScree
         ),
         const WebsiteEditorSectionTitle('Text'),
         const Text(
-          'Fields start with the website’s built-in wording. Text left exactly as built-in keeps following the site’s own copy. '
-          'If you clear the Tamil text, Tamil visitors see the English text.',
+          'Fields start with the website’s built-in wording. Text left exactly as built-in keeps following the site’s own copy.',
           style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
         ),
         const SizedBox(height: 10),
@@ -835,7 +846,8 @@ class _WebsitePageEditorScreenState extends ConsumerState<WebsitePageEditorScree
           decoration: websiteField('Heading (English)', helper: _builtInHelper(_headlineEn.text, slot.builtInHeadline.en)),
         ),
         const SizedBox(height: 8),
-        TextField(
+        if (multilingualEditing)
+          TextField(
           key: const Key('website-page-headline-ta'),
           controller: _headlineTa,
           maxLength: WebsiteContentAdminService.maxHeadlineLength,
@@ -850,7 +862,8 @@ class _WebsitePageEditorScreenState extends ConsumerState<WebsitePageEditorScree
           decoration: websiteField('Introduction (English)', helper: _builtInHelper(_introEn.text, slot.builtInIntro.en)),
         ),
         const SizedBox(height: 8),
-        TextField(
+        if (multilingualEditing)
+          TextField(
           key: const Key('website-page-intro-ta'),
           controller: _introTa,
           maxLength: WebsiteContentAdminService.maxIntroLength,
@@ -957,6 +970,8 @@ class WebsiteLanguagePicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // English only for now ([multilingualEditing]): nothing to choose.
+    if (!multilingualEditing) return const SizedBox.shrink();
     final options = languages.isEmpty ? PublicLanguage.builtIn : languages;
     final current = options.contains(selected) ? selected : options.first;
     if (options.length <= 3) {
@@ -1055,6 +1070,74 @@ Future<String?> showWebsiteImagePicker(BuildContext context, List<WebsiteMedia> 
       ),
       actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel'))],
     ),
+  );
+}
+
+/// Chooses several images from the media library, in the order ticked
+/// (at most [max]); null when cancelled. Images [already] in the list are
+/// marked and can't be chosen again (a gallery shows each image once). Keys: `website-choose-many-<id>`,
+/// `website-choose-many-add`.
+Future<List<String>?> showWebsiteImagesPicker(BuildContext context, List<WebsiteMedia> library, {Set<String> already = const {}, required int max}) {
+  return showDialog<List<String>>(
+    context: context,
+    builder: (context) {
+      final chosen = <String>[];
+      return StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Add images'),
+          content: SizedBox(
+            width: 560,
+            child: library.isEmpty
+                ? const Text('The media library is empty. Upload an image in the Media library tab first.')
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'Tick the images to add, in the order they should appear (at most $max). Only published images are shown to visitors.',
+                        style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                      ),
+                      const SizedBox(height: 8),
+                      Flexible(
+                        child: ListView(
+                          shrinkWrap: true,
+                          children: [
+                            for (final m in library)
+                              CheckboxListTile(
+                                key: Key('website-choose-many-${m.id}'),
+                                value: chosen.contains(m.id),
+                                onChanged: already.contains(m.id) || (!chosen.contains(m.id) && chosen.length >= max)
+                                    ? null
+                                    : (v) => setState(() => v == true ? chosen.add(m.id) : chosen.remove(m.id)),
+                                secondary: WebsiteMediaThumb(media: m, size: 48),
+                                title: Text(m.alt.en.isNotEmpty ? m.alt.en : 'No alt text yet', maxLines: 2, overflow: TextOverflow.ellipsis),
+                                subtitle: Wrap(
+                                  spacing: 8,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    WebsiteStatusChip.forMedia(m.status),
+                                    if (chosen.contains(m.id)) Text('#${chosen.indexOf(m.id) + 1}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                                    if (already.contains(m.id)) const Text('Already in this gallery', style: TextStyle(fontSize: 12)),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            FilledButton(
+              key: const Key('website-choose-many-add'),
+              onPressed: chosen.isEmpty ? null : () => Navigator.pop(context, List<String>.of(chosen)),
+              child: Text(chosen.isEmpty ? 'Add' : 'Add ${chosen.length}'),
+            ),
+          ],
+        ),
+      );
+    },
   );
 }
 

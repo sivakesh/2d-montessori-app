@@ -7,6 +7,7 @@ import '../content/website_content_models.dart';
 import '../content/website_content_repository.dart';
 import '../public_routes.dart';
 import '../public_strings.dart';
+import '../content/website_design.dart';
 import '../public_website_theme.dart';
 import '../widgets/public_scaffold.dart';
 import '../widgets/public_website_image.dart';
@@ -47,7 +48,7 @@ class PublicGalleryPage extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(headline.isNotEmpty ? headline : strings.gallery, key: const Key('public-section-title'), style: layout.isMobile ? PublicText.displayMobile : PublicText.display),
+                  Text(headline.isNotEmpty ? headline : strings.gallery, key: const Key('public-section-title'), style: WebsiteDesignScope.of(context).titleStyle(mobile: layout.isMobile)),
                   const SizedBox(height: 16),
                   Text(intro.isNotEmpty ? intro : strings.galleryIntro, key: const Key('public-section-intro'), style: PublicText.body.copyWith(fontSize: 17)),
                   if (banner != null) ...[
@@ -156,7 +157,7 @@ class _PublicGalleryFeedState extends ConsumerState<PublicGalleryFeed> {
                 PublicLayout.desktop => 4,
               };
               final gap = layout.isMobile ? 12.0 : 20.0;
-              final tileWidth = ((constraints.maxWidth - gap * (columns - 1)) / columns).floorToDouble();
+              final tileWidth = PublicLayout.tileWidth(constraints.maxWidth, columns, gap);
               return Wrap(
                 key: const Key('public-gallery-grid'),
                 spacing: gap,

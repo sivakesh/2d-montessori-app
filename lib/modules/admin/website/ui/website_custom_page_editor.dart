@@ -9,6 +9,7 @@ import '../../../public_website/content/blocks/website_block.dart';
 import '../../../public_website/content/translation/translation_coverage.dart';
 import '../../../public_website/content/website_content_models.dart';
 import '../../../public_website/content/website_custom_page.dart';
+import '../../../public_website/content/website_page_style.dart';
 import '../../../public_website/public_routes.dart';
 import '../../../public_website/public_strings.dart';
 import '../../../public_website/public_website_theme.dart';
@@ -20,6 +21,7 @@ import '../../../public_website/widgets/public_scaffold.dart';
 import 'page_builder/website_chrome_scope.dart';
 import 'page_builder/website_visual_editor.dart';
 import 'website_content_editors.dart';
+import 'website_design_editors.dart';
 import 'website_content_screen.dart';
 import 'website_site_layout_editor.dart';
 
@@ -101,7 +103,8 @@ class _CreateCustomPageDialogState extends State<_CreateCustomPageDialog> {
                 }),
               ),
               const SizedBox(height: 8),
-              TextField(
+              if (multilingualEditing)
+                TextField(
                 key: const Key('website-new-page-title-ta'),
                 controller: _titleTa,
                 maxLength: CustomPage.maxTitleLength,
@@ -176,8 +179,15 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
   List<WebsiteBlock>? _blocks;
   bool _showInNavigation = false;
 
+  /// The page's own look (its background), as being edited.
+  PageStyle _pageStyle = const PageStyle();
+
   /// The preview at mobile width (390 px) instead of the editor's width.
   bool _previewMobile = false;
+
+  /// The canvas at a tablet's width (pages built with blocks).
+  bool _previewTablet = false;
+  bool get _usesBlocks => _blocks != null;
 
   /// A site layout is published, so it — not [_showInNavigation] — decides
   /// whether this page is in the header and footer.
@@ -239,6 +249,7 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
     _heroId = page.heroMediaId;
     _sections = [...page.sections];
     _blocks = page.blocks == null ? null : [...page.blocks!];
+    _pageStyle = page.pageStyle;
     _showInNavigation = page.showInNavigation;
     _generation++;
   }
@@ -315,6 +326,7 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
         // For a page built with blocks, its blocks (its sections copy is
         // derived from them when saving).
         blocks: _blocks,
+        pageStyle: _pageStyle,
         showInNavigation: _showInNavigation,
         navOrder: _draft?.navOrder ?? 0,
         archived: _draft?.archived ?? false,
@@ -507,7 +519,8 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
     return [
       TextField(key: const Key('website-custom-title-en'), controller: _titleEn, maxLength: CustomPage.maxTitleLength, decoration: websiteField('Title (English)')),
       const SizedBox(height: 8),
-      TextField(
+      if (multilingualEditing)
+        TextField(
         key: const Key('website-custom-title-ta'),
         controller: _titleTa,
         maxLength: CustomPage.maxTitleLength,
@@ -528,7 +541,8 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
       const SizedBox(height: 8),
       TextField(key: const Key('website-custom-intro-en'), controller: _introEn, maxLength: CustomPage.maxIntroLength, maxLines: 3, decoration: websiteField('Introduction (English, optional)')),
       const SizedBox(height: 8),
-      TextField(key: const Key('website-custom-intro-ta'), controller: _introTa, maxLength: CustomPage.maxIntroLength, maxLines: 3, decoration: websiteField('Introduction (Tamil, optional)')),
+      if (multilingualEditing)
+        TextField(key: const Key('website-custom-intro-ta'), controller: _introTa, maxLength: CustomPage.maxIntroLength, maxLines: 3, decoration: websiteField('Introduction (Tamil, optional)')),
       const WebsiteEditorSectionTitle('Banner image (optional)'),
       _ImageChooser(
         keyPrefix: 'website-custom-hero',
@@ -578,7 +592,8 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
           ),
         );
 
-  Widget? _readinessBox(List<TranslatableSource> sources) => _languages.length <= 1 || sources.isEmpty
+  // Translation status comes back with the language module ([multilingualEditing]).
+  Widget? _readinessBox(List<TranslatableSource> sources) => !multilingualEditing || _languages.length <= 1 || sources.isEmpty
       ? null
       : Container(
           key: const Key('website-custom-readiness'),
@@ -706,14 +721,19 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
     );
   }
 
-  Widget _desktopMobileSwitch() => SegmentedButton<bool>(
+  Widget _desktopMobileSwitch() => SegmentedButton<String>(
         showSelectedIcon: false,
-        segments: const [
-          ButtonSegment(value: false, icon: Icon(Icons.desktop_windows_outlined), label: Text('Desktop', key: Key('website-custom-preview-desktop'))),
-          ButtonSegment(value: true, icon: Icon(Icons.phone_iphone), label: Text('Mobile', key: Key('website-custom-preview-mobile'))),
+        segments: [
+          const ButtonSegment(value: 'desktop', icon: Icon(Icons.desktop_windows_outlined), label: Text('Desktop', key: Key('website-custom-preview-desktop'))),
+          // Tablets: in the visual editor's canvas (pages built with blocks).
+          if (_usesBlocks) const ButtonSegment(value: 'tablet', icon: Icon(Icons.tablet_mac_outlined), label: Text('Tablet', key: Key('website-custom-preview-tablet'))),
+          const ButtonSegment(value: 'mobile', icon: Icon(Icons.phone_iphone), label: Text('Mobile', key: Key('website-custom-preview-mobile'))),
         ],
-        selected: {_previewMobile},
-        onSelectionChanged: (s) => setState(() => _previewMobile = s.first),
+        selected: {_previewMobile ? 'mobile' : (_previewTablet && _usesBlocks ? 'tablet' : 'desktop')},
+        onSelectionChanged: (s) => setState(() {
+          _previewMobile = s.first == 'mobile';
+          _previewTablet = s.first == 'tablet';
+        }),
       );
 
   /// Shows the page as visitors see it, with no editing aids.
@@ -756,7 +776,14 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
         language: _previewLanguage,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [PublicHeader(currentRoute: page.route), Padding(padding: const EdgeInsets.symmetric(vertical: 48), child: previewView), const PublicFooter()],
+          children: [
+            PublicHeader(currentRoute: page.route),
+            PageBackground(
+              style: previewingLive ? live?.pageStyle ?? const PageStyle() : page.pageStyle,
+              child: Padding(padding: const EdgeInsets.symmetric(vertical: 48), child: previewView),
+            ),
+            const PublicFooter(),
+          ],
         ),
       );
     }
@@ -822,6 +849,7 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
                 blocks: _blocks!,
                 pageHeader: PublicCustomPageBody(page: page.copyWith(blocks: () => const []), media: published, language: _previewLanguage, interactive: false),
                 design: chrome.design,
+                pageStyle: _pageStyle,
                 siteHeader: WebsiteChromeScope(chrome: chrome, language: _previewLanguage, child: PublicHeader(currentRoute: page.route)),
                 siteFooter: WebsiteChromeScope(chrome: chrome, language: _previewLanguage, child: const PublicFooter()),
                 siteChromeInfo: (part) => openSiteDesignButton(context, service: service, user: user, onReturn: _reloadSiteLayout),
@@ -831,11 +859,18 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
                 language: _previewLanguage,
                 generation: _generation,
                 mobilePreview: _previewMobile,
+                tabletPreview: _previewTablet,
                 previewView: previewView,
                 banner: WebsiteEditSourceBanner(key: const Key('website-custom-source'), text: _sourceText(draft, live), chips: const []),
                 pageSettings: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [..._pageFields(live), ..._navigation(), ?_readinessBox(sources)],
+                  children: [
+                    ..._pageFields(live),
+                    WebsitePageBackgroundField(style: _pageStyle, design: chrome.design, onChanged: (v) => setState(() => _pageStyle = v)),
+                    const SizedBox(height: 12),
+                    ..._navigation(),
+                    ?_readinessBox(sources),
+                  ],
                 ),
                 checks: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1046,7 +1081,7 @@ class _SectionEditor extends StatelessWidget {
   List<Widget> _pair(String name, String label, LocalizedText value, CustomPageSection Function(LocalizedText) apply, {int maxLines = 1, int? maxLength}) => [
         // Other languages in [value] are kept.
         _field('$name-en', '$label (English)', value.en, (v) => onChanged(apply(value.copyWith(en: v))), maxLines: maxLines, maxLength: maxLength),
-        _field('$name-ta', '$label (Tamil)', value.ta, (v) => onChanged(apply(value.copyWith(ta: v))), maxLines: maxLines, maxLength: maxLength),
+        if (multilingualEditing) _field('$name-ta', '$label (Tamil)', value.ta, (v) => onChanged(apply(value.copyWith(ta: v))), maxLines: maxLines, maxLength: maxLength),
       ];
 
   @override

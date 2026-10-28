@@ -7,20 +7,26 @@ import 'blocks/website_block.dart';
 import 'built_in_pages.dart';
 import 'website_content_models.dart';
 import 'website_custom_page.dart';
+import 'website_page_style.dart';
 import 'website_languages.dart';
+import 'website_public_item.dart';
 import 'website_site_layout.dart';
 
 /// Everything published in the live pages collection: the built-in pages'
 /// managed content, the additional pages, the site layout and the
 /// language registry.
 class LiveWebsiteContent {
-  const LiveWebsiteContent({this.pages = const {}, this.customPages = const [], this.layout, this.languages, this.builtInBlocks = const {}});
+  const LiveWebsiteContent({this.pages = const {}, this.customPages = const [], this.layout, this.languages, this.builtInBlocks = const {}, this.builtInStyles = const {}});
 
   final Map<WebsitePageSlot, WebsitePageContent> pages;
 
   /// The built-in pages published as blocks, by [BuiltInPage.id]. A page
   /// not listed shows its built-in content, as before.
   final Map<String, List<WebsiteBlock>> builtInBlocks;
+
+  /// Those pages' own looks ([PageStyle]), by [BuiltInPage.id]; only for a
+  /// page published as blocks that has one.
+  final Map<String, PageStyle> builtInStyles;
 
   /// Published additional pages, in navigation order.
   final List<CustomPage> customPages;
@@ -76,10 +82,15 @@ class WebsiteContentRepository {
     SiteLayout? layout;
     SiteLanguageRegistry? languages;
     final builtInBlocks = <String, List<WebsiteBlock>>{};
+    final builtInStyles = <String, PageStyle>{};
     for (final doc in snapshot.docs) {
       final data = doc.data();
       if (BuiltInPage.parse(doc.id) != null) {
-        if (builtInPageBlocks(data) case final blocks?) builtInBlocks[doc.id] = blocks;
+        if (builtInPageBlocks(data) case final blocks?) {
+          builtInBlocks[doc.id] = blocks;
+          final style = PageStyle.fromMap(data[PageStyle.field]);
+          if (!style.isDefault) builtInStyles[doc.id] = style;
+        }
       }
       if (doc.id == SiteLayout.docId) {
         layout = SiteLayout.tryParse(data);
@@ -98,7 +109,55 @@ class WebsiteContentRepository {
       if (slot != null) pages[slot] = WebsitePageContent.fromMap(slot, data);
     }
     custom.sort((a, b) => a.navOrder != b.navOrder ? a.navOrder.compareTo(b.navOrder) : a.slug.compareTo(b.slug));
-    return LiveWebsiteContent(pages: pages, customPages: custom, layout: layout, languages: languages, builtInBlocks: builtInBlocks);
+    return LiveWebsiteContent(pages: pages, customPages: custom, layout: layout, languages: languages, builtInBlocks: builtInBlocks, builtInStyles: builtInStyles);
+  }
+
+  /// The events an admin has shown on the website: the sanitized copies in
+  /// [WebsitePublicItem.collection], and nothing else (the school's
+  /// calendar and announcements are never read for visitors). Malformed
+  /// documents are left out; which are upcoming is decided when shown
+  /// (`upcomingPublicEvents`).
+  Future<List<WebsitePublicItem>> publicEvents() async {
+    final snapshot = await _db
+        .collection(WebsitePublicItem.collection)
+        .where('kind', isEqualTo: WebsitePublicItemKind.event.id)
+        .get();
+    return [for (final doc in snapshot.docs) ?WebsitePublicItem.tryParse(doc.data())];
+  }
+
+  /// The event shown on the website for calendar event [sourceId] (one
+  /// document of [WebsitePublicItem.collection], read by its id), or null
+  /// when there is none: never shown, withdrawn, malformed, or not an
+  /// event. Whether it is still current is decided when shown
+  /// (`isPublicEventAvailable`).
+  Future<WebsitePublicItem?> publicEvent(String sourceId) async {
+    if (!WebsitePublicItem.isValidSourceId(sourceId)) return null;
+    final doc = await _db.collection(WebsitePublicItem.collection).doc(WebsitePublicItem.docIdFor(WebsitePublicItemKind.event, sourceId)).get();
+    final item = WebsitePublicItem.tryParse(doc.data());
+    return item != null && item.kind == WebsitePublicItemKind.event && item.sourceId == sourceId ? item : null;
+  }
+
+  /// The announcements shown on the website: their sanitized copies in
+  /// [WebsitePublicItem.collection], and nothing else (the school's
+  /// notifications are never read for visitors). Malformed documents are
+  /// left out; which are current is decided when shown
+  /// (`currentPublicAnnouncements`).
+  Future<List<WebsitePublicItem>> publicAnnouncements() async {
+    final snapshot = await _db
+        .collection(WebsitePublicItem.collection)
+        .where('kind', isEqualTo: WebsitePublicItemKind.announcement.id)
+        .get();
+    return [for (final doc in snapshot.docs) ?WebsitePublicItem.tryParse(doc.data())];
+  }
+
+  /// The announcement shown on the website for notification [sourceId] (one
+  /// document, read by its id), or null when there is none: never shown,
+  /// withdrawn, malformed, or not an announcement.
+  Future<WebsitePublicItem?> publicAnnouncement(String sourceId) async {
+    if (!WebsitePublicItem.isValidSourceId(sourceId)) return null;
+    final doc = await _db.collection(WebsitePublicItem.collection).doc(WebsitePublicItem.docIdFor(WebsitePublicItemKind.announcement, sourceId)).get();
+    final item = WebsitePublicItem.tryParse(doc.data());
+    return item != null && item.kind == WebsitePublicItemKind.announcement && item.sourceId == sourceId ? item : null;
   }
 
   /// The published content of every built-in page that has some.
@@ -164,6 +223,12 @@ final publicBuiltInBlocksProvider = Provider.family<List<WebsiteBlock>?, String>
   (ref, id) => ref.watch(liveWebsiteContentProvider).valueOrNull?.builtInBlocks[id],
 );
 
+/// The published look of built-in page [id] ([PageStyle]): none while
+/// loading, if loading fails, or when it has none.
+final publicBuiltInPageStyleProvider = Provider.family<PageStyle, String>(
+  (ref, id) => ref.watch(liveWebsiteContentProvider).valueOrNull?.builtInStyles[id] ?? const PageStyle(),
+);
+
 /// The public header, mobile menu and footer: the published site layout,
 /// or — while content loads, if loading fails, or with no usable layout
 /// published — the built-in layout (the built-in pages, then the published
@@ -184,6 +249,38 @@ final publicLanguagesProvider = Provider<List<PublicLanguage>>((ref) {
 
 /// The header and mobile menu links.
 final publicNavigationProvider = Provider<List<PublicNavEntry>>((ref) => ref.watch(publicSiteChromeProvider).mainNav);
+
+/// The events shown on the website ([WebsiteContentRepository.publicEvents]).
+/// Read again each time a page showing them is opened (and after an admin
+/// changes them in this session), so a republished event reaches visitors
+/// without reloading the site.
+final publicEventItemsProvider = FutureProvider.autoDispose<List<WebsitePublicItem>>(
+  (ref) => ref.watch(websiteContentRepositoryProvider).publicEvents(),
+);
+
+/// One event's details ([WebsiteContentRepository.publicEvent]), read
+/// again each time its page is opened: the page always shows the copy as
+/// published now, never one remembered from earlier in the visit.
+final publicEventProvider = FutureProvider.autoDispose.family<WebsitePublicItem?, String>(
+  (ref, sourceId) => ref.watch(websiteContentRepositoryProvider).publicEvent(sourceId),
+);
+
+/// The announcements shown on the website
+/// ([WebsiteContentRepository.publicAnnouncements]), read again each time a
+/// page showing them is opened.
+final publicAnnouncementItemsProvider = FutureProvider.autoDispose<List<WebsitePublicItem>>(
+  (ref) => ref.watch(websiteContentRepositoryProvider).publicAnnouncements(),
+);
+
+/// One announcement's details ([WebsiteContentRepository.publicAnnouncement]),
+/// read again each time its page is opened.
+final publicAnnouncementProvider = FutureProvider.autoDispose.family<WebsitePublicItem?, String>(
+  (ref, sourceId) => ref.watch(websiteContentRepositoryProvider).publicAnnouncement(sourceId),
+);
+
+/// The current time, for deciding which events are still upcoming
+/// (replaceable in tests).
+final publicClockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
 
 /// Published gallery images (published and listed in the gallery).
 final publicGalleryProvider = FutureProvider<List<WebsiteMedia>>((ref) async {

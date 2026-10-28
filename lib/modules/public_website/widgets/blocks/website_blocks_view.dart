@@ -12,6 +12,11 @@ import '../../public_strings.dart';
 import '../../public_website_theme.dart';
 import '../../ui/public_gallery_page.dart';
 import '../public_website_image.dart';
+import '../../../forms/ui/public_website_form.dart';
+import 'public_announcements_feed.dart';
+import 'public_map_block.dart';
+import 'public_events_feed.dart';
+import 'public_item_cards.dart';
 import 'public_feature_widgets.dart';
 
 /// Follows a block's button link: a public page in place, an allowed
@@ -186,7 +191,15 @@ class _Look {
     caption = own('textColor') ?? inherited?.text ?? design.colorOf('ink');
     align = block.style['align'] is String ? block.style['align'] as String : inherited?.align ?? 'start';
     scale = switch (block.style['fontSize']) { 'small' => 0.875, 'large' => 1.125, _ => 1.0 };
+    double? px(String key) => BlockStyle.sizeKeys[key]!.allows(block.style[key]) ? (block.style[key] as num).toDouble() : null;
+    ownHeadingSize = px('headingFontSize');
+    ownBodySize = px('bodyFontSize');
   }
+
+  /// The block's own sizes ([BlockStyle.sizeKeys]): they take the place of
+  /// the site typography (and of the text size option).
+  late final double? ownHeadingSize;
+  late final double? ownBodySize;
 
   final SiteDesign design;
   late final Color heading;
@@ -201,9 +214,22 @@ class _Look {
   CrossAxisAlignment get cross => switch (align) { 'center' => CrossAxisAlignment.center, 'end' => CrossAxisAlignment.end, _ => CrossAxisAlignment.start };
   WrapAlignment get wrap => switch (align) { 'center' => WrapAlignment.center, 'end' => WrapAlignment.end, _ => WrapAlignment.start };
 
-  TextStyle get headingStyle => PublicText.heading.copyWith(color: heading, fontSize: design.headingSize * scale);
+  TextStyle get headingStyle => PublicText.heading.copyWith(color: heading, fontSize: ownHeadingSize ?? design.headingSize * scale);
   TextStyle get titleStyle => PublicText.title.copyWith(color: heading);
-  TextStyle get bodyStyle => PublicText.body.copyWith(color: text, fontSize: design.bodySize * scale, height: design.lineHeight);
+  TextStyle get bodyStyle => PublicText.body.copyWith(color: text, fontSize: ownBodySize ?? design.bodySize * scale, height: design.lineHeight);
+
+  /// A hero's or page header's title: the block's own heading size (on
+  /// phones scaled as the site's titles are), else the site's title size.
+  TextStyle displayStyle({required bool mobile}) {
+    final base = design.titleStyle(mobile: mobile).copyWith(color: heading);
+    final own = ownHeadingSize;
+    if (own == null) return base;
+    final ratio = mobile ? design.titleSizeFor(mobile: true) / design.titleSizeFor(mobile: false) : 1.0;
+    return base.copyWith(fontSize: (own * ratio).roundToDouble());
+  }
+
+  /// Button labels: the site's button size, if it sets one.
+  TextStyle? get buttonLabelStyle => design.buttonSize == null ? null : TextStyle(fontSize: design.buttonSize);
   TextStyle get eyebrowStyle => PublicText.eyebrow.copyWith(color: design.colorOf('gold'));
 }
 
@@ -220,11 +246,24 @@ class _BlockWidget extends StatelessWidget {
     // An image or grid with nothing to show (no published image) is left out.
     if (b.type == 'image' && view.media[b.string('mediaId')] == null) return null;
     if (b.type == 'gallery' && b.text('heading').resolve(view.language).isEmpty && !b.items('images').any((i) => view.media[i.string('mediaId')] != null)) return null;
-    if (containerTypes.contains(b.type) && view.editing == null && !b.columns('columns').any((c) => c.blocks.any((child) => maybe(child, view) != null))) return null;
+    // A section or columns block with nothing to show (no visible block,
+    // and for a section no heading text either) is left out.
+    if (containerTypes.contains(b.type) &&
+        view.editing == null &&
+        !(b.type == 'section' && _sectionHasHeader(b, view.language)) &&
+        !b.columns('columns').any((c) => c.blocks.any((child) => maybe(child, view) != null))) {
+      return null;
+    }
     return _BlockWidget(b, view);
   }
 
   PublicLanguage get language => view.language;
+
+  /// The optional text a section shows above its columns.
+  static const _sectionHeaderKeys = ['eyebrow', 'heading', 'description'];
+
+  static bool _sectionHasHeader(StructuredBlock section, PublicLanguage language) =>
+      _sectionHeaderKeys.any((k) => section.text(k).resolve(language).trim().isNotEmpty);
 
   static Color? backgroundOf(StructuredBlock block, SiteDesign design) => switch (block.style['background']) {
         'sage' => design.colorOf('sageLight'),
@@ -280,7 +319,7 @@ class _BlockWidget extends StatelessWidget {
             final onPressed = view.interactive ? () => followBlockLink(context, target) : null;
             final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(10));
             const padding = EdgeInsets.symmetric(horizontal: 24, vertical: 16);
-            final label = Text(item.text('label').resolve(language));
+            final label = Text(item.text('label').resolve(language), style: look.buttonLabelStyle);
             final key = Key('public-block-button-${item.id}');
             return switch (item.string('variant')) {
               'secondary' => OutlinedButton(
@@ -371,6 +410,64 @@ class _BlockWidget extends StatelessWidget {
           ),
         ),
       'gallery_feed' => view.interactive ? const PublicGalleryFeed() : _galleryFeedPreview(strings, layout),
+      // The editor and preview show the events visitors see now (the
+      // public copies only).
+      'events_feed' => PublicEventsFeed(
+          language: language,
+          limit: int.tryParse(block.string('maxItems')) ?? 6,
+          layout: PublicEventsLayout.parse(block.string('layout')),
+          desktopColumns: int.tryParse(block.string('desktopColumns')) ?? 3,
+          tabletColumns: int.tryParse(block.string('tabletColumns')) ?? 2,
+          mobileColumns: int.tryParse(block.string('mobileColumns')) ?? 1,
+          showImages: block.flag('showImages'),
+          heading: block.text('heading').resolve(language),
+          headingStyle: look.headingStyle,
+          titleStyle: look.titleStyle,
+          bodyStyle: look.bodyStyle,
+          accent: look.button,
+          interactive: view.interactive,
+        ),
+      'announcements_feed' => PublicAnnouncementsFeed(
+          language: language,
+          limit: int.tryParse(block.string('maxItems')) ?? 6,
+          layout: PublicItemsLayout.parse(block.string('layout')),
+          desktopColumns: int.tryParse(block.string('desktopColumns')) ?? 3,
+          tabletColumns: int.tryParse(block.string('tabletColumns')) ?? 2,
+          mobileColumns: int.tryParse(block.string('mobileColumns')) ?? 1,
+          showImages: block.flag('showImages'),
+          showCategory: block.flag('showCategory'),
+          highlightPinned: block.flag('highlightPinned'),
+          heading: block.text('heading').resolve(language),
+          headingStyle: look.headingStyle,
+          titleStyle: look.titleStyle,
+          bodyStyle: look.bodyStyle,
+          accent: look.button,
+          interactive: view.interactive,
+        ),
+      // Only the form's id is stored; its active version is read when
+      // shown (nothing for visitors when it isn't active).
+      'form' => WebsiteFormBlockView(
+          formId: block.string('formId'),
+          language: language,
+          heading: block.text('heading').resolve(language),
+          intro: block.text('intro').resolve(language),
+          headingStyle: look.headingStyle,
+          bodyStyle: look.bodyStyle,
+          accent: look.button,
+          interactive: view.interactive,
+        ),
+      'map' => PublicMapBlock(
+          key: Key('public-map-${block.id}'),
+          config: MapBlockConfig.of(block),
+          heading: block.text('heading').resolve(language),
+          details: block.text('details').resolve(language),
+          language: language,
+          wide: !layout.isMobile,
+          headingStyle: look.headingStyle,
+          bodyStyle: look.bodyStyle,
+          accent: look.button,
+          interactive: view.interactive,
+        ),
       _ => const SizedBox.shrink(),
     };
     // A notice draws its own box; a call to action its own background.
@@ -407,53 +504,78 @@ class _BlockWidget extends StatelessWidget {
 
   Widget _gallery(BuildContext context, PublicStrings strings, PublicLayout layout, _Look look) {
     final heading = block.text('heading').resolve(language);
-    final images = [for (final item in block.items('images')) ?view.media[item.string('mediaId')]];
-    final perRow = layout.isMobile ? 2 : (int.tryParse(block.string('columns')) ?? 3);
+    // The chosen images that exist, in their order, up to the limit.
+    final limit = int.tryParse(block.option('limit'));
+    final shown = [
+      for (final item in block.items('images'))
+        if (view.media[item.string('mediaId')] case final media?) (item: item, media: media),
+    ].take(limit ?? CustomPage.maxGridImages).toList();
+    final images = [for (final s in shown) s.media];
+    final desktop = int.parse(block.option('columns'));
+    final perRow = switch (layout) {
+      PublicLayout.mobile => int.parse(block.option('mobileColumns')),
+      PublicLayout.tablet => int.tryParse(block.option('tabletColumns')) ?? desktop,
+      PublicLayout.desktop => desktop,
+    };
+    final aspect = _aspect(block.option('aspect')) ?? 4 / 3;
+    final showCaptions = block.toggle('showCaptions');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (heading.isNotEmpty) ...[Text(heading, style: look.headingStyle), const SizedBox(height: 20)],
         LayoutBuilder(builder: (context, constraints) {
           final gap = layout.isMobile ? 12.0 : 20.0;
-          final width = ((constraints.maxWidth - gap * (perRow - 1)) / perRow).floorToDouble();
+          final width = PublicLayout.tileWidth(constraints.maxWidth, perRow, gap);
           return Wrap(
             spacing: gap,
             runSpacing: gap,
             children: [
-              for (var i = 0; i < images.length; i++)
-                SizedBox(
-                  width: width,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Semantics(
-                        button: view.interactive,
-                        label: images[i].alt.resolve(language),
-                        excludeSemantics: true,
-                        child: Material(
-                          color: Colors.transparent,
-                          borderRadius: BorderRadius.circular(16),
-                          clipBehavior: Clip.antiAlias,
-                          child: InkWell(
-                            onTap: view.interactive ? () => showPublicGalleryLightbox(context, images, i) : null,
-                            child: PublicWebsiteImage(
-                              media: images[i],
-                              aspectRatio: 4 / 3,
-                              borderRadius: 16,
-                              semanticLabel: images[i].alt.resolve(language),
-                              errorLabel: strings.imageUnavailable,
-                              placeholder: const PublicImagePlaceholder(compact: true),
+              for (var i = 0; i < shown.length; i++)
+                Builder(builder: (context) {
+                  final item = shown[i].item;
+                  final media = shown[i].media;
+                  // The image's own caption, else the library's.
+                  final own = item.text('caption').resolve(language);
+                  final caption = own.isNotEmpty ? own : media.caption.resolve(language);
+                  final target = item.string('target').trim();
+                  final link = target.isNotEmpty && SafeLinkTarget.validate(target) == null;
+                  return SizedBox(
+                    key: Key('public-gallery-item-${item.id}'),
+                    width: width,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Semantics(
+                          button: view.interactive,
+                          link: link,
+                          label: media.alt.resolve(language),
+                          excludeSemantics: true,
+                          child: Material(
+                            color: Colors.transparent,
+                            borderRadius: BorderRadius.circular(16),
+                            clipBehavior: Clip.antiAlias,
+                            child: InkWell(
+                              // A linked image follows its link; others open larger.
+                              onTap: !view.interactive ? null : () => link ? followBlockLink(context, target) : showPublicGalleryLightbox(context, images, i),
+                              child: PublicWebsiteImage(
+                                media: media,
+                                aspectRatio: aspect,
+                                borderRadius: 16,
+                                semanticLabel: media.alt.resolve(language),
+                                errorLabel: strings.imageUnavailable,
+                                placeholder: const PublicImagePlaceholder(compact: true),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      if (images[i].caption.resolve(language) case final caption when caption.isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        Text(caption, maxLines: 2, overflow: TextOverflow.ellipsis, style: PublicText.body.copyWith(fontSize: 14, color: look.caption)),
+                        if (showCaptions && caption.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(caption, maxLines: 2, overflow: TextOverflow.ellipsis, style: PublicText.body.copyWith(fontSize: 14, color: look.caption)),
+                        ],
                       ],
-                    ],
-                  ),
-                ),
+                    ),
+                  );
+                }),
             ],
           );
         }),
@@ -477,25 +599,72 @@ class _BlockWidget extends StatelessWidget {
     return items;
   }
 
+  /// Style gap [key] (`columnGap`, `rowGap`) in px, or [fallback].
+  double _gap(String key, double fallback) => BlockStyle.gaps.contains(block.style[key]) ? double.parse(block.style[key] as String) : fallback;
+
   /// [children] (one widget per column) side by side from tablet width
-  /// (relative widths from the layout); stacked on mobile.
+  /// (relative widths from the layout); stacked on mobile. Four columns
+  /// make two rows of two on tablets. Column and row gaps come from the
+  /// block's style (else 40 between columns and [stackGap] between rows).
   Widget _columnsLayout(PublicLayout layout, List<Widget> children, {required CrossAxisAlignment cross, double stackGap = 24}) {
     final widths = columnLayouts[block.string('layout')] ?? const [1, 1];
+    final columnGap = _gap('columnGap', 40);
+    final rowGap = _gap('rowGap', stackGap);
     if (layout.isMobile || children.length == 1) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [for (final (i, c) in children.indexed) ...[if (i > 0) SizedBox(height: stackGap), c]],
+        children: [for (final (i, c) in children.indexed) ...[if (i > 0) SizedBox(height: rowGap), c]],
       );
     }
-    return Row(
-      crossAxisAlignment: cross,
-      children: [
-        for (final (i, c) in children.indexed) ...[
-          if (i > 0) const SizedBox(width: 40),
-          Expanded(flex: i < widths.length ? widths[i] : 1, child: c),
+    Widget row(List<Widget> cells, List<int> flexes) => Row(
+          crossAxisAlignment: cross,
+          children: [
+            for (final (i, c) in cells.indexed) ...[
+              if (i > 0) SizedBox(width: columnGap),
+              Expanded(flex: i < flexes.length ? flexes[i] : 1, child: c),
+            ],
+          ],
+        );
+    if (layout == PublicLayout.tablet && children.length > 3) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < children.length; i += 2) ...[
+            if (i > 0) SizedBox(height: rowGap),
+            row([children[i], if (i + 1 < children.length) children[i + 1] else const SizedBox.shrink()], const [1, 1]),
+          ],
         ],
-      ],
-    );
+      );
+    }
+    return row(children, widths);
+  }
+
+  /// Items per row on this screen size from the block's per-row settings
+  /// (`desktopColumns`, `tabletColumns`, `mobileColumns`), or null for
+  /// the block's automatic layout (as before these settings existed).
+  int? _perRow(PublicLayout layout) {
+    int? n(String key) => int.tryParse(block.option(key));
+    return switch (layout) {
+      PublicLayout.mobile => n('mobileColumns'),
+      PublicLayout.tablet => n('tabletColumns') ?? n('desktopColumns'),
+      PublicLayout.desktop => n('desktopColumns'),
+    };
+  }
+
+  /// [items] in rows of [perRow], [gap] apart; the last row keeps the
+  /// same widths. [stretch]: the items of a row share its height.
+  static Widget perRowGrid(List<Widget> items, int perRow, {double gap = 24, double rowGap = 24, bool stretch = false}) {
+    final rows = <Widget>[];
+    for (var i = 0; i < items.length; i += perRow) {
+      final cells = [for (var j = i; j < i + perRow; j++) j < items.length ? items[j] : const SizedBox.shrink()];
+      final row = Row(
+        crossAxisAlignment: stretch ? CrossAxisAlignment.stretch : CrossAxisAlignment.start,
+        children: [for (final (k, c) in cells.indexed) ...[if (k > 0) SizedBox(width: gap), Expanded(child: c)]],
+      );
+      if (rows.isNotEmpty) rows.add(SizedBox(height: rowGap));
+      rows.add(stretch ? IntrinsicHeight(child: row) : row);
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: rows);
   }
 
   /// [child] with this container's own colours and alignment passed down
@@ -548,7 +717,19 @@ class _BlockWidget extends StatelessWidget {
     final background = backgroundOf(block, design);
     final borderColor = design.resolve(block.style['borderColor']);
     final borderWidth = double.tryParse(block.style['borderWidth']?.toString() ?? '') ?? (borderColor == null ? 0 : 1);
-    final inner = _withLook(context, _columnsLayout(layout, children, cross: CrossAxisAlignment.start, stackGap: mobile ? 24 : 32), look);
+    final columns = _columnsLayout(layout, children, cross: CrossAxisAlignment.start, stackGap: mobile ? 24 : 32);
+    final header = _sectionHeader(look, mobile: mobile);
+    final hasColumns = children.any((c) => c.children.isNotEmpty);
+    final inner = _withLook(
+      context,
+      header == null
+          ? columns
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [header, if (hasColumns) ...[SizedBox(height: mobile ? 24 : 32), columns]],
+            ),
+      look,
+    );
     if (view.fullBleed) {
       final side = borderColor == null || borderWidth <= 0 ? BorderSide.none : BorderSide(color: borderColor, width: borderWidth);
       return Container(
@@ -571,6 +752,26 @@ class _BlockWidget extends StatelessWidget {
     );
   }
 
+  /// A section's small heading, heading and description (each optional,
+  /// placed by the section's alignment), or null when it has none.
+  Widget? _sectionHeader(_Look look, {required bool mobile}) {
+    final eyebrow = block.text('eyebrow').resolve(language).trim();
+    final heading = block.text('heading').resolve(language).trim();
+    final description = block.text('description').resolve(language).trim();
+    if (eyebrow.isEmpty && heading.isEmpty && description.isEmpty) return null;
+    final parts = <Widget>[
+      if (eyebrow.isNotEmpty) Text(eyebrow, key: Key('public-section-${block.id}-eyebrow'), style: look.eyebrowStyle, textAlign: look.textAlign),
+      if (heading.isNotEmpty)
+        Semantics(header: true, child: Text(heading, key: Key('public-section-${block.id}-heading'), style: look.headingStyle, textAlign: look.textAlign)),
+      if (description.isNotEmpty) KeyedSubtree(key: Key('public-section-${block.id}-description'), child: _paragraphs(description, look)),
+    ];
+    return Column(
+      key: Key('public-section-${block.id}-header'),
+      crossAxisAlignment: look.cross,
+      children: [for (final (i, p) in parts.indexed) ...[if (i > 0) const SizedBox(height: 12), p]],
+    );
+  }
+
   /// A large heading and introduction beside a photograph (or decorative
   /// shapes); on mobile the photograph, if any, goes below.
   Widget _hero(PublicStrings strings, PublicLayout layout, _Look look) {
@@ -586,7 +787,7 @@ class _BlockWidget extends StatelessWidget {
           block.text('heading').resolve(language),
           key: const Key('public-hero-title'),
           textAlign: look.textAlign,
-          style: (layout.isMobile ? PublicText.displayMobile : PublicText.display).copyWith(color: look.heading),
+          style: look.displayStyle(mobile: layout.isMobile),
         ),
         if (body.isNotEmpty) ...[
           const SizedBox(height: 20),
@@ -653,7 +854,9 @@ class _BlockWidget extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (heading.isNotEmpty) ...[Text(heading, style: look.headingStyle), const SizedBox(height: 24)],
-        if (layout.isMobile)
+        if (_perRow(layout) case final perRow?)
+          perRowGrid(cards, perRow, gap: 24, rowGap: layout.isMobile ? 16 : 24, stretch: true)
+        else if (layout.isMobile)
           Column(children: [for (final (i, c) in cards.indexed) ...[if (i > 0) const SizedBox(height: 16), c]])
         else
           IntrinsicHeight(
@@ -690,7 +893,9 @@ class _BlockWidget extends StatelessWidget {
       children: [
         if (eyebrow.isNotEmpty) ...[Text(eyebrow, style: look.eyebrowStyle), const SizedBox(height: 12)],
         if (heading.isNotEmpty) ...[Text(heading, style: look.headingStyle), const SizedBox(height: 32)],
-        if (layout.isMobile)
+        if (_perRow(layout) case final perRow?)
+          perRowGrid(items, perRow, gap: 32, rowGap: 28)
+        else if (layout.isMobile)
           Column(children: [for (final item in items) Padding(padding: const EdgeInsets.only(bottom: 28), child: item)])
         else
           Row(
@@ -710,7 +915,7 @@ class _BlockWidget extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(block.text('heading').resolve(language),
-            key: const Key('public-section-title'), style: (layout.isMobile ? PublicText.displayMobile : PublicText.display).copyWith(color: look.heading)),
+            key: const Key('public-section-title'), style: look.displayStyle(mobile: layout.isMobile)),
         if (intro.isNotEmpty) ...[
           const SizedBox(height: 16),
           Text(intro, key: const Key('public-section-intro'), style: PublicText.body.copyWith(fontSize: 17, color: look.text)),
@@ -741,7 +946,7 @@ class _BlockWidget extends StatelessWidget {
       key: const Key('public-gallery-feed-preview'),
       builder: (context, constraints) {
         final gap = layout.isMobile ? 12.0 : 20.0;
-        final width = ((constraints.maxWidth - gap * (perRow - 1)) / perRow).floorToDouble();
+        final width = PublicLayout.tileWidth(constraints.maxWidth, perRow, gap);
         return Wrap(
           spacing: gap,
           runSpacing: gap,

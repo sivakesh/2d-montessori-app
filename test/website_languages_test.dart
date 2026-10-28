@@ -21,6 +21,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:montessori_app/main.dart';
+import 'package:montessori_app/modules/admin/settings/ui/admin_settings_screen.dart';
 import 'package:montessori_app/modules/admin/website/data/website_content_admin_service.dart';
 import 'package:montessori_app/modules/admin/website/data/website_image_processor.dart';
 import 'package:montessori_app/modules/admin/website/ui/website_content_editors.dart';
@@ -313,6 +314,8 @@ void main() {
       await firestore.collection(WebsiteCollections.media).doc(media.id).update({'alt': _multi('Children reading'), 'caption': _multi('Library')});
       final fresh = (await service.getMedia(requesterRole: 'admin', mediaId: media.id))!;
       await pump(tester, WebsiteMediaEditorScreen(service: service, user: _admin, media: fresh));
+      expect(key('website-media-alt-ta'), findsNothing, reason: 'English only');
+      expect(key('website-media-caption-ta'), findsNothing);
       await tester.enterText(key('website-media-alt-en'), 'Children reading together');
       await tap(tester, key('website-media-save'));
       final saved = await raw(WebsiteCollections.media, media.id);
@@ -320,15 +323,14 @@ void main() {
       expect(saved['caption'], _multi('Library'));
     });
 
-    testWidgets('previews offer the enabled languages from the registry', (tester) async {
+    testWidgets('previews are English only while editing is English only, whatever the registry enables', (tester) async {
+      expect(multilingualEditing, isFalse);
       await service.saveLanguageRegistryDraft(requesterRole: 'admin', actor: _admin, registry: _registry(enabled: {'hi'}));
       await pump(tester, WebsitePageEditorScreen(service: service, user: _admin, slot: WebsitePageSlot.programs));
-      expect(key('website-preview-en'), findsOneWidget);
-      expect(key('website-preview-ta'), findsOneWidget);
-      expect(key('website-preview-hi'), findsOneWidget);
-      expect(key('website-preview-fr'), findsNothing);
-      await tap(tester, key('website-preview-hi'));
-      expect(tester.widget<Text>(key('website-preview-title')).data, WebsitePageSlot.programs.builtInHeadline.en, reason: 'no Hindi yet: English');
+      for (final code in ['en', 'ta', 'hi', 'fr']) {
+        expect(key('website-preview-$code'), findsNothing, reason: code);
+      }
+      expect(tester.widget<Text>(key('website-preview-title')).data, WebsitePageSlot.programs.builtInHeadline.en);
     });
   });
 
@@ -516,12 +518,18 @@ void main() {
       final container = ProviderContainer(overrides: [authStateProvider.overrideWith((ref) => Stream<User?>.value(null))]);
       addTearDown(container.dispose);
       container.read(currentUserProvider.notifier).state = _admin;
-      await tester.pumpWidget(UncontrolledProviderScope(container: container, child: MaterialApp(home: WebsiteContentScreen(service: service))));
+      // Settings → Website → Languages, while editing stays English only.
+      expect(multilingualEditing, isFalse);
+      await tester.pumpWidget(UncontrolledProviderScope(container: container, child: MaterialApp(home: AdminSettingsScreen(websiteService: service))));
       await tester.pumpAndSettle();
+      await tap(tester, key('settings-website'));
+      expect(find.byType(WebsiteContentScreen), findsOneWidget);
       await tap(tester, key('website-tab-languages'));
-      expect(find.text('English and Tamil (built-in)'), findsOneWidget);
+      expect(key('website-languages-card'), findsOneWidget);
       await tap(tester, key('website-languages-card'));
       expect(find.byType(WebsiteLanguagesEditorScreen), findsOneWidget);
+      expect(key('website-languages-english-only'), findsOneWidget, reason: 'admins are told untranslated pages show the fallback');
+      expect(find.textContaining('(Tamil)'), findsNothing, reason: 'no Tamil editing fields come back');
       for (final code in ['en', 'ta', 'hi', 'ml', 'te', 'kn', 'fr']) {
         expect(key('website-languages-entry-$code'), findsOneWidget);
       }

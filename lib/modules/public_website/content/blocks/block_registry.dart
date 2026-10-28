@@ -70,7 +70,20 @@ class BlockStyle {
   static const widths = ['narrow', 'content', 'wide'];
   static const borderWidths = ['0', '1', '2', '4'];
 
+  /// Space between columns, and between rows when columns wrap or stack
+  /// (px), in a section or columns block. Unset: today's (40 between
+  /// columns; 24 to 32 between stacked columns).
+  static const gaps = ['0', '8', '16', '24', '32', '40', '48', '64'];
+
   static const colorKeys = ['background', 'textColor', 'headingColor', 'buttonColor', 'buttonTextColor', 'borderColor', 'lineColor'];
+
+  /// A block's own font sizes (px), in place of the site typography: its
+  /// headings (the hero's and page header's title too) and its body text.
+  /// Unset: the site typography (and the block's text size option).
+  static const sizeKeys = {
+    'headingFontSize': FontSizeRange(14, 72, 26),
+    'bodyFontSize': SiteDesign.bodyRange,
+  };
 
   /// Every block offers these.
   static const basic = ['background', 'spacing'];
@@ -84,6 +97,7 @@ class BlockStyle {
         'fontSize' => fontSizes,
         'width' => widths,
         'borderWidth' => borderWidths,
+        'columnGap' || 'rowGap' => gaps,
         _ => null,
       };
 
@@ -94,6 +108,9 @@ class BlockStyle {
       return backgrounds.contains(value) || SiteDesign.isColorValue(value) ? null : '“$value” is not a background option';
     }
     if (colorKeys.contains(key)) return SiteDesign.isColorValue(value) ? null : '“$value” is not a colour';
+    if (sizeKeys[key] case final range?) {
+      return range.allows(value) ? null : 'its ${key == 'headingFontSize' ? 'heading' : 'text'} size must be ${range.min.round()} to ${range.max.round()} px';
+    }
     final options = optionsFor(key);
     if (options != null && !options.contains(value)) return '“$value” is not a $key option';
     return null;
@@ -121,7 +138,26 @@ const _buttonItem = [
 
 /// The column layouts a columns block or a section offers (relative
 /// widths); `1` is a single column (sections only).
-const columnLayouts = {'1': [1], '1:1': [1, 1], '1:2': [1, 2], '2:1': [2, 1], '1:1:1': [1, 1, 1]};
+const columnLayouts = {'1': [1], '1:1': [1, 1], '1:2': [1, 2], '2:1': [2, 1], '1:1:1': [1, 1, 1], '1:1:1:1': [1, 1, 1, 1]};
+
+/// How the editor names a column layout.
+const columnLayoutLabels = {
+  '1': 'One column',
+  '1:1': 'Two equal columns',
+  '1:2': 'Two columns, wider right',
+  '2:1': 'Two columns, wider left',
+  '1:1:1': 'Three columns',
+  '1:1:1:1': 'Four columns',
+};
+
+/// Items per row on each screen size, for blocks of repeated items
+/// (cards, points, images). `auto` is the block's own layout from before
+/// these settings existed.
+const _perRowFields = [
+  ChoiceFieldSpec('desktopColumns', 'Per row on desktop', options: ['auto', '1', '2', '3', '4'], initial: 'auto', optionLabels: {'auto': 'Automatic (all in one row)'}, omitDefault: true),
+  ChoiceFieldSpec('tabletColumns', 'Per row on tablets', options: ['auto', '1', '2', '3'], initial: 'auto', optionLabels: {'auto': 'Automatic (as on desktop)'}, omitDefault: true),
+  ChoiceFieldSpec('mobileColumns', 'Per row on phones', options: ['auto', '1', '2'], initial: 'auto', optionLabels: {'auto': 'Automatic (one per row)'}, omitDefault: true),
+];
 
 /// Container types: they hold blocks in columns, and can't be nested in
 /// each other.
@@ -147,7 +183,7 @@ class BlockRegistry {
     version: 1,
     label: 'Text',
     description: 'A heading and paragraphs',
-    styleKeys: const ['background', 'spacing', 'textColor', 'headingColor', 'align', 'fontSize', 'borderColor', 'width'],
+    styleKeys: const ['background', 'spacing', 'textColor', 'bodyFontSize', 'headingColor', 'headingFontSize', 'align', 'fontSize', 'borderColor', 'width'],
     fields: const [
       TextFieldSpec('heading', 'Heading', maxLength: 120, translationRequired: true),
       TextFieldSpec('body', 'Text', maxLength: 3000, multiline: true),
@@ -174,26 +210,30 @@ class BlockRegistry {
     version: 1,
     label: 'Columns',
     description: 'Blocks side by side',
-    styleKeys: ['background', 'spacing', 'textColor', 'headingColor', 'borderColor', 'width'],
+    styleKeys: ['background', 'spacing', 'textColor', 'headingColor', 'borderColor', 'width', 'columnGap', 'rowGap'],
     fields: [
-      ChoiceFieldSpec('layout', 'Column widths', options: ['1:1', '1:2', '2:1', '1:1:1'], initial: '1:1'),
+      ChoiceFieldSpec('layout', 'Column widths', options: ['1:1', '1:2', '2:1', '1:1:1', '1:1:1:1'], initial: '1:1', optionLabels: columnLayoutLabels),
       ColumnsFieldSpec('columns', 'Columns'),
     ],
     extraChecks: _containerChecks,
   );
 
   /// A full-width band of the page with its own background, padding and
-  /// content width, holding blocks in one to three columns. Sections are
+  /// content width, holding blocks in one to four columns. Sections are
   /// the page's building blocks: the "Add section" layouts create them.
   static const section = BlockDefinition(
     type: 'section',
     version: 1,
     label: 'Section',
     description: 'A full-width band holding blocks',
-    styleKeys: ['background', 'spacing', 'padding', 'paddingTop', 'paddingBottom', 'width', 'textColor', 'headingColor', 'buttonColor', 'buttonTextColor', 'borderColor', 'borderWidth', 'align'],
+    styleKeys: ['background', 'spacing', 'padding', 'paddingTop', 'paddingBottom', 'width', 'columnGap', 'rowGap', 'textColor', 'headingColor', 'buttonColor', 'buttonTextColor', 'borderColor', 'borderWidth', 'align'],
     fields: [
       TextFieldSpec('name', 'Section name (for the editor only)', maxLength: 60, translatable: false),
-      ChoiceFieldSpec('layout', 'Columns', options: ['1', '1:1', '1:2', '2:1', '1:1:1'], initial: '1'),
+      // Optional text above the columns; not stored while empty.
+      TextFieldSpec('eyebrow', 'Small heading above the title', maxLength: 60, omitDefault: true),
+      TextFieldSpec('heading', 'Section heading', maxLength: 160, translationRequired: true, omitDefault: true),
+      TextFieldSpec('description', 'Section description', maxLength: 1000, multiline: true, omitDefault: true),
+      ChoiceFieldSpec('layout', 'Columns', options: ['1', '1:1', '1:2', '2:1', '1:1:1', '1:1:1:1'], initial: '1', optionLabels: columnLayoutLabels),
       ColumnsFieldSpec('columns', 'Columns'),
     ],
     extraChecks: _containerChecks,
@@ -206,7 +246,7 @@ class BlockRegistry {
     version: 1,
     label: 'Hero',
     description: 'Large heading, introduction and photograph',
-    styleKeys: ['background', 'spacing', 'textColor', 'headingColor', 'buttonColor', 'buttonTextColor', 'width'],
+    styleKeys: ['background', 'spacing', 'textColor', 'bodyFontSize', 'headingColor', 'headingFontSize', 'buttonColor', 'buttonTextColor', 'width'],
     fields: [
       TextFieldSpec('eyebrow', 'Small label above the heading', maxLength: 60),
       TextFieldSpec('heading', 'Heading', maxLength: 160, required: true, translationRequired: true),
@@ -222,11 +262,12 @@ class BlockRegistry {
     type: 'cards',
     version: 1,
     label: 'Cards',
-    description: 'Two to four linked cards with icons',
-    styleKeys: ['background', 'spacing', 'textColor', 'headingColor', 'width'],
+    description: 'Linked cards with icons',
+    styleKeys: ['background', 'spacing', 'textColor', 'bodyFontSize', 'headingColor', 'headingFontSize', 'width'],
     fields: [
       TextFieldSpec('heading', 'Heading', maxLength: 120, translationRequired: true),
-      ItemsFieldSpec('cards', 'Cards', itemLabel: 'Card', minItems: 1, maxItems: 4, itemFields: [
+      ..._perRowFields,
+      ItemsFieldSpec('cards', 'Cards', itemLabel: 'Card', minItems: 1, maxItems: 8, itemFields: [
         ChoiceFieldSpec('icon', 'Icon', options: blockIconNames, initial: 'star'),
         TextFieldSpec('title', 'Title', maxLength: 80, required: true, translationRequired: true),
         TextFieldSpec('body', 'Text', maxLength: 400, multiline: true),
@@ -243,11 +284,12 @@ class BlockRegistry {
     version: 1,
     label: 'Features',
     description: 'Points with icons in a row',
-    styleKeys: ['background', 'spacing', 'textColor', 'headingColor', 'width'],
+    styleKeys: ['background', 'spacing', 'textColor', 'bodyFontSize', 'headingColor', 'headingFontSize', 'width'],
     fields: [
       TextFieldSpec('eyebrow', 'Small label', maxLength: 60),
       TextFieldSpec('heading', 'Heading', maxLength: 120, translationRequired: true),
-      ItemsFieldSpec('items', 'Points', itemLabel: 'Point', minItems: 1, maxItems: 6, itemFields: [
+      ..._perRowFields,
+      ItemsFieldSpec('items', 'Points', itemLabel: 'Point', minItems: 1, maxItems: 8, itemFields: [
         ChoiceFieldSpec('icon', 'Icon', options: blockIconNames, initial: 'check'),
         TextFieldSpec('title', 'Title', maxLength: 80, required: true, translationRequired: true),
         TextFieldSpec('body', 'Text', maxLength: 400, multiline: true),
@@ -261,7 +303,7 @@ class BlockRegistry {
     version: 1,
     label: 'Page title',
     description: 'Title, introduction and banner',
-    styleKeys: ['background', 'spacing', 'textColor', 'headingColor', 'width'],
+    styleKeys: ['background', 'spacing', 'textColor', 'bodyFontSize', 'headingColor', 'headingFontSize', 'width'],
     fields: [
       TextFieldSpec('heading', 'Title', maxLength: 120, required: true, translationRequired: true),
       TextFieldSpec('intro', 'Introduction', maxLength: 600, multiline: true),
@@ -276,7 +318,7 @@ class BlockRegistry {
     version: 1,
     label: 'Notice',
     description: 'A highlighted note',
-    styleKeys: ['background', 'spacing', 'textColor', 'headingColor', 'borderColor', 'width'],
+    styleKeys: ['background', 'spacing', 'textColor', 'bodyFontSize', 'headingColor', 'headingFontSize', 'borderColor', 'width'],
     fields: [
       TextFieldSpec('title', 'Title', maxLength: 120, translationRequired: true),
       TextFieldSpec('body', 'Text', maxLength: 600, multiline: true),
@@ -290,9 +332,82 @@ class BlockRegistry {
     type: 'gallery_feed',
     version: 1,
     label: 'School gallery',
-    description: 'All published gallery photographs, with filters',
+    description: 'Every published gallery photograph, with filters (to choose photographs, use Photo gallery)',
     styleKeys: ['background', 'spacing', 'width'],
     fields: [],
+  );
+
+  /// The school's upcoming events that an admin has shown on the website
+  /// (Calendar → Show on website), soonest first. Visitors see only these
+  /// sanitized copies; the calendar itself is never read for them.
+  ///
+  /// Layout: a list (one per row), a grid of cards, or compact cards, with
+  /// columns per screen size (grid and compact cards). A block saved before
+  /// these settings existed shows the defaults (a 3/2/1-column grid); its
+  /// earlier `display` value is kept as stored but no longer used.
+  static const eventsFeed = BlockDefinition(
+    type: 'events_feed',
+    version: 1,
+    label: 'Upcoming events',
+    description: 'Calendar events shown on the website, soonest first',
+    styleKeys: ['background', 'spacing', 'textColor', 'bodyFontSize', 'headingColor', 'headingFontSize', 'width'],
+    fields: [
+      TextFieldSpec('heading', 'Heading', maxLength: 120, translationRequired: true),
+      ChoiceFieldSpec('maxItems', 'Events shown at most', options: ['3', '4', '6', '9', '12'], initial: '6'),
+      ChoiceFieldSpec('layout', 'Layout', options: ['list', 'grid', 'compact_cards'], initial: 'grid', optionLabels: {
+        'list': 'List (one per row)',
+        'grid': 'Grid of cards',
+        'compact_cards': 'Compact cards',
+      }),
+      ChoiceFieldSpec('desktopColumns', 'Columns on desktop', options: ['1', '2', '3', '4'], initial: '3'),
+      ChoiceFieldSpec('tabletColumns', 'Columns on tablets', options: ['1', '2', '3'], initial: '2'),
+      ChoiceFieldSpec('mobileColumns', 'Columns on phones', options: ['1', '2'], initial: '1'),
+      ToggleFieldSpec('showImages', 'Show event images', initial: true),
+    ],
+  );
+
+  /// The school's announcements an admin has shown on the website
+  /// (Notifications → Public website), newest first. Visitors see only
+  /// these sanitized copies; the school's notifications are never read for
+  /// them. Same layouts and columns as [eventsFeed]; previews never show
+  /// the message (its page does).
+  static const announcementsFeed = BlockDefinition(
+    type: 'announcements_feed',
+    version: 1,
+    label: 'Announcements',
+    description: 'School announcements shown on the website, newest first',
+    styleKeys: ['background', 'spacing', 'textColor', 'bodyFontSize', 'headingColor', 'headingFontSize', 'width'],
+    fields: [
+      TextFieldSpec('heading', 'Heading', maxLength: 120, translationRequired: true),
+      ChoiceFieldSpec('maxItems', 'Announcements shown at most', options: ['3', '4', '6', '9', '12'], initial: '6'),
+      ChoiceFieldSpec('layout', 'Layout', options: ['list', 'grid', 'compact_cards'], initial: 'grid', optionLabels: {
+        'list': 'List (one per row)',
+        'grid': 'Grid of cards',
+        'compact_cards': 'Compact cards',
+      }),
+      ChoiceFieldSpec('desktopColumns', 'Columns on desktop', options: ['1', '2', '3', '4'], initial: '3'),
+      ChoiceFieldSpec('tabletColumns', 'Columns on tablets', options: ['1', '2', '3'], initial: '2'),
+      ChoiceFieldSpec('mobileColumns', 'Columns on phones', options: ['1', '2'], initial: '1'),
+      ToggleFieldSpec('showImages', 'Show announcement images', initial: true),
+      ToggleFieldSpec('showCategory', 'Show the category', initial: true),
+      ToggleFieldSpec('highlightPinned', 'Pinned announcements first, marked “Pinned”', initial: true),
+    ],
+  );
+
+  /// A website form (Settings → Website forms) with a heading and an
+  /// introduction. The block holds only the form's id; visitors see the
+  /// form's active version, and nothing when it isn't active.
+  static const form = BlockDefinition(
+    type: 'form',
+    version: 1,
+    label: 'Form',
+    description: 'An enquiry or registration form from Website forms',
+    styleKeys: ['background', 'spacing', 'textColor', 'headingColor', 'width'],
+    fields: [
+      FormRefFieldSpec('formId', 'Form', required: true),
+      TextFieldSpec('heading', 'Heading', maxLength: 120, translationRequired: true),
+      TextFieldSpec('intro', 'Introduction', maxLength: 600, multiline: true),
+    ],
   );
 
   static List<String> _titleOrText(StructuredBlock b) =>
@@ -303,7 +418,7 @@ class BlockRegistry {
     version: 1,
     label: 'Call to action',
     description: 'A heading, text and buttons in a box',
-    styleKeys: ['background', 'spacing', 'textColor', 'headingColor', 'buttonColor', 'buttonTextColor', 'borderColor', 'width'],
+    styleKeys: ['background', 'spacing', 'textColor', 'bodyFontSize', 'headingColor', 'headingFontSize', 'buttonColor', 'buttonTextColor', 'borderColor', 'width'],
     fields: [
       TextFieldSpec('heading', 'Heading', maxLength: 120, translationRequired: true),
       TextFieldSpec('body', 'Text', maxLength: 3000, multiline: true),
@@ -323,18 +438,73 @@ class BlockRegistry {
     ],
   );
 
+  /// Photographs chosen from the media library, in the order set here.
+  /// Each can have its own caption (else the library's) and a link (else
+  /// tapping opens the lightbox). The settings added after the first
+  /// version default to how the grid looked before: 2 per row on phones,
+  /// the desktop count on tablets, 4:3 images, every image, captions shown.
   static const gallery = BlockDefinition(
     type: 'gallery',
     version: 1,
-    label: 'Image grid',
-    description: 'Chosen photographs in a grid',
-    styleKeys: ['background', 'spacing', 'headingColor', 'width'],
+    label: 'Photo gallery',
+    description: 'Photographs you choose, in your order',
+    styleKeys: ['background', 'spacing', 'textColor', 'headingColor', 'headingFontSize', 'width'],
     fields: [
       TextFieldSpec('heading', 'Heading', maxLength: 120, translationRequired: true),
-      ChoiceFieldSpec('columns', 'Images per row', options: ['2', '3', '4'], initial: '3'),
-      ItemsFieldSpec('images', 'Images', itemLabel: 'Image', itemFields: [MediaFieldSpec('mediaId', 'Image', required: true)], minItems: 1, maxItems: CustomPage.maxGridImages),
+      ChoiceFieldSpec('columns', 'Images per row on desktop', options: ['1', '2', '3', '4', '5', '6'], initial: '3'),
+      ChoiceFieldSpec('tabletColumns', 'Images per row on tablets', options: ['auto', '1', '2', '3', '4'], initial: 'auto', optionLabels: {'auto': 'Automatic (as on desktop)'}, omitDefault: true),
+      ChoiceFieldSpec('mobileColumns', 'Images per row on phones', options: ['1', '2', '3'], initial: '2', omitDefault: true),
+      ChoiceFieldSpec('aspect', 'Image shape', options: ['4:3', '1:1', '3:4', '16:9'], initial: '4:3', optionLabels: {
+        '4:3': 'Landscape (4:3)',
+        '1:1': 'Square',
+        '3:4': 'Portrait (3:4)',
+        '16:9': 'Wide (16:9)',
+      }, omitDefault: true),
+      ChoiceFieldSpec('limit', 'Images shown', options: ['all', '3', '4', '6', '8', '9', '12'], initial: 'all', optionLabels: {'all': 'All chosen images'}, omitDefault: true),
+      ToggleFieldSpec('showCaptions', 'Show captions', initial: true, omitDefault: true),
+      ItemsFieldSpec('images', 'Images', itemLabel: 'Image', minItems: 1, maxItems: CustomPage.maxGridImages, itemFields: [
+        MediaFieldSpec('mediaId', 'Image', required: true),
+        TextFieldSpec('caption', 'Caption (optional, replaces the library’s)', maxLength: 300, omitDefault: true),
+        LinkFieldSpec('target', 'Link (optional; otherwise the image opens larger)', omitDefault: true),
+      ]),
     ],
   );
+
+  /// A Google map of a place the editor enters (an address or a place
+  /// name), shown with Google's keyless embed, with an optional
+  /// "Get directions" link (also the fallback when the map can't load) and
+  /// text beside it. Nothing is hard-coded: every page sets its own place.
+  static const map = BlockDefinition(
+    type: 'map',
+    version: 1,
+    label: 'Map',
+    description: 'A Google map of an address, with directions',
+    styleKeys: ['background', 'spacing', 'textColor', 'bodyFontSize', 'headingColor', 'headingFontSize', 'width'],
+    fields: [
+      TextFieldSpec('heading', 'Heading', maxLength: 120, translationRequired: true),
+      TextFieldSpec('address', 'Address or place name', maxLength: 300, required: true, translatable: false),
+      ChoiceFieldSpec('mapType', 'Map type', options: ['roadmap', 'satellite'], initial: 'roadmap', optionLabels: {'roadmap': 'Map', 'satellite': 'Satellite'}),
+      ChoiceFieldSpec('zoom', 'Zoom', options: ['10', '12', '13', '14', '15', '16', '17', '18'], initial: '15', optionLabels: {
+        '10': '10 (city)',
+        '12': '12',
+        '13': '13',
+        '14': '14',
+        '15': '15 (neighbourhood)',
+        '16': '16',
+        '17': '17',
+        '18': '18 (street)',
+      }),
+      ChoiceFieldSpec('height', 'Map height', options: ['240', '320', '400', '480'], initial: '320', optionLabels: {'240': '240 px', '320': '320 px', '400': '400 px', '480': '480 px'}),
+      ToggleFieldSpec('showDirections', 'Show a “Get directions” link', initial: true),
+      TextFieldSpec('details', 'Address and contact text (optional)', maxLength: 600, multiline: true),
+    ],
+    extraChecks: _mapChecks,
+  );
+
+  static List<String> _mapChecks(StructuredBlock b) {
+    final address = b.text('address').en;
+    return [if (address.contains(RegExp(r'[<>]'))) 'the address can’t contain < or >'];
+  }
 
   static const divider = BlockDefinition(
     type: 'divider',
@@ -346,7 +516,7 @@ class BlockRegistry {
   );
 
   /// Every known block type, in the order the "Add block" menus show.
-  static final List<BlockDefinition> all = [text, image, columns, cta, buttons, gallery, divider, section, hero, cards, features, pageHeader, notice, galleryFeed];
+  static final List<BlockDefinition> all = [text, image, columns, cta, buttons, gallery, divider, section, hero, cards, features, pageHeader, notice, galleryFeed, eventsFeed, announcementsFeed, form, map];
 
   /// The block types that can go inside a section or columns.
   static List<BlockDefinition> get nestable => [for (final d in all) if (!containerTypes.contains(d.type)) d];
@@ -514,7 +684,9 @@ class BlockRegistry {
       if (block.definition.field(key) != null || key == 'style') problems.add('“$key” has a value this app can’t read');
     }
     for (final field in block.definition.fields) {
-      problems.addAll(_fieldProblems(field, block.values[field.key], field.label));
+      // A value a block doesn't hold (one made before the field existed)
+      // is its default, as when it is shown and saved.
+      problems.addAll(_fieldProblems(field, block.values[field.key] ?? field.defaultValue, field.label));
     }
     for (final entry in block.style.entries) {
       if (BlockStyle.problem(entry.key, entry.value) case final p?) problems.add(p);
@@ -542,6 +714,10 @@ class BlockRegistry {
         return [if (!field.options.contains(value)) '“$value” is not a ${label.toLowerCase()} option'];
       case ToggleFieldSpec():
         return const [];
+      case FormRefFieldSpec():
+        final id = (value as String? ?? '').trim();
+        if (id.isEmpty) return [if (field.required) 'choose a form'];
+        return [if (!FormRefFieldSpec.idPattern.hasMatch(id)) 'the chosen form can’t be identified'];
       case ItemsFieldSpec():
         final items = value as List<BlockItem>? ?? const [];
         return [
@@ -552,7 +728,7 @@ class BlockRegistry {
             for (final key in item.preserved.keys)
               if (field.itemFields.any((f) => f.key == key)) '${field.itemLabel} ${i + 1}: “$key” has a value this app can’t read',
             for (final f in field.itemFields)
-              for (final p in _fieldProblems(f, item.values[f.key], f.label)) '${field.itemLabel} ${i + 1}: $p',
+              for (final p in _fieldProblems(f, item.values[f.key] ?? f.defaultValue, f.label)) '${field.itemLabel} ${i + 1}: $p',
           ],
         ];
       case ColumnsFieldSpec():

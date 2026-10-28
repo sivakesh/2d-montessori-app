@@ -57,6 +57,23 @@ final class StructuredBlock extends WebsiteBlock {
   List<BlockItem> items(String key) => values[key] as List<BlockItem>? ?? const [];
   List<BlockColumn> columns(String key) => values[key] as List<BlockColumn>? ?? const [];
 
+  /// Choice field [key]: its value when it is one of the field's options,
+  /// else the field's initial one (a block made before the field existed,
+  /// or a value this version doesn't know). For rendering safely.
+  String option(String key) {
+    final field = definition.field(key);
+    final value = values[key];
+    if (field is ChoiceFieldSpec) return field.options.contains(value) ? value as String : field.initial;
+    return value is String ? value : '';
+  }
+
+  /// Toggle field [key], or the field's initial value when the block
+  /// holds none.
+  bool toggle(String key) {
+    final field = definition.field(key);
+    return values[key] as bool? ?? (field is ToggleFieldSpec ? field.initial : false);
+  }
+
   /// `background` and `spacing`, or their defaults.
   String get background => style['background'] is String ? style['background'] as String : 'white';
   String get spacing => style['spacing'] is String ? style['spacing'] as String : 'normal';

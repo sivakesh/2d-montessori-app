@@ -6,6 +6,7 @@ import '../content/website_content_models.dart';
 import '../content/website_content_repository.dart';
 import '../public_routes.dart';
 import '../public_strings.dart';
+import '../content/website_design.dart';
 import '../public_website_theme.dart';
 import '../widgets/blocks/public_feature_widgets.dart';
 import '../widgets/public_scaffold.dart';
@@ -60,7 +61,7 @@ class _Hero extends StatelessWidget {
       children: [
         Text(strings.heroEyebrow, style: PublicText.eyebrow),
         const SizedBox(height: 16),
-        Text(headline.isNotEmpty ? headline : strings.heroTitle, key: const Key('public-hero-title'), style: layout.isMobile ? PublicText.displayMobile : PublicText.display),
+        Text(headline.isNotEmpty ? headline : strings.heroTitle, key: const Key('public-hero-title'), style: WebsiteDesignScope.of(context).titleStyle(mobile: layout.isMobile)),
         const SizedBox(height: 20),
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),

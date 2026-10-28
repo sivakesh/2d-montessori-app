@@ -117,6 +117,22 @@ class SectionPreset {
       ], style: const {'width': 'wide'}),
     ),
     SectionPreset._(
+      'events',
+      'Events',
+      'Upcoming calendar events shown on the website',
+      () => _section('Events', '1', [
+        [_child(BlockRegistry.eventsFeed, {'heading': _en('Upcoming events')})],
+      ]),
+    ),
+    SectionPreset._(
+      'announcements',
+      'Announcements',
+      'The latest school announcements shown on the website',
+      () => _section('Announcements', '1', [
+        [_child(BlockRegistry.announcementsFeed, {'heading': _en('Announcements')})],
+      ]),
+    ),
+    SectionPreset._(
       'faq',
       'FAQ',
       'Common questions and their answers',

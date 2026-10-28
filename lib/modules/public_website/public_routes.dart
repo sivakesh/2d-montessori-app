@@ -22,6 +22,36 @@ class PublicRoutes {
 
   static String customPage(String slug) => '$customPagePrefix$slug';
 
+  /// A published event's details: `/events/<id>`, where the id is the
+  /// calendar event's (the same for as long as the event is on the
+  /// website), so the address can be shared.
+  static const eventPrefix = '/events/';
+
+  static String event(String sourceId) => '$eventPrefix$sourceId';
+
+  /// A published announcement's details: `/announcements/<id>`, where the
+  /// id is the school notification's, so the address can be shared.
+  static const announcementPrefix = '/announcements/';
+
+  static String announcement(String sourceId) => '$announcementPrefix$sourceId';
+
+  /// The announcement id of an `/announcements/<id>` route, or null (see
+  /// [eventIdFromRoute]; the case is kept).
+  static String? announcementIdFromRoute(String? route) => _idFromRoute(route, announcementPrefix);
+
+  /// The event id of an `/events/<id>` route (query and fragment ignored),
+  /// or null for any other route. Unlike page slugs, the case is kept:
+  /// event ids are case-sensitive. Its format is checked by the page.
+  static String? eventIdFromRoute(String? route) => _idFromRoute(route, eventPrefix);
+
+  static String? _idFromRoute(String? route, String prefix) {
+    if (route == null || !route.startsWith(prefix)) return null;
+    final rest = route.substring(prefix.length).split(RegExp(r'[?#]')).first;
+    final id = rest.endsWith('/') ? rest.substring(0, rest.length - 1) : rest;
+    if (id.isEmpty || id.contains('/')) return null;
+    return id;
+  }
+
   /// Management-app routes, which website content can never link to.
   static const reservedRoutes = ['/app', '/login', '/otp', '/dashboard'];
 

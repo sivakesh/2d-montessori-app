@@ -38,6 +38,17 @@ enum PublicLayout {
         PublicLayout.tablet => 40,
         PublicLayout.desktop => 64,
       };
+
+  /// The width of each of [perRow] tiles placed [gap] apart in [available]
+  /// px (whole pixels, so a row never wraps early). Never negative: a box
+  /// narrower than the gaps (a window briefly almost 0 px wide, as Flutter
+  /// Web can report while it resizes or restarts) gives 0-wide tiles
+  /// instead of invalid constraints.
+  static double tileWidth(double available, int perRow, double gap) {
+    final n = perRow < 1 ? 1 : perRow;
+    final width = ((available - gap * (n - 1)) / n).floorToDouble();
+    return width > 0 ? width : 0;
+  }
 }
 
 class PublicText {

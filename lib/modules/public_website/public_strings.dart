@@ -123,11 +123,51 @@ class PublicStrings {
   String get galleryNext => _get('galleryNext');
   String get galleryOpenImage => _get('galleryOpenImage');
   String get imageUnavailable => _get('imageUnavailable');
+  String get mapDirections => _get('mapDirections');
+  String mapTitle(String place) => _get('mapTitle').replaceAll('{place}', place);
   String get pageNotFoundTitle => _get('pageNotFoundTitle');
   String get pageNotFoundBody => _get('pageNotFoundBody');
   String get pageLoadErrorTitle => _get('pageLoadErrorTitle');
   String get pageLoadErrorBody => _get('pageLoadErrorBody');
   String get pageLoading => _get('pageLoading');
+
+  String get eventsLoading => _get('eventsLoading');
+  String get eventsEmpty => _get('eventsEmpty');
+  String get eventsErrorTitle => _get('eventsErrorTitle');
+  String get eventsErrorBody => _get('eventsErrorBody');
+  String get eventsRetry => _get('eventsRetry');
+  String get eventsAllDay => _get('eventsAllDay');
+  String get eventBack => _get('eventBack');
+  String get eventRegister => _get('eventRegister');
+  String get eventUnavailableTitle => _get('eventUnavailableTitle');
+  String get eventUnavailableBody => _get('eventUnavailableBody');
+  String get eventLoading => _get('eventLoading');
+
+  String get announcementsLoading => _get('announcementsLoading');
+  String get announcementsEmpty => _get('announcementsEmpty');
+  String get announcementsErrorTitle => _get('announcementsErrorTitle');
+  String get announcementPinned => _get('announcementPinned');
+  String get announcementUnavailableTitle => _get('announcementUnavailableTitle');
+  String get announcementUnavailableBody => _get('announcementUnavailableBody');
+  String get announcementLoading => _get('announcementLoading');
+
+  /// "Published 5 January 2027".
+  String announcementPublishedOn(String date) => _get('announcementPublishedOn').replaceAll('{date}', date);
+
+  /// What a screen reader says for an announcement in a list.
+  String announcementOpenLabel(String title, String date) =>
+      _get('announcementOpenLabel').replaceAll('{title}', title).replaceAll('{date}', date);
+
+  /// What a screen reader says for an event in a list: "Annual Day, Sun 14
+  /// February 2027, All day. Opens the event's details."
+  String eventOpenLabel(String title, String date, String time) =>
+      _get('eventOpenLabel').replaceAll('{title}', title).replaceAll('{date}', date).replaceAll('{time}', time);
+
+  /// [month] (1–12) in full, e.g. "February".
+  String monthName(int month) => _get('month$month');
+
+  /// [weekday] ([DateTime.monday] … [DateTime.sunday]) shortened, e.g. "Sat".
+  String weekdayShort(int weekday) => _get('weekday$weekday');
 
   /// "3 of 12" in the lightbox.
   String galleryPosition(int current, int total) => _get('galleryPosition').replaceAll('{current}', '$current').replaceAll('{total}', '$total');
@@ -211,11 +251,39 @@ class PublicStrings {
     'galleryOpenImage': 'Open photograph',
     'galleryPosition': '{current} of {total}',
     'imageUnavailable': 'Image unavailable',
+    'mapDirections': 'Get directions',
+    'mapTitle': 'Map showing {place}',
     'pageNotFoundTitle': 'Page not found',
     'pageNotFoundBody': 'This page does not exist or is no longer available.',
     'pageLoadErrorTitle': 'This page could not be loaded',
     'pageLoadErrorBody': 'Please check your connection and try again.',
     'pageLoading': 'Loading page',
+    'eventsLoading': 'Loading events',
+    'eventsEmpty': 'No upcoming events.',
+    'eventsErrorTitle': 'Events could not be loaded',
+    'eventsErrorBody': 'Please check your connection and try again.',
+    'eventsRetry': 'Try again',
+    'eventsAllDay': 'All day',
+    'eventBack': 'Back',
+    'eventRegister': 'Register',
+    'eventUnavailableTitle': 'This event is not available',
+    'eventUnavailableBody': 'It may have ended or been removed from the website.',
+    'eventLoading': 'Loading event',
+    'eventOpenLabel': '{title}, {date}, {time}. Opens the event’s details.',
+    'announcementsLoading': 'Loading announcements',
+    'announcementsEmpty': 'No announcements right now.',
+    'announcementsErrorTitle': 'Announcements could not be loaded',
+    'announcementPinned': 'Pinned',
+    'announcementUnavailableTitle': 'This announcement is not available',
+    'announcementUnavailableBody': 'It may have expired or been removed from the website.',
+    'announcementLoading': 'Loading announcement',
+    'announcementPublishedOn': 'Published {date}',
+    'announcementOpenLabel': '{title}, published {date}. Opens the announcement.',
+    'month1': 'January', 'month2': 'February', 'month3': 'March', 'month4': 'April', //
+    'month5': 'May', 'month6': 'June', 'month7': 'July', 'month8': 'August',
+    'month9': 'September', 'month10': 'October', 'month11': 'November', 'month12': 'December',
+    'weekday1': 'Mon', 'weekday2': 'Tue', 'weekday3': 'Wed', 'weekday4': 'Thu', //
+    'weekday5': 'Fri', 'weekday6': 'Sat', 'weekday7': 'Sun',
   });
 
   static const _tamil = PublicStrings._({
@@ -275,10 +343,38 @@ class PublicStrings {
     'galleryOpenImage': 'புகைப்படத்தைத் திற',
     'galleryPosition': '{total} இல் {current}',
     'imageUnavailable': 'படம் கிடைக்கவில்லை',
+    'mapDirections': 'வழிகளைப் பெறுக',
+    'mapTitle': '{place} காட்டும் வரைபடம்',
     'pageNotFoundTitle': 'பக்கம் கிடைக்கவில்லை',
     'pageNotFoundBody': 'இந்தப் பக்கம் இல்லை அல்லது இனி கிடைக்காது.',
     'pageLoadErrorTitle': 'இந்தப் பக்கத்தை ஏற்ற முடியவில்லை',
     'pageLoadErrorBody': 'உங்கள் இணைப்பைச் சரிபார்த்து மீண்டும் முயலுங்கள்.',
     'pageLoading': 'பக்கம் ஏற்றப்படுகிறது',
+    'eventsLoading': 'நிகழ்வுகள் ஏற்றப்படுகின்றன',
+    'eventsEmpty': 'வரவிருக்கும் நிகழ்வுகள் இல்லை.',
+    'eventsErrorTitle': 'நிகழ்வுகளை ஏற்ற முடியவில்லை',
+    'eventsErrorBody': 'உங்கள் இணைப்பைச் சரிபார்த்து மீண்டும் முயலுங்கள்.',
+    'eventsRetry': 'மீண்டும் முயல்க',
+    'eventsAllDay': 'நாள் முழுவதும்',
+    'eventBack': 'பின்செல்ல',
+    'eventRegister': 'பதிவு செய்ய',
+    'eventUnavailableTitle': 'இந்த நிகழ்வு கிடைக்கவில்லை',
+    'eventUnavailableBody': 'இது முடிந்திருக்கலாம் அல்லது இணையதளத்திலிருந்து நீக்கப்பட்டிருக்கலாம்.',
+    'eventLoading': 'நிகழ்வு ஏற்றப்படுகிறது',
+    'eventOpenLabel': '{title}, {date}, {time}. நிகழ்வின் விவரங்களைத் திறக்கும்.',
+    'announcementsLoading': 'அறிவிப்புகள் ஏற்றப்படுகின்றன',
+    'announcementsEmpty': 'தற்போது அறிவிப்புகள் இல்லை.',
+    'announcementsErrorTitle': 'அறிவிப்புகளை ஏற்ற முடியவில்லை',
+    'announcementPinned': 'முக்கியமானது',
+    'announcementUnavailableTitle': 'இந்த அறிவிப்பு கிடைக்கவில்லை',
+    'announcementUnavailableBody': 'இது காலாவதியாகியிருக்கலாம் அல்லது இணையதளத்திலிருந்து நீக்கப்பட்டிருக்கலாம்.',
+    'announcementLoading': 'அறிவிப்பு ஏற்றப்படுகிறது',
+    'announcementPublishedOn': '{date} அன்று வெளியிடப்பட்டது',
+    'announcementOpenLabel': '{title}, {date} அன்று வெளியிடப்பட்டது. அறிவிப்பைத் திறக்கும்.',
+    'month1': 'ஜனவரி', 'month2': 'பிப்ரவரி', 'month3': 'மார்ச்', 'month4': 'ஏப்ரல்', //
+    'month5': 'மே', 'month6': 'ஜூன்', 'month7': 'ஜூலை', 'month8': 'ஆகஸ்ட்',
+    'month9': 'செப்டம்பர்', 'month10': 'அக்டோபர்', 'month11': 'நவம்பர்', 'month12': 'டிசம்பர்',
+    'weekday1': 'திங்கள்', 'weekday2': 'செவ்வாய்', 'weekday3': 'புதன்', 'weekday4': 'வியாழன்', //
+    'weekday5': 'வெள்ளி', 'weekday6': 'சனி', 'weekday7': 'ஞாயிறு',
   });
 }
