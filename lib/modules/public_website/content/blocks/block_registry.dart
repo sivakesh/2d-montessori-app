@@ -5,8 +5,11 @@ import 'package:flutter/foundation.dart';
 import '../website_content_models.dart';
 import '../website_custom_page.dart';
 import '../website_design.dart';
+import 'accreditation_date.dart';
 import 'block_ids.dart';
 import 'block_limits.dart';
+import 'custom_html.dart';
+import 'embed_providers.dart';
 import 'field_spec.dart';
 import 'website_block.dart';
 
@@ -506,6 +509,124 @@ class BlockRegistry {
     return [if (address.contains(RegExp(r'[<>]'))) 'the address can’t contain < or >'];
   }
 
+  /// The school's accreditations, memberships and recognitions, as the
+  /// school enters them: each with its body, credential, optional logo
+  /// and certificate image, description, dates and a link to check it.
+  /// Shown as certificate cards or a strip of logos. Nothing is added or
+  /// inferred: no "verified" mark, no status worked out from the dates.
+  static const accreditations = BlockDefinition(
+    type: 'accreditations',
+    version: 1,
+    label: 'Accreditations & Recognition',
+    description: 'Accrediting bodies, credentials and certificates',
+    styleKeys: ['background', 'spacing', 'textColor', 'bodyFontSize', 'headingColor', 'headingFontSize', 'align', 'width'],
+    fields: [
+      TextFieldSpec('heading', 'Heading', maxLength: 120, translationRequired: true),
+      TextFieldSpec('intro', 'Introduction', maxLength: 600, multiline: true),
+      ChoiceFieldSpec('display', 'Show as', options: ['cards', 'logos'], initial: 'cards', optionLabels: {'cards': 'Certificate cards', 'logos': 'Logo strip'}),
+      // Cards per row (the logo strip wraps on its own).
+      ChoiceFieldSpec('desktopColumns', 'Cards per row on desktop', options: ['auto', '1', '2', '3', '4'], initial: 'auto', optionLabels: {'auto': 'Automatic (3)'}, omitDefault: true),
+      ChoiceFieldSpec('tabletColumns', 'Cards per row on tablets', options: ['auto', '1', '2', '3'], initial: 'auto', optionLabels: {'auto': 'Automatic (2)'}, omitDefault: true),
+      ChoiceFieldSpec('mobileColumns', 'Cards per row on phones', options: ['auto', '1', '2'], initial: 'auto', optionLabels: {'auto': 'Automatic (1)'}, omitDefault: true),
+      ItemsFieldSpec('items', 'Accreditations', itemLabel: 'Accreditation', minItems: 1, maxItems: 12, itemFields: [
+        TextFieldSpec('name', 'Organisation or accrediting body', maxLength: 120, required: true, translationRequired: true),
+        TextFieldSpec('title', 'Credential or recognition', maxLength: 160),
+        MediaFieldSpec('logoMediaId', 'Logo (optional)'),
+        MediaFieldSpec('certificateMediaId', 'Certificate image (optional)'),
+        TextFieldSpec('description', 'Short description', maxLength: 400, multiline: true),
+        LinkFieldSpec('target', 'Verification or certificate link (optional)'),
+        TextFieldSpec('issued', 'Issue date (optional: 2024, 2024-03 or 2024-03-05)', maxLength: 10, translatable: false),
+        TextFieldSpec('expires', 'Expiry date (optional, same form)', maxLength: 10, translatable: false),
+      ]),
+    ],
+    extraChecks: _accreditationChecks,
+  );
+
+  static List<String> _accreditationChecks(StructuredBlock b) => [
+        for (final (i, item) in b.items('items').indexed) ...() {
+          final issuedText = item.text('issued').en.trim();
+          final expiresText = item.text('expires').en.trim();
+          final issued = issuedText.isEmpty ? null : AccreditationDate.tryParse(issuedText);
+          final expires = expiresText.isEmpty ? null : AccreditationDate.tryParse(expiresText);
+          return [
+            if (issuedText.isNotEmpty && issued == null) 'Accreditation ${i + 1}: write the issue date as 2024, 2024-03 or 2024-03-05',
+            if (expiresText.isNotEmpty && expires == null) 'Accreditation ${i + 1}: write the expiry date as 2024, 2024-03 or 2024-03-05',
+            if (issued != null && expires != null && expires.last.isBefore(issued.first)) 'Accreditation ${i + 1}: the expiry date is before the issue date',
+          ];
+        }(),
+      ];
+
+  /// Formatted text the school writes in HTML. Only a safe subset is shown
+  /// ([CustomHtml]): no scripts, styles, forms, embeds or event handlers.
+  /// The markup is the same for every language.
+  static const html = BlockDefinition(
+    type: 'html',
+    version: 1,
+    label: 'Custom HTML',
+    description: 'Formatted text written in HTML (no scripts or embeds)',
+    styleKeys: ['background', 'spacing', 'textColor', 'bodyFontSize', 'headingColor', 'headingFontSize', 'align', 'width'],
+    fields: [
+      TextFieldSpec('html', 'HTML', maxLength: 20000, required: true, multiline: true, translatable: false, code: true),
+    ],
+    extraChecks: _htmlChecks,
+  );
+
+  static List<String> _htmlChecks(StructuredBlock b) {
+    final source = b.text('html').en;
+    if (source.trim().isEmpty) return const [];
+    final report = CustomHtml.report(source);
+    if (report.hasContent) return const [];
+    return [
+      report.onlyImages
+          ? 'Custom HTML doesn’t show images, and this HTML has only images (or links whose image has no description). For logos use Accreditations & Recognition; for photographs, the Image block'
+          : 'nothing in this HTML can be shown (scripts, styles, embeds and other removed parts don’t count)',
+    ];
+  }
+
+  /// A video, form or calendar from a supported provider
+  /// ([EmbedProvider]): the pasted link or `<iframe>` code is read for its
+  /// ids only, and the frame's address is rebuilt from them each time it
+  /// is shown ([EmbedSource]). Nothing pasted is run. Visitors load the
+  /// frame with a click unless the block says otherwise.
+  static const embed = BlockDefinition(
+    type: 'embed',
+    version: 1,
+    label: 'Video, form or calendar embed',
+    description: 'YouTube, Vimeo, Google Forms or Google Calendar',
+    styleKeys: ['background', 'spacing', 'textColor', 'headingColor', 'width'],
+    fields: [
+      TextFieldSpec('source', 'Link, or the provider’s <iframe> embed code', maxLength: 4000, required: true, multiline: true, translatable: false, code: true),
+      TextFieldSpec('title', 'Title for screen readers (what it shows)', maxLength: 120, required: true, translationRequired: true),
+      TextFieldSpec('caption', 'Caption (optional)', maxLength: 300),
+      ChoiceFieldSpec('shape', 'Shape', options: ['auto', '16:9', '4:3', '1:1', 'fixed'], initial: 'auto', optionLabels: {
+        'auto': 'Automatic (videos 16:9, forms and calendars a fixed height)',
+        '16:9': 'Wide (16:9)',
+        '4:3': 'Standard (4:3)',
+        '1:1': 'Square',
+        'fixed': 'Fixed height',
+      }),
+      ChoiceFieldSpec('height', 'Height (forms, calendars, or a fixed height)', options: ['auto', '320', '480', '600', '800', '1000', '1200'], initial: 'auto', optionLabels: {
+        'auto': 'Automatic (the provider’s usual height)',
+        '320': '320 px',
+        '480': '480 px',
+        '600': '600 px',
+        '800': '800 px',
+        '1000': '1000 px',
+        '1200': '1200 px',
+      }),
+      ToggleFieldSpec('loadOnClick', 'Visitors click to load it (nothing is fetched from the provider until then)', initial: true),
+      ToggleFieldSpec('allowFullscreen', 'Allow full screen (videos only)'),
+    ],
+    extraChecks: _embedChecks,
+  );
+
+  static List<String> _embedChecks(StructuredBlock b) {
+    final source = b.text('source').en;
+    if (source.trim().isEmpty) return const [];
+    final parsed = EmbedSource.parse(source);
+    return [if (parsed.error case final error?) error.endsWith('.') ? error.substring(0, error.length - 1) : error];
+  }
+
   static const divider = BlockDefinition(
     type: 'divider',
     version: 1,
@@ -516,7 +637,7 @@ class BlockRegistry {
   );
 
   /// Every known block type, in the order the "Add block" menus show.
-  static final List<BlockDefinition> all = [text, image, columns, cta, buttons, gallery, divider, section, hero, cards, features, pageHeader, notice, galleryFeed, eventsFeed, announcementsFeed, form, map];
+  static final List<BlockDefinition> all = [text, image, columns, cta, buttons, gallery, divider, section, hero, cards, features, pageHeader, notice, galleryFeed, eventsFeed, announcementsFeed, form, map, accreditations, html, embed];
 
   /// The block types that can go inside a section or columns.
   static List<BlockDefinition> get nestable => [for (final d in all) if (!containerTypes.contains(d.type)) d];

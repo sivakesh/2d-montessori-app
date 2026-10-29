@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../content/blocks/block_registry.dart';
+import '../../content/blocks/embed_providers.dart';
 import '../../content/blocks/field_spec.dart';
 import '../../content/blocks/website_block.dart';
 import '../../content/website_content_models.dart';
@@ -13,7 +14,10 @@ import '../../public_website_theme.dart';
 import '../../ui/public_gallery_page.dart';
 import '../public_website_image.dart';
 import '../../../forms/ui/public_website_form.dart';
+import 'public_accreditations.dart';
 import 'public_announcements_feed.dart';
+import 'public_custom_html.dart';
+import 'public_embed_block.dart';
 import 'public_map_block.dart';
 import 'public_events_feed.dart';
 import 'public_item_cards.dart';
@@ -133,7 +137,7 @@ class WebsiteBlocksView extends StatelessWidget {
       'content' => 960.0,
       'wide' => 1160.0,
       _ => switch (block.type) {
-          'hero' || 'cards' || 'features' || 'gallery_feed' => 1160.0,
+          'hero' || 'cards' || 'features' || 'gallery_feed' || 'accreditations' => 1160.0,
           'page_header' || 'notice' => 760.0,
           _ => contentMaxWidth,
         },
@@ -467,6 +471,47 @@ class _BlockWidget extends StatelessWidget {
           bodyStyle: look.bodyStyle,
           accent: look.button,
           interactive: view.interactive,
+        ),
+      'accreditations' => _accreditations(context, layout, look),
+      // A provider's frame from the address rebuilt from the block's
+      // source; the block is valid only when it parses.
+      'embed' => PublicEmbedBlock(
+          key: Key('public-embed-block-${block.id}'),
+          id: block.id,
+          source: EmbedSource.parse(block.text('source').en),
+          title: block.text('title').resolve(language),
+          caption: block.text('caption').resolve(language),
+          shape: block.option('shape'),
+          height: block.option('height'),
+          loadOnClick: block.toggle('loadOnClick'),
+          allowFullscreen: block.toggle('allowFullscreen'),
+          language: language,
+          interactive: view.interactive,
+          onOpen: (target) => followBlockLink(context, target),
+          style: EmbedStyle(
+            body: look.bodyStyle,
+            muted: look.bodyStyle.copyWith(fontSize: 13, color: look.text),
+            accent: look.button,
+            line: look.design.colorOf('line'),
+            panel: look.design.colorOf('sageLight'),
+          ),
+        ),
+      // Drawn as text from sanitized markup ([CustomHtml]); never as HTML.
+      'html' => _aligned(
+          look,
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: PublicCustomHtml(
+              key: Key('public-html-${block.id}'),
+              source: block.text('html').en,
+              bodyStyle: look.bodyStyle,
+              headingStyle: look.headingStyle,
+              linkColor: look.button,
+              ruleColor: look.design.colorOf('line'),
+              textAlign: look.textAlign,
+              interactive: view.interactive,
+            ),
+          ),
         ),
       _ => const SizedBox.shrink(),
     };
@@ -865,6 +910,53 @@ class _BlockWidget extends StatelessWidget {
               children: [for (final (i, c) in cards.indexed) ...[if (i > 0) const SizedBox(width: 24), Expanded(child: c)]],
             ),
           ),
+      ],
+    );
+  }
+
+  /// A heading, an introduction, then the accreditations: certificate
+  /// cards (3, 2 and 1 per row unless set) or a wrapping strip of logos.
+  Widget _accreditations(BuildContext context, PublicLayout layout, _Look look) {
+    final heading = block.text('heading').resolve(language);
+    final intro = block.text('intro').resolve(language);
+    final style = AccreditationStyle(
+      title: look.bodyStyle.copyWith(color: look.heading, fontSize: (look.bodyStyle.fontSize ?? 16) + 2, fontWeight: FontWeight.w700),
+      body: look.bodyStyle,
+      muted: look.bodyStyle.copyWith(fontSize: 13, color: look.text),
+      accent: look.button,
+      line: look.design.colorOf('line'),
+      badge: look.design.colorOf('sageLight'),
+    );
+    final items = [for (final item in block.items('items')) AccreditationView.of(item, view.media, language)];
+    void open(String target) => followBlockLink(context, target);
+    final Widget body;
+    if (block.option('display') == 'logos') {
+      body = Wrap(
+        key: Key('public-accreditations-${block.id}-logos'),
+        alignment: look.wrap,
+        spacing: layout.isMobile ? 16 : 32,
+        runSpacing: 24,
+        children: [for (final i in items) PublicAccreditationLogo(item: i, style: style, language: language, interactive: view.interactive, onOpen: open)],
+      );
+    } else {
+      final perRow = _perRow(layout) ?? switch (layout) { PublicLayout.mobile => 1, PublicLayout.tablet => 2, PublicLayout.desktop => 3 };
+      body = KeyedSubtree(
+        key: Key('public-accreditations-${block.id}-cards'),
+        child: perRowGrid(
+          [for (final i in items) PublicAccreditationCard(item: i, style: style, language: language, interactive: view.interactive, onOpen: open)],
+          perRow,
+          gap: 24,
+          rowGap: layout.isMobile ? 16 : 24,
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: look.cross,
+      children: [
+        if (heading.isNotEmpty) ...[Text(heading, style: look.headingStyle, textAlign: look.textAlign), const SizedBox(height: 12)],
+        if (intro.isNotEmpty) ...[ConstrainedBox(constraints: const BoxConstraints(maxWidth: 760), child: Text(intro, style: look.bodyStyle, textAlign: look.textAlign)), const SizedBox(height: 12)],
+        if (heading.isNotEmpty || intro.isNotEmpty) const SizedBox(height: 12),
+        SizedBox(width: double.infinity, child: body),
       ],
     );
   }

@@ -125,6 +125,16 @@ class PublicStrings {
   String get imageUnavailable => _get('imageUnavailable');
   String get mapDirections => _get('mapDirections');
   String mapTitle(String place) => _get('mapTitle').replaceAll('{place}', place);
+  String accreditationIssued(String date) => _get('accreditationIssued').replaceAll('{date}', date);
+  String accreditationExpires(String date) => _get('accreditationExpires').replaceAll('{date}', date);
+  String accreditationLogo(String name) => _get('accreditationLogo').replaceAll('{name}', name);
+  String accreditationCertificate(String name) => _get('accreditationCertificate').replaceAll('{name}', name);
+  String get accreditationLink => _get('accreditationLink');
+  String accreditationLinkFor(String name) => _get('accreditationLinkFor').replaceAll('{name}', name);
+  String embedLoad(String provider) => _get('embedLoad').replaceAll('{provider}', provider);
+  String embedLoadFor(String provider, String title) => _get('embedLoadFor').replaceAll('{provider}', provider).replaceAll('{title}', title);
+  String embedLoadsFrom(String host) => _get('embedLoadsFrom').replaceAll('{host}', host);
+  String embedOpen(String provider) => _get('embedOpen').replaceAll('{provider}', provider);
   String get pageNotFoundTitle => _get('pageNotFoundTitle');
   String get pageNotFoundBody => _get('pageNotFoundBody');
   String get pageLoadErrorTitle => _get('pageLoadErrorTitle');
@@ -253,6 +263,16 @@ class PublicStrings {
     'imageUnavailable': 'Image unavailable',
     'mapDirections': 'Get directions',
     'mapTitle': 'Map showing {place}',
+    'accreditationIssued': 'Issued {date}',
+    'accreditationExpires': 'Expires {date}',
+    'accreditationLogo': '{name} logo',
+    'accreditationCertificate': '{name} certificate',
+    'accreditationLink': 'More information',
+    'accreditationLinkFor': 'More information about {name}',
+    'embedLoad': 'Load {provider}',
+    'embedLoadFor': 'Load {provider}: {title}',
+    'embedLoadsFrom': 'Loads content from {host}.',
+    'embedOpen': 'Open on {provider}',
     'pageNotFoundTitle': 'Page not found',
     'pageNotFoundBody': 'This page does not exist or is no longer available.',
     'pageLoadErrorTitle': 'This page could not be loaded',
@@ -345,6 +365,16 @@ class PublicStrings {
     'imageUnavailable': 'படம் கிடைக்கவில்லை',
     'mapDirections': 'வழிகளைப் பெறுக',
     'mapTitle': '{place} காட்டும் வரைபடம்',
+    'accreditationIssued': 'வழங்கப்பட்டது: {date}',
+    'accreditationExpires': 'காலாவதி: {date}',
+    'accreditationLogo': '{name} சின்னம்',
+    'accreditationCertificate': '{name} சான்றிதழ்',
+    'accreditationLink': 'மேலும் தகவல்',
+    'accreditationLinkFor': '{name} பற்றி மேலும் தகவல்',
+    'embedLoad': '{provider} ஐ ஏற்று',
+    'embedLoadFor': '{provider} ஐ ஏற்று: {title}',
+    'embedLoadsFrom': '{host} இலிருந்து உள்ளடக்கத்தை ஏற்றும்.',
+    'embedOpen': '{provider} இல் திற',
     'pageNotFoundTitle': 'பக்கம் கிடைக்கவில்லை',
     'pageNotFoundBody': 'இந்தப் பக்கம் இல்லை அல்லது இனி கிடைக்காது.',
     'pageLoadErrorTitle': 'இந்தப் பக்கத்தை ஏற்ற முடியவில்லை',

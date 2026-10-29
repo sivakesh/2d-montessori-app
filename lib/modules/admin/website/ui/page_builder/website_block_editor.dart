@@ -7,12 +7,16 @@ import '../../../../../core/theme/app_colors.dart';
 import '../../../../public_website/content/blocks/block_ids.dart';
 import '../../../../public_website/content/blocks/block_limits.dart';
 import '../../../../public_website/content/blocks/block_registry.dart';
+import '../../../../public_website/content/blocks/custom_html.dart';
+import '../../../../public_website/content/blocks/embed_providers.dart';
 import '../../../../public_website/content/blocks/section_presets.dart';
 import '../../../../public_website/content/blocks/field_spec.dart';
 import '../../../../public_website/content/blocks/website_block.dart';
 import '../../../../public_website/content/website_content_models.dart';
 import '../../../../public_website/content/website_custom_page.dart';
 import '../../../../public_website/content/website_design.dart';
+import '../../../../public_website/public_website_theme.dart';
+import '../../../../public_website/widgets/blocks/public_custom_html.dart';
 import '../../../../forms/models/website_form.dart';
 import '../../../../forms/public/public_forms_repository.dart';
 import '../website_content_editors.dart';
@@ -115,6 +119,15 @@ String blockSummary(WebsiteBlock block) {
     'buttons' => '${block.items('buttons').length} button(s)',
     'gallery' => '${block.items('images').length} image(s)',
     'map' => block.text('address').en.trim().isEmpty ? 'No address yet' : block.text('address').en.trim(),
+    'accreditations' => '${block.items('items').length} accreditation(s)',
+    'embed' => switch (EmbedSource.parse(block.text('source').en)) {
+        final e when e.isValid => '${e.provider!.label}: ${block.text('title').en.trim().isEmpty ? 'no title yet' : block.text('title').en.trim()}',
+        _ => 'Not a supported link yet',
+      },
+    'html' => switch (CustomHtml.plainText(block.text('html').en)) {
+        '' => 'No HTML yet',
+        final t => t.length > 60 ? '${t.substring(0, 60)}…' : t,
+      },
     'divider' => 'Space: ${block.string('size')}',
     _ => '',
   };
@@ -140,6 +153,9 @@ IconData blockIcon(WebsiteBlock block) => switch (block is StructuredBlock ? blo
       'events_feed' => Icons.event_outlined,
       'announcements_feed' => Icons.campaign_outlined,
       'form' => Icons.assignment_outlined,
+      'accreditations' => Icons.workspace_premium_outlined,
+      'html' => Icons.code,
+      'embed' => Icons.smart_display_outlined,
       // Unsupported blocks (and any type without its own icon).
       _ => Icons.lock_outline,
     };
@@ -198,7 +214,135 @@ class WebsiteBlockForm extends StatelessWidget {
               onSelectNested: onSelectNested,
             ),
           ),
+        if (block.type == BlockRegistry.html.type) _CustomHtmlNotes(block: block, design: design),
+        if (block.type == BlockRegistry.embed.type) _EmbedNotes(block: block),
         WebsiteStyleEditor(block: block, design: design, onChanged: onChanged),
+      ],
+    );
+  }
+}
+
+/// Under an Embed block's source: what was recognised and the address
+/// the frame will use (rebuilt, never the pasted one), what of pasted
+/// code isn't used, and the supported providers.
+class _EmbedNotes extends StatelessWidget {
+  const _EmbedNotes({required this.block});
+
+  final StructuredBlock block;
+
+  @override
+  Widget build(BuildContext context) {
+    final source = block.text('source').en;
+    final parsed = EmbedSource.parse(source);
+    final prefix = 'website-block-${block.id}-embed';
+    const small = TextStyle(fontSize: 12);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          key: Key('$prefix-info'),
+          margin: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: const Color(0xFFF3EADB), borderRadius: BorderRadius.circular(8)),
+          child: Text(
+            'Supported: ${EmbedSource.supported}. Paste the link, or the provider’s <iframe> code: only its address is read, and the frame’s address is rebuilt from it. '
+            'Scripts and other code in what you paste are never run, so embeds that need a script (for example social media posts) can’t be shown. '
+            'On the website visitors click to load it unless you turn that off; the editor shows a placeholder.',
+            style: small,
+          ),
+        ),
+        if (source.trim().isNotEmpty)
+          Container(
+            key: Key(parsed.isValid ? '$prefix-recognised' : '$prefix-problem'),
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: parsed.isValid ? const Color(0xFFE6EDE2) : const Color(0xFFFCEEEE), borderRadius: BorderRadius.circular(8)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (parsed.isValid) ...[
+                  Text('Recognised: ${parsed.provider!.label}', style: small.copyWith(fontWeight: FontWeight.w600)),
+                  SelectableText('Frame address: ${parsed.embedUrl}', style: small),
+                ] else
+                  Text(parsed.error!, style: small),
+                if (parsed.ignored.isNotEmpty) Text('Not used from the pasted code: ${parsed.ignored.join(', ')}', style: small),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Under a Custom HTML block's source: what is supported, what of it
+/// visitors won't see, and a preview drawn exactly as on the website.
+class _CustomHtmlNotes extends StatelessWidget {
+  const _CustomHtmlNotes({required this.block, required this.design});
+
+  final StructuredBlock block;
+  final SiteDesign design;
+
+  @override
+  Widget build(BuildContext context) {
+    final source = block.text('html').en;
+    final report = CustomHtml.report(source);
+    final prefix = 'website-block-${block.id}-html';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          key: Key('$prefix-warning'),
+          margin: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: const Color(0xFFF3EADB), borderRadius: BorderRadius.circular(8)),
+          child: const Text(
+            'JavaScript is not supported. Scripts, styles, forms, iframes, embeds, images and event handlers (onclick and similar) are removed before anything is shown. '
+            'Supported: headings, paragraphs, bold, italic, lists, quotes, code, dividers and links to https://, mailto: or pages of this website. '
+            'For images, maps, forms and phone links use their own blocks (Image, Map, Form, Buttons).',
+            style: TextStyle(fontSize: 12),
+          ),
+        ),
+        if (report.changesSomething)
+          Container(
+            key: Key('$prefix-removed'),
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: const Color(0xFFFCEEEE), borderRadius: BorderRadius.circular(8)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Visitors won’t see:', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                if (report.removedElements.isNotEmpty)
+                  Text('• Removed with their content: ${[for (final e in report.removedElements.entries) e.key == 'nested too deeply' ? 'markup nested too deeply' : '<${e.key}>${e.value > 1 ? ' ×${e.value}' : ''}'].join(', ')}', style: const TextStyle(fontSize: 12)),
+                if (report.ignoredAttributes.isNotEmpty) Text('• Attributes not used: ${report.ignoredAttributes.join(', ')}', style: const TextStyle(fontSize: 12)),
+                if (report.blockedLinks.isNotEmpty) Text('• Links not followed (their text still shows): ${report.blockedLinks.join(', ')}', style: const TextStyle(fontSize: 12)),
+                if (report.imagesAsLinkText > 0)
+                  Text('• Images: ${report.imagesAsLinkText} inside a link shown as its description (the link’s text), not as a picture', style: const TextStyle(fontSize: 12)),
+                if (report.imagesNotShown > 0)
+                  Text('• Images not shown: ${report.imagesNotShown}. Custom HTML doesn’t show images; for logos use Accreditations & Recognition, for photographs the Image block', style: const TextStyle(fontSize: 12)),
+                if (report.emptyLinks.isNotEmpty)
+                  Text('• Links left out because nothing in them has text (give the image an alt description or the link a title): ${report.emptyLinks.join(', ')}', style: const TextStyle(fontSize: 12)),
+              ],
+            ),
+          ),
+        const Text('Preview', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+        const SizedBox(height: 4),
+        Container(
+          key: Key('$prefix-preview'),
+          margin: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: Colors.white, border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(10)),
+          child: report.hasContent
+              ? PublicCustomHtml(
+                  source: source,
+                  bodyStyle: PublicText.body.copyWith(color: design.colorOf('muted'), fontSize: 15),
+                  headingStyle: PublicText.heading.copyWith(color: design.colorOf('forestDark'), fontSize: 22),
+                  linkColor: design.colorOf('forest'),
+                  ruleColor: design.colorOf('line'),
+                  interactive: false,
+                )
+              : const Text('Nothing to show yet.', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+        ),
       ],
     );
   }
@@ -386,8 +530,10 @@ class _FieldEditor extends StatelessWidget {
               key: Key('$keyPrefix-$lang-$generation'),
               initialValue: text.textFor(lang),
               maxLength: f.maxLength,
-              minLines: f.multiline ? 3 : 1,
-              maxLines: f.multiline ? 8 : 1,
+              minLines: f.code && f.maxLength > 5000 ? 10 : (f.multiline ? 3 : 1),
+              maxLines: f.code ? 24 : (f.multiline ? 8 : 1),
+              style: f.code ? const TextStyle(fontFamilyFallback: ['Menlo', 'Consolas', 'monospace'], fontSize: 13) : null,
+              keyboardType: f.code ? TextInputType.multiline : null,
               decoration: websiteField(label, helper: lang == 'ta' ? 'If left blank, Tamil visitors see the English.' : null),
               // Only this language changes; every other is kept.
               onChanged: (v) => onChanged((value as LocalizedText? ?? const LocalizedText()).withText(lang, v)),
@@ -395,7 +541,8 @@ class _FieldEditor extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            input('en', '${f.label} (English)${f.required ? '' : ', optional'}'),
+            // Source code is the same in every language.
+            input('en', f.code ? f.label : '${f.label} (English)${f.required ? '' : ', optional'}'),
             if (multilingualEditing) ...[const SizedBox(height: 6), input('ta', '${f.label} (Tamil)')],
           ],
         );
