@@ -48,10 +48,15 @@ final class TextFieldSpec extends FieldSpec {
     this.multiline = false,
     this.translatable = true,
     this.translationRequired = false,
+    this.code = false,
   });
 
   final int maxLength;
   final bool multiline;
+
+  /// Source code (a Custom HTML block's markup): edited in a monospaced
+  /// box, in one language only (it should be [translatable] false).
+  final bool code;
 
   /// Offered for translation (L2).
   final bool translatable;

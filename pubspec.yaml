@@ -37,6 +37,11 @@ dependencies:
   # SHA-256 of website source text (translation change detection). Pure
   # Dart, works on the web; already resolved through the Firebase packages.
   crypto: ^3.0.7
+  # Custom HTML blocks: Google's allowlist HTML sanitizer (dart-neats), and
+  # the HTML5 parser it is built on (already resolved transitively), to
+  # read the sanitized markup into widgets. No HTML is ever injected.
+  sanitize_html: ^2.1.0
+  html: ^0.15.6
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
