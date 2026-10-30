@@ -1,13 +1,16 @@
 // Two block types: Accreditations & Recognition (the school's bodies,
 // credentials, logos, certificates and dates, as entered: nothing
-// inferred) and Custom HTML (a safe subset of HTML drawn as text; scripts,
-// event handlers, unsafe links and embeds never reach the page). Model,
+// inferred) and Custom HTML (a safe subset of HTML drawn as text and
+// https images; scripts, event handlers, unsafe links and image addresses,
+// and embeds never reach the page). Model,
 // security, rendering at phone, tablet and desktop widths, the editor,
 // and saving, publishing and drafts. Synthetic test data only.
 
 import 'dart:convert';
 
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
@@ -29,6 +32,7 @@ import 'package:montessori_app/modules/public_website/content/website_content_mo
 import 'package:montessori_app/modules/public_website/content/website_content_repository.dart';
 import 'package:montessori_app/modules/public_website/content/website_design.dart';
 import 'package:montessori_app/modules/public_website/public_strings.dart';
+import 'package:montessori_app/modules/public_website/widgets/blocks/public_custom_html.dart';
 import 'package:montessori_app/modules/public_website/widgets/blocks/website_blocks_view.dart';
 import 'package:montessori_app/modules/public_website/widgets/public_website_image.dart';
 
@@ -149,7 +153,8 @@ void main() {
       final report = CustomHtml.report(source);
       expect(report.ignoredAttributes, containsAll(['on… (event handlers)', 'style', 'class', 'id']));
       expect(report.removedElements, isEmpty);
-      expect(report.imagesNotShown, 1, reason: 'images use the Image block');
+      expect(report.imagesNotShown, 1, reason: 'a relative image address is never loaded');
+      expect(report.blockedImages, ['x']);
     });
 
     test('unsafe link addresses are not followed; safe ones are', () {
@@ -243,7 +248,7 @@ void main() {
     });
   });
 
-  group('Custom HTML: images inside links read as their description', () {
+  group('Custom HTML: images', () {
     // The snippet from the browser check: an accreditation badge.
     const iao = '''<div style="background-color: #fff!important;padding: 5px!important;width: 120px!important;height: 120px!important;border-radius: 50%!important;box-shadow: 0 0 10px 5px rgba(0,0,0,.1)!important;z-index: 999!important;">
 <a href="https://www.iao.org/India-TamilNadu/2D-Montessori" target="_blank" title="International Accreditation Organization - IAO">
@@ -251,95 +256,237 @@ void main() {
 </a>
 </div>''';
     const label = 'International Accreditation Organization - IAO';
+    const seal = 'https://www.iao.org/assets/images/email/seal/iao-seal.png';
+    const html = 'public-html-b_html000001';
+
+    /// Puts a loaded [width]×[height] picture in the image cache for each
+    /// address, as if downloaded (tests never use the network).
+    Future<void> serve(WidgetTester tester, Map<String, (int, int)> images) async {
+      for (final MapEntry(key: url, value: (width, height)) in images.entries) {
+        final image = (await tester.runAsync(() => createTestImage(width: width, height: height)))!;
+        imageCache.putIfAbsent(NetworkImage(url), () => OneFrameImageStreamCompleter(SynchronousFuture(ImageInfo(image: image))));
+      }
+      addTearDown(() => imageCache
+        ..clear()
+        ..clearLiveImages());
+    }
+
+    /// The addresses of the images drawn under [finder], in order.
+    List<String> drawn(WidgetTester tester, Finder finder) => [
+          for (final i in tester.widgetList<Image>(find.descendant(of: finder, matching: find.byType(Image))))
+            if (i.image case final NetworkImage n) n.url,
+        ];
+
+    bool loaded(WidgetTester tester, Finder image) => tester.widget<RawImage>(find.descendant(of: image, matching: find.byType(RawImage))).image != null;
 
     List<String> linked(WidgetTester tester, Finder finder) => [for (final s in spans(tester, finder)) if (s.recognizer != null) (s.text ?? '').trim()]..removeWhere((t) => t.isEmpty);
 
-    void noPicture(WidgetTester tester) {
-      expect(find.byType(Image), findsNothing, reason: 'the image is never drawn or fetched');
-      expect(find.byType(PublicWebsiteImage), findsNothing);
+    /// Records what url_launcher is asked to open.
+    List<String> launches() {
+      final opened = <String>[];
+      const channel = MethodChannel('plugins.flutter.io/url_launcher');
+      final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'launch') opened.add((call.arguments as Map)['url'] as String);
+        return call.method == 'canLaunch' || call.method == 'launch';
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      return opened;
     }
 
-    testWidgets('1. the IAO snippet: valid, one link reading as the image’s description, no picture', (tester) async {
+    testWidgets('1. a normal https image is drawn as an image, at its width and height, with its description for screen readers', (tester) async {
+      const source = '<p>Our seal:</p><p><img src="https://example.test/logo.png" alt="Our logo" width="200" height="100"></p>';
+      final report = CustomHtml.report(source);
+      expect([report.hasContent, report.imagesShown, report.imagesWithoutAlt, report.imagesNotShown], [true, 1, 0, 0]);
+      expect(report.blockedImages, isEmpty);
+      expect(BlockRegistry.blockProblems(_parse(_html(source))), isEmpty);
+
+      await serve(tester, {'https://example.test/logo.png': (400, 200)});
+      final semantics = tester.ensureSemantics();
+      await pumpBlocks(tester, [_parse(_html(source))]);
+      expect(drawn(tester, key(html)), ['https://example.test/logo.png']);
+      expect(loaded(tester, key('public-html-image-0')), isTrue, reason: 'the picture itself, not its description');
+      expect(tester.getSize(key('public-html-image-0')), const Size(200, 100));
+      expect(drawnText(tester, key(html)), isNot(contains('Our logo')), reason: 'alt text is not drawn in place of the image');
+      expect(find.bySemanticsLabel('Our logo'), findsOneWidget);
+      semantics.dispose();
+    });
+
+    testWidgets('2. the IAO snippet: the seal is drawn and opens the link on the website; no underlined text; announced as a link', (tester) async {
       final block = _parse(_html(iao));
       expect(BlockRegistry.blockProblems(block), isEmpty);
       final report = CustomHtml.report(iao);
-      expect([report.hasContent, report.imagesAsLinkText, report.imagesNotShown], [true, 1, 0]);
+      expect([report.hasContent, report.imagesShown, report.imagesAsLinkText, report.imagesNotShown, report.imagesWithoutAlt], [true, 1, 0, 0, 0]);
       expect(report.removedElements, isEmpty);
       expect(report.emptyLinks, isEmpty);
       expect(report.ignoredAttributes, containsAll(['style', 'target']));
-      expect(report.ignoredAttributes, isNot(contains('title')), reason: 'the title is used when there is no description');
       expect(report.plainText, label);
 
+      final opened = launches();
+      await serve(tester, {seal: (220, 220)});
+      final semantics = tester.ensureSemantics();
       await pumpBlocks(tester, [block]);
-      final html = key('public-html-b_html000001');
-      expect(drawnText(tester, html).trim(), label);
-      expect(linked(tester, html), [label]);
-      noPicture(tester);
+      expect(drawn(tester, key(html)), [seal]);
+      expect(loaded(tester, key('public-html-image-0')), isTrue);
+      expect(tester.getSize(key('public-html-image-0')), const Size(110, 110), reason: 'its width and height attributes');
+      expect(drawnText(tester, key(html)).trim(), isEmpty, reason: 'no text link, underlined or not');
+      expect(linked(tester, key(html)), isEmpty);
+      expect(tester.getSemantics(key('public-html-image-0-link')), isSemantics(isLink: true, label: label));
+
+      await tester.tap(key('public-html-image-0'));
+      await tester.pumpAndSettle();
+      expect(opened, ['https://www.iao.org/India-TamilNadu/2D-Montessori']);
+      semantics.dispose();
     });
 
-    testWidgets('2. the editor’s preview, its canvas and the website draw the same text; links open only on the website', (tester) async {
-      final block = _parse(_html(iao));
+    testWidgets('3. the editor’s preview, its canvas and the website draw the same images; links open only on the website', (tester) async {
+      const source = '$iao<p><img src="http://example.test/plain.png" alt="Plain"><img src="https://example.test/second.png" alt="Second"></p>';
+      final block = _parse(_html(source));
+      await serve(tester, {seal: (220, 220), 'https://example.test/second.png': (300, 100)});
+      final opened = launches();
+
       await pumpBlocks(tester, [block]);
-      final published = drawnText(tester, key('public-html-b_html000001')).trim();
-      expect(linked(tester, key('public-html-b_html000001')), [label]);
+      final published = drawn(tester, key(html));
+      expect(published, [seal, 'https://example.test/second.png'], reason: 'http is never loaded');
+      expect(tester.widget<GestureDetector>(find.descendant(of: key('public-html-image-0-link'), matching: find.byType(GestureDetector))).onTap, isNotNull);
 
       await pumpBlocks(tester, [block], interactive: false);
-      expect(drawnText(tester, key('public-html-b_html000001')).trim(), published);
-      expect(linked(tester, key('public-html-b_html000001')), isEmpty, reason: 'the canvas doesn’t follow links');
+      expect(drawn(tester, key(html)), published);
+      expect(tester.widget<GestureDetector>(find.descendant(of: key('public-html-image-0-link'), matching: find.byType(GestureDetector))).onTap, isNull, reason: 'the canvas doesn’t follow links');
 
       await size(tester, const Size(900, 3000));
       await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(child: WebsiteBlockForm(block: block, library: const [], generation: 0, onChanged: (_) {})))));
       await tester.pumpAndSettle();
       final preview = key('website-block-b_html000001-html-preview');
-      expect(drawnText(tester, preview).trim(), published);
-      expect(linked(tester, preview), isEmpty, reason: 'the preview doesn’t follow links');
-      expect(find.descendant(of: key('website-block-b_html000001-html-removed'), matching: find.textContaining('shown as its description')), findsOneWidget);
-      noPicture(tester);
+      expect(drawn(tester, preview), published);
+      await tester.tap(find.descendant(of: preview, matching: key('public-html-image-0')));
+      await tester.pumpAndSettle();
+      expect(opened, isEmpty, reason: 'the preview doesn’t follow links');
+      expect(find.descendant(of: key('website-block-b_html000001-html-removed'), matching: find.textContaining('http://example.test/plain.png')), findsOneWidget);
+      expect(find.textContaining('images from https:// addresses'), findsOneWidget);
     });
 
-    testWidgets('3. mixed markup: safe text and links kept; scripts, handlers, styles and unsafe links removed', (tester) async {
-      const mixed = '<p>Welcome <b>families</b></p><script>alert(1)</script>'
-          '<p onclick="x()" style="color:red">See <a href="https://example.test/tour">the tour</a> or <a href="javascript:alert(1)">this</a>.</p>';
-      final report = CustomHtml.report(mixed);
+    test('4. only absolute https image addresses are loaded, checked apart from links', () {
+      for (final bad in [
+        'javascript:alert(1)',
+        'JaVaScRiPt:alert(1)',
+        'data:image/png;base64,AAAA',
+        'data:image/svg+xml,<svg onload=alert(1)>',
+        'blob:https://example.test/0f1e',
+        'http://example.test/a.png',
+        '//example.test/a.png',
+        '/assets/a.png',
+        'a.png',
+        'https:example.test/a.png',
+        'https:///a.png',
+        'https://user:pass@example.test/a.png',
+        'https://example.test:8443/a.png',
+        'ftp://example.test/a.png',
+        'file:///etc/passwd',
+        'https://exa mple.test/a.png',
+        'https://example.test\\a.png',
+        'https://example.test/${'a' * 2100}.png',
+        '',
+        null,
+      ]) {
+        expect(CustomHtml.imageAllowed(bad), isFalse, reason: bad);
+      }
+      for (final good in ['https://example.test/a.png', ' https://cdn.example.test/logo.png?v=2 ', 'HTTPS://example.test/a.png', 'https://example.test:443/a.png']) {
+        expect(CustomHtml.imageAllowed(good), isTrue, reason: good);
+      }
+      // Links and images are checked separately: mailto and site pages
+      // are links, never images.
+      for (final linkOnly in ['mailto:office@example.test', '/admissions']) {
+        expect((CustomHtml.linkAllowed(linkOnly), CustomHtml.imageAllowed(linkOnly)), (true, false), reason: linkOnly);
+      }
+      const source = '<p>x</p><img src="javascript:alert(1)"><img src="data:image/png;base64,AAAA"><img src="http://example.test/a.png"><img src="blob:https://example.test/0f1e">';
+      final report = CustomHtml.report(source);
+      expect(report.blockedImages, ['javascript:alert(1)', 'data:image/png;base64,AAAA', 'http://example.test/a.png', 'blob:https://example.test/0f1e']);
+      expect((report.imagesShown, report.imagesNotShown), (0, 4));
+    });
+
+    testWidgets('5. unsafe images are never drawn; onerror, onclick, scripts and unsafe links are stripped', (tester) async {
+      const source = '<a href="javascript:alert(1)"><img src="https://example.test/a.png" onerror="alert(2)" onclick="steal()" alt="A"></a>'
+          '<script>alert(3)</script><img src="https://example.test/b.png" onload="alert(4)" style="position:fixed" alt="B">'
+          '<img src="javascript:alert(5)" alt="C"><img src="data:image/png;base64,AAAA" alt="D"><img src=x onerror=alert(6)>';
+      final out = CustomHtml.sanitized(source).outerHtml;
+      for (final bad in ['onerror', 'onclick', 'onload', '<script', 'alert(3)', 'javascript:', 'style=']) {
+        expect(out, isNot(contains(bad)), reason: bad);
+      }
+      final report = CustomHtml.report(source);
       expect(report.removedElements, {'script': 1});
       expect(report.ignoredAttributes, containsAll(['on… (event handlers)', 'style']));
       expect(report.blockedLinks, ['javascript:alert(1)']);
-      expect(BlockRegistry.blockProblems(_parse(_html(mixed))), isEmpty);
-      await pumpBlocks(tester, [_parse(_html(mixed))]);
-      final html = key('public-html-b_html000001');
-      expect(drawnText(tester, html), allOf(contains('Welcome families'), contains('See the tour or this.')));
-      expect(drawnText(tester, html), isNot(contains('alert')));
-      expect(linked(tester, html), ['the tour']);
+      expect(report.blockedImages, ['javascript:alert(5)', 'data:image/png;base64,AAAA', 'x']);
+
+      await serve(tester, {'https://example.test/a.png': (50, 50), 'https://example.test/b.png': (50, 50)});
+      final opened = launches();
+      await pumpBlocks(tester, [_parse(_html(source))]);
+      expect(drawn(tester, key(html)), ['https://example.test/a.png', 'https://example.test/b.png']);
+      expect(key('public-html-image-0-link'), findsNothing, reason: 'the javascript: link is not a link');
+      await tester.tap(key('public-html-image-0'));
+      await tester.pumpAndSettle();
+      expect(opened, isEmpty);
+      expect(drawnText(tester, key(html)), isNot(anyOf(contains('alert'), contains('C'), contains('D'))));
     });
 
-    testWidgets('4. external links: https followed; http and protocol-relative shown as plain text', (tester) async {
-      const links = '<p><a href="https://example.test/a">secure</a> <a href="http://example.test/b">plain</a> <a href="//example.test/c">relative</a></p>';
-      expect(CustomHtml.report(links).blockedLinks, ['http://example.test/b', '//example.test/c']);
-      await pumpBlocks(tester, [_parse(_html(links))]);
-      expect(linked(tester, key('public-html-b_html000001')), ['secure']);
-      expect(drawnText(tester, key('public-html-b_html000001')), contains('secure plain relative'));
+    testWidgets('6. oversized images are scaled to fit, keeping their shape, at every width', (tester) async {
+      const source = '<p><img src="https://example.test/wide.png" alt="Wide" width="3000" height="1500"></p>'
+          '<p><img src="https://example.test/natural.png" alt="Natural"></p>'
+          '<p><img src="https://example.test/tall.png" alt="Tall"></p>'
+          '<p><img src="https://example.test/odd.png" alt="Odd" width="100%" height="auto"></p>';
+      await serve(tester, {
+        'https://example.test/wide.png': (300, 150),
+        'https://example.test/natural.png': (4000, 500),
+        'https://example.test/tall.png': (300, 5000),
+        'https://example.test/odd.png': (2400, 1200),
+      });
+      for (final at in [_desktop, _tablet, _phone, _narrow]) {
+        await pumpBlocks(tester, [_parse(_html(source))], at: at);
+        expect(tester.takeException(), isNull, reason: 'at ${at.width}');
+        final block = tester.getRect(key(html));
+        expect(block.right, lessThanOrEqualTo(at.width));
+        for (final (i, ratio) in [(0, 2.0), (1, 8.0), (2, 0.06), (3, 2.0)]) {
+          final rect = tester.getRect(key('public-html-image-$i'));
+          expect(rect.left, greaterThanOrEqualTo(block.left - 0.01), reason: '$i at ${at.width}');
+          expect(rect.right, lessThanOrEqualTo(block.right + 0.01), reason: '$i at ${at.width}');
+          expect(rect.height, lessThanOrEqualTo(PublicCustomHtmlImage.maxHeight + 0.01));
+          expect(rect.width / rect.height, closeTo(ratio, 0.01), reason: 'shape kept: $i at ${at.width}');
+        }
+      }
     });
 
-    testWidgets('5. an image-only link without a description or title: no empty link, and a clear reason; the title is the fallback', (tester) async {
+    testWidgets('7. an image-only link without a description: the picture still shows and the editor asks for alt text', (tester) async {
       const bare = '<a href="https://example.test/"><img src="https://example.test/seal.png"></a>';
       final report = CustomHtml.report(bare);
-      expect([report.hasContent, report.onlyImages, report.imagesNotShown], [false, true, 1]);
-      expect(report.emptyLinks, ['https://example.test/']);
-      expect(BlockRegistry.blockProblems(_parse(_html(bare))).single, allOf(contains('doesn’t show images'), contains('Accreditations & Recognition'), contains('Image block')));
+      expect([report.hasContent, report.onlyImages, report.imagesShown, report.imagesWithoutAlt], [true, false, 1, 1]);
+      expect(report.emptyLinks, isEmpty);
+      expect(BlockRegistry.blockProblems(_parse(_html(bare))), isEmpty);
+      await serve(tester, {'https://example.test/seal.png': (80, 80)});
       await pumpBlocks(tester, [_parse(_html(bare))]);
-      expect(key('public-html-b_html000001'), findsNothing);
+      expect(drawn(tester, key(html)), ['https://example.test/seal.png']);
 
-      const lone = '<p><img src="https://example.test/seal.png" alt="Seal"></p>';
-      expect(CustomHtml.report(lone).onlyImages, isTrue, reason: 'outside a link an image adds nothing, even with a description');
-
-      const titled = '<a href="https://example.test/" title="Our accreditation"><img src="https://example.test/seal.png" alt="  "></a>';
-      expect(CustomHtml.report(titled).plainText, 'Our accreditation');
-      await pumpBlocks(tester, [_parse(_html(titled))]);
-      expect(linked(tester, key('public-html-b_html000001')), ['Our accreditation']);
-      noPicture(tester);
+      await size(tester, const Size(900, 3000));
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(child: WebsiteBlockForm(block: _parse(_html(bare)), library: const [], generation: 0, onChanged: (_) {})))));
+      await tester.pumpAndSettle();
+      expect(find.descendant(of: key('website-block-b_html000001-html-alt'), matching: find.textContaining('alt=')), findsOneWidget);
     });
 
-    test('6. script-only or style-only markup keeps “nothing can be shown”', () {
+    testWidgets('8. images that can’t be drawn: a description inside a safe link, else nothing; only such images is a clear problem', (tester) async {
+      const blocked = '<a href="https://example.test/"><img src="http://example.test/seal.png"></a><img src="data:image/png;base64,AAAA" alt="Seal">';
+      expect(CustomHtml.report(blocked).onlyImages, isTrue);
+      expect(BlockRegistry.blockProblems(_parse(_html(blocked))).single, allOf(contains('https://'), contains('Accreditations & Recognition'), contains('Image block')));
+      await pumpBlocks(tester, [_parse(_html(blocked))]);
+      expect(key(html), findsNothing);
+
+      const titled = '<a href="https://example.test/" title="Our accreditation"><img src="http://example.test/seal.png" alt="  "></a>';
+      expect(CustomHtml.report(titled).plainText, 'Our accreditation');
+      await pumpBlocks(tester, [_parse(_html(titled))]);
+      expect(linked(tester, key(html)), ['Our accreditation']);
+      expect(find.byType(Image), findsNothing);
+    });
+
+    test('9. script-only or style-only markup keeps “nothing can be shown”', () {
       for (final source in ['<script>alert(1)</script>', '<style>p{color:red}</style>', '<iframe src="https://example.test"></iframe>']) {
         final problems = BlockRegistry.blockProblems(_parse(_html(source)));
         expect(problems.single, contains('nothing in this HTML can be shown'), reason: source);
@@ -347,28 +494,20 @@ void main() {
       }
     });
 
-    testWidgets('7. a hostile description is plain text inside the safe link; nothing in it runs or links', (tester) async {
+    testWidgets('10. a hostile description is plain text, never markup; a picture that fails to load shows its description', (tester) async {
       const hostile = '<a href="https://example.test/ok"><img alt="<script>alert(1)</script> javascript:alert(2)" onerror="alert(3)" src="javascript:alert(4)"></a>';
       expect(CustomHtml.sanitized(hostile).outerHtml, isNot(contains('onerror')));
       expect(CustomHtml.report(hostile).imagesAsLinkText, 1);
       await pumpBlocks(tester, [_parse(_html(hostile))]);
-      final html = key('public-html-b_html000001');
-      expect(linked(tester, html), ['<script>alert(1)</script> javascript:alert(2)'], reason: 'drawn as text, the link still goes to the https address');
-      expect(find.descendant(of: html, matching: find.byType(RichText)), findsOneWidget);
-      noPicture(tester);
-    });
+      expect(linked(tester, key(html)), ['<script>alert(1)</script> javascript:alert(2)'], reason: 'drawn as text, the link still goes to the https address');
+      expect(find.byType(Image), findsNothing);
 
-    testWidgets('8. images are never drawn or fetched, in a link or not, with or without a description', (tester) async {
-      const many = '<p>Badges:</p><a href="https://example.test/1"><img src="https://example.test/1.png" alt="One"></a>'
-          '<img src="https://example.test/2.png" alt="Two"><a href="https://example.test/3"><img src="https://example.test/3.svg" alt="Three"></a>'
-          '<img src="data:image/png;base64,AAAA" alt="Four">';
-      for (final interactive in [true, false]) {
-        await pumpBlocks(tester, [_parse(_html(many))], interactive: interactive);
-        noPicture(tester);
-        expect(drawnText(tester, key('public-html-b_html000001')), allOf(contains('One'), contains('Three'), isNot(contains('Two')), isNot(contains('Four'))));
-      }
-      final report = CustomHtml.report(many);
-      expect((report.imagesAsLinkText, report.imagesNotShown), (2, 2));
+      // Not in the cache: the test network refuses it, as a broken image would.
+      await pumpBlocks(tester, [_parse(_html('<p><img src="https://example.test/missing.png" alt="School seal"></p>'))]);
+      await tester.pumpAndSettle();
+      expect(drawn(tester, key(html)), ['https://example.test/missing.png']);
+      expect(find.descendant(of: key('public-html-image-0'), matching: find.text('School seal')), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
   });
 
