@@ -296,9 +296,10 @@ class _CustomHtmlNotes extends StatelessWidget {
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(color: const Color(0xFFF3EADB), borderRadius: BorderRadius.circular(8)),
           child: const Text(
-            'JavaScript is not supported. Scripts, styles, forms, iframes, embeds, images and event handlers (onclick and similar) are removed before anything is shown. '
-            'Supported: headings, paragraphs, bold, italic, lists, quotes, code, dividers and links to https://, mailto: or pages of this website. '
-            'For images, maps, forms and phone links use their own blocks (Image, Map, Form, Buttons).',
+            'JavaScript is not supported. Scripts, styles, forms, iframes, embeds and event handlers (onclick and similar) are removed before anything is shown. '
+            'Supported: headings, paragraphs, bold, italic, lists, quotes, code, dividers, links to https://, mailto: or pages of this website, '
+            'and images from https:// addresses (with their alt description, width and height; scaled to fit). Visitors’ browsers load those images from that address. '
+            'For maps, forms, videos and phone links use their own blocks (Map, Form, Video embed, Buttons).',
             style: TextStyle(fontSize: 12),
           ),
         ),
@@ -316,13 +317,25 @@ class _CustomHtmlNotes extends StatelessWidget {
                   Text('• Removed with their content: ${[for (final e in report.removedElements.entries) e.key == 'nested too deeply' ? 'markup nested too deeply' : '<${e.key}>${e.value > 1 ? ' ×${e.value}' : ''}'].join(', ')}', style: const TextStyle(fontSize: 12)),
                 if (report.ignoredAttributes.isNotEmpty) Text('• Attributes not used: ${report.ignoredAttributes.join(', ')}', style: const TextStyle(fontSize: 12)),
                 if (report.blockedLinks.isNotEmpty) Text('• Links not followed (their text still shows): ${report.blockedLinks.join(', ')}', style: const TextStyle(fontSize: 12)),
+                if (report.blockedImages.isNotEmpty)
+                  Text('• Image addresses never loaded (an image needs an https:// address): ${report.blockedImages.join(', ')}', style: const TextStyle(fontSize: 12)),
                 if (report.imagesAsLinkText > 0)
                   Text('• Images: ${report.imagesAsLinkText} inside a link shown as its description (the link’s text), not as a picture', style: const TextStyle(fontSize: 12)),
-                if (report.imagesNotShown > 0)
-                  Text('• Images not shown: ${report.imagesNotShown}. Custom HTML doesn’t show images; for logos use Accreditations & Recognition, for photographs the Image block', style: const TextStyle(fontSize: 12)),
+                if (report.imagesNotShown > 0) Text('• Images not shown: ${report.imagesNotShown}', style: const TextStyle(fontSize: 12)),
                 if (report.emptyLinks.isNotEmpty)
                   Text('• Links left out because nothing in them has text (give the image an alt description or the link a title): ${report.emptyLinks.join(', ')}', style: const TextStyle(fontSize: 12)),
               ],
+            ),
+          ),
+        if (report.imagesWithoutAlt > 0)
+          Container(
+            key: Key('$prefix-alt'),
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: const Color(0xFFF3EADB), borderRadius: BorderRadius.circular(8)),
+            child: Text(
+              '${report.imagesWithoutAlt == 1 ? 'An image has' : '${report.imagesWithoutAlt} images have'} no description: add alt="…" so screen readers can describe ${report.imagesWithoutAlt == 1 ? 'it' : 'them'}.',
+              style: const TextStyle(fontSize: 12),
             ),
           ),
         const Text('Preview', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),

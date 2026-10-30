@@ -578,7 +578,7 @@ class BlockRegistry {
     if (report.hasContent) return const [];
     return [
       report.onlyImages
-          ? 'Custom HTML doesn’t show images, and this HTML has only images (or links whose image has no description). For logos use Accreditations & Recognition; for photographs, the Image block'
+          ? 'none of the images in this HTML can be shown: an image needs an https:// address (http:, data:, blob:, javascript: and relative addresses are never loaded). For logos you can also use Accreditations & Recognition; for photographs, the Image block'
           : 'nothing in this HTML can be shown (scripts, styles, embeds and other removed parts don’t count)',
     ];
   }
