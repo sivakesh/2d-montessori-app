@@ -1,11 +1,15 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../../core/theme/app_colors.dart';
+import '../../../../public_website/content/blocks/asymmetric_gallery.dart';
+import '../../../../public_website/content/blocks/testimonials.dart';
 import '../../../../public_website/content/blocks/block_ids.dart';
 import '../../../../public_website/content/blocks/block_limits.dart';
+import '../../../../public_website/content/blocks/block_spacing.dart';
 import '../../../../public_website/content/blocks/block_registry.dart';
 import '../../../../public_website/content/blocks/custom_html.dart';
 import '../../../../public_website/content/blocks/embed_providers.dart';
@@ -16,6 +20,7 @@ import '../../../../public_website/content/website_content_models.dart';
 import '../../../../public_website/content/website_custom_page.dart';
 import '../../../../public_website/content/website_design.dart';
 import '../../../../public_website/public_website_theme.dart';
+import '../../../../public_website/widgets/blocks/public_accreditations.dart';
 import '../../../../public_website/widgets/blocks/public_custom_html.dart';
 import '../../../../forms/models/website_form.dart';
 import '../../../../forms/public/public_forms_repository.dart';
@@ -24,6 +29,7 @@ import '../website_content_screen.dart';
 import 'block_list_ops.dart';
 import 'website_color_field.dart';
 import 'website_size_field.dart';
+import 'website_spacing_field.dart';
 
 /// What a page with no blocks shows: what to do first, and buttons for the
 /// most used blocks (every type is also in the Add block menu). Keys start
@@ -118,8 +124,11 @@ String blockSummary(WebsiteBlock block) {
     'columns' => '${block.columns('columns').length} columns (${block.string('layout')})',
     'buttons' => '${block.items('buttons').length} button(s)',
     'gallery' => '${block.items('images').length} image(s)',
+    'asymmetric_gallery' =>
+      '${block.items('images').length} image(s), ${AsymmetricGallery.arrangementLabels[AsymmetricGallery.settings(block, 'desktop').arrangement]!.toLowerCase()}',
     'map' => block.text('address').en.trim().isEmpty ? 'No address yet' : block.text('address').en.trim(),
     'accreditations' => '${block.items('items').length} accreditation(s)',
+    'testimonials' => '${block.items('testimonials').length} testimonial(s)',
     'embed' => switch (EmbedSource.parse(block.text('source').en)) {
         final e when e.isValid => '${e.provider!.label}: ${block.text('title').en.trim().isEmpty ? 'no title yet' : block.text('title').en.trim()}',
         _ => 'Not a supported link yet',
@@ -141,6 +150,7 @@ IconData blockIcon(WebsiteBlock block) => switch (block is StructuredBlock ? blo
       'cta' => Icons.campaign_outlined,
       'buttons' => Icons.smart_button_outlined,
       'gallery' => Icons.photo_library_outlined,
+      'asymmetric_gallery' => Icons.auto_awesome_mosaic_outlined,
       'gallery_feed' => Icons.collections_outlined,
       'map' => Icons.map_outlined,
       'divider' => Icons.horizontal_rule,
@@ -154,6 +164,7 @@ IconData blockIcon(WebsiteBlock block) => switch (block is StructuredBlock ? blo
       'announcements_feed' => Icons.campaign_outlined,
       'form' => Icons.assignment_outlined,
       'accreditations' => Icons.workspace_premium_outlined,
+      'testimonials' => Icons.format_quote_outlined,
       'html' => Icons.code,
       'embed' => Icons.smart_display_outlined,
       // Unsupported blocks (and any type without its own icon).
@@ -196,26 +207,57 @@ class WebsiteBlockForm extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final prefix = 'website-block-${block.id}';
+    final entries = <(FieldSpec, Widget)>[
+      for (final field in block.definition.fields)
+        // A setting of a feature that is off isn't offered (its value is kept).
+        if (field.shownWhen?.call(block.values, block.values) ?? true)
+        (
+          field,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // The accreditation layout settings, as one marked group (block
+              // settings: they apply to every accreditation in the block).
+              if (block.type == BlockRegistry.accreditations.type && field.key == 'imageAlign')
+                Column(
+                  key: Key('$prefix-layout-heading'),
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: const [
+                    Divider(height: 20),
+                    Text('Layout of each accreditation', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                    SizedBox(height: 2),
+                    Text('Applies to every accreditation in this block, as cards or in the logo strip.', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                    SizedBox(height: 10),
+                  ],
+                ),
+              if (block.type == BlockRegistry.accreditations.type && field.key == 'items') const Divider(height: 20),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _FieldEditor(
+                  keyPrefix: '$prefix-${field.key}',
+                  field: field,
+                  value: block.values[field.key],
+                  library: library,
+                  generation: generation,
+                  onChanged: (v) => onChanged(block.withValue(field.key, v)),
+                  owner: block,
+                  onBlockChanged: onChanged,
+                  onSelectNested: onSelectNested,
+                  design: design,
+                ),
+              ),
+            ],
+          ),
+        ),
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final field in block.definition.fields)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: _FieldEditor(
-              keyPrefix: '$prefix-${field.key}',
-              field: field,
-              value: block.values[field.key],
-              library: library,
-              generation: generation,
-              onChanged: (v) => onChanged(block.withValue(field.key, v)),
-              owner: block,
-              onBlockChanged: onChanged,
-              onSelectNested: onSelectNested,
-            ),
-          ),
+        ...groupedFields(prefix, entries),
         if (block.type == BlockRegistry.html.type) _CustomHtmlNotes(block: block, design: design),
         if (block.type == BlockRegistry.embed.type) _EmbedNotes(block: block),
+        if (block.type == BlockRegistry.accreditations.type) _AccreditationLinkNotes(block: block),
+        if (block.type == AsymmetricGallery.type) _AsymmetricGalleryNotes(block: block, library: library),
         WebsiteStyleEditor(block: block, design: design, onChanged: onChanged),
       ],
     );
@@ -361,6 +403,40 @@ class _CustomHtmlNotes extends StatelessWidget {
   }
 }
 
+/// Under an Accreditations block: the accreditations whose link visitors
+/// won't get as Verify ([AccreditationView.verifiable]), such as an https
+/// address without a domain name (`https://2`, which a browser opens as
+/// 0.0.0.2). A note only: the block still saves and shows, without that
+/// link. Key: `website-block-<id>-links`.
+class _AccreditationLinkNotes extends StatelessWidget {
+  const _AccreditationLinkNotes({required this.block});
+
+  final StructuredBlock block;
+
+  @override
+  Widget build(BuildContext context) {
+    final unused = [
+      for (final (i, item) in block.items('items').indexed)
+        if (item.string('target').trim() case final target when target.isNotEmpty && SafeLinkTarget.validate(target) == null && !AccreditationView.verifiable(target)) (i + 1, target),
+    ];
+    if (unused.isEmpty) return const SizedBox.shrink();
+    return Container(
+      key: Key('website-block-${block.id}-links'),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(color: const Color(0xFFF3EADB), borderRadius: BorderRadius.circular(8)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Verify links visitors won’t see', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+          for (final (n, target) in unused)
+            Text('• Accreditation $n: $target is not a website address. Enter the full address, for example https://www.example.org/certificate/123.', style: const TextStyle(fontSize: 12)),
+        ],
+      ),
+    );
+  }
+}
+
 /// A block's display options ([BlockDefinition.styleKeys]): colours from
 /// the palette or custom, and choices. An option left unset is inherited
 /// (from the section around the block, then the site design) and shown as
@@ -416,6 +492,21 @@ class WebsiteStyleEditor extends StatelessWidget {
     return (design.headingSize * scale).roundToDouble();
   }
 
+  /// The section keys its padding control replaces in this list (still
+  /// drawn: they are what its Automatic is).
+  static const _sectionPaddingKeys = {'padding', 'paddingTop', 'paddingBottom'};
+
+  /// A section's top or bottom padding with no override on [screen], as
+  /// it is drawn: its earlier padding setting, else 48 px; at most 48 on
+  /// phones.
+  int _sectionAutomatic(String screen, String side) {
+    int px(Object? v, int fallback) => v is String ? int.tryParse(v) ?? fallback : fallback;
+    final both = px(block.style['padding'], 48);
+    final key = side == 'top' ? 'paddingTop' : 'paddingBottom';
+    final value = block.style.containsKey(key) ? px(block.style[key], both) : both;
+    return screen == 'mobile' && value > 48 ? 48 : value;
+  }
+
   StructuredBlock _set(String key, Object? value) {
     final style = Map<String, dynamic>.of(block.style);
     value == null ? style.remove(key) : style[key] = value;
@@ -447,8 +538,44 @@ class WebsiteStyleEditor extends StatelessWidget {
             style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
           ),
         ),
+        // A section's top and bottom padding first, for each screen size:
+        // the same values as its Padding below (one setting, two views).
+        if (block.type == 'section')
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Material(
+              color: Colors.transparent,
+              child: ExpansionTile(
+                key: Key('$prefix-section-padding-group'),
+                initiallyExpanded: true,
+                title: const Text('Section padding (top and bottom)', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                subtitle: Text(WebsiteSpacingField.summary(block.style[BlockSpacing.padding], sides: const ['top', 'bottom']),
+                    key: Key('$prefix-section-padding-summary'), style: const TextStyle(fontSize: 12)),
+                tilePadding: const EdgeInsets.symmetric(horizontal: 8),
+                childrenPadding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                dense: true,
+                shape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
+                collapsedShape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
+                expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  WebsiteSpacingField(
+                    fieldKey: '$prefix-section-padding',
+                    kind: BlockSpacing.padding,
+                    sides: const ['top', 'bottom'],
+                    value: block.style[BlockSpacing.padding],
+                    automaticOf: _sectionAutomatic,
+                    description: 'The space inside the section’s background, above and below its content: 0 to 200 px for each screen size '
+                        '(blank is Automatic: tablets follow desktop, phones the tablet). Automatic is the section’s earlier padding, or 48 px.',
+                    onChanged: (v) => onChanged(_set(BlockSpacing.padding, v)),
+                  ),
+                ],
+              ),
+            ),
+          ),
         for (final key in block.definition.styleKeys)
-          if (BlockStyle.sizeKeys[key] case final range?)
+          if (block.type == 'section' && _sectionPaddingKeys.contains(key))
+            const SizedBox.shrink()
+          else if (BlockStyle.sizeKeys[key] case final range?)
             WebsiteSizeField(
               fieldKey: '$prefix-$key',
               label: labels[key] ?? key,
@@ -483,6 +610,32 @@ class WebsiteStyleEditor extends StatelessWidget {
                 onChanged: (v) => onChanged(_set(key, v == null || v.isEmpty ? null : v)),
               ),
             ),
+        // Every block type, last in Design: its own padding and margin.
+        const Padding(
+          padding: EdgeInsets.only(top: 6, bottom: 6),
+          child: Text('Spacing', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+        ),
+        for (final kind in BlockSpacing.kinds)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Material(
+              color: Colors.transparent,
+              child: ExpansionTile(
+                key: Key('$prefix-$kind-group'),
+                title: Text(kind == BlockSpacing.padding ? 'Padding (inside the block)' : 'Margin (outside the block)', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                subtitle: Text(WebsiteSpacingField.summary(block.style[kind]), key: Key('$prefix-$kind-group-summary'), style: const TextStyle(fontSize: 12)),
+                tilePadding: const EdgeInsets.symmetric(horizontal: 8),
+                childrenPadding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                dense: true,
+                shape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
+                collapsedShape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
+                expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  WebsiteSpacingField(fieldKey: '$prefix-$kind', kind: kind, value: block.style[kind], onChanged: (v) => onChanged(_set(kind, v))),
+                ],
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -516,10 +669,14 @@ class _FieldEditor extends StatelessWidget {
     this.owner,
     this.onBlockChanged,
     this.onSelectNested,
+    this.design = SiteDesign.defaults,
   });
 
   final String keyPrefix;
   final FieldSpec field;
+
+  /// The site design whose palette colour fields offer.
+  final SiteDesign design;
   final Object? value;
   final List<WebsiteMedia> library;
   final int generation;
@@ -565,7 +722,7 @@ class _FieldEditor extends StatelessWidget {
         for (final m in library) {
           if (m.id == id) media = m;
         }
-        return Row(
+        final row = Row(
           children: [
             WebsiteMediaThumb(media: media, size: 48),
             const SizedBox(width: 10),
@@ -592,7 +749,13 @@ class _FieldEditor extends StatelessWidget {
               },
               child: Text(id.isEmpty ? 'Choose' : 'Change'),
             ),
+            if (f.removable && id.isNotEmpty) TextButton(key: Key('$keyPrefix-remove'), onPressed: () => onChanged(''), child: const Text('Remove')),
           ],
+        );
+        if (!f.removable) return row;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [Text(f.label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)), const SizedBox(height: 4), row],
         );
       case LinkFieldSpec():
         final target = value as String? ?? '';
@@ -611,10 +774,37 @@ class _FieldEditor extends StatelessWidget {
         return _choice(context, keyPrefix, f.label, f.options, value as String? ?? f.initial, onChanged, labels: f.optionLabels);
       case FormRefFieldSpec():
         return _FormChoice(keyPrefix: keyPrefix, label: f.label, value: value as String? ?? '', onChanged: onChanged);
+      case NumberFieldSpec():
+        return _NumberField(key: ValueKey('$keyPrefix-$generation'), fieldKey: keyPrefix, field: f, value: value as int?, onChanged: onChanged);
       case ToggleFieldSpec():
         return SwitchListTile(key: Key(keyPrefix), contentPadding: EdgeInsets.zero, title: Text(f.label), value: value as bool? ?? f.initial, onChanged: onChanged);
       case ItemsFieldSpec():
-        return _ItemsEditor(keyPrefix: keyPrefix, field: f, items: value as List<BlockItem>? ?? const [], library: library, generation: generation, onChanged: onChanged);
+        return _ItemsEditor(
+          keyPrefix: keyPrefix,
+          field: f,
+          items: value as List<BlockItem>? ?? const [],
+          library: library,
+          generation: generation,
+          onChanged: onChanged,
+          design: design,
+          blockValues: owner?.values ?? const {},
+          itemPreview: owner?.type == Testimonials.type ? (item) => _TestimonialPreview(keyPrefix: '$keyPrefix-item-${item.id}', item: item, block: owner!, library: library) : null,
+        );
+      case ColorFieldSpec():
+        // Automatic is "unset" in the picker (its Reset to default).
+        final v = value as String? ?? ColorFieldSpec.automatic;
+        return WebsiteColorField(
+          fieldKey: keyPrefix,
+          label: f.label,
+          value: v == ColorFieldSpec.automatic ? null : v,
+          design: design,
+          inheritedLabel: f.automaticLabel,
+          legacy: {
+            ColorFieldSpec.transparent: ('Transparent (shows the section behind)', null),
+            for (final p in f.presets.entries) p.key: (p.value, design.resolve(p.key)),
+          },
+          onChanged: (c) => onChanged(c ?? ColorFieldSpec.automatic),
+        );
       case ColumnsFieldSpec():
         // The blocks in each column are added, arranged and removed in the
         // page structure; here they are listed to be selected and edited,
@@ -632,9 +822,26 @@ class _FieldEditor extends StatelessWidget {
 /// The items of an items field (buttons, gallery images): add, edit, move
 /// and remove, each with a fresh id when added.
 class _ItemsEditor extends StatelessWidget {
-  const _ItemsEditor({required this.keyPrefix, required this.field, required this.items, required this.library, required this.generation, required this.onChanged});
+  const _ItemsEditor({
+    required this.keyPrefix,
+    required this.field,
+    required this.items,
+    required this.library,
+    required this.generation,
+    required this.onChanged,
+    this.design = SiteDesign.defaults,
+    this.blockValues = const {},
+    this.itemPreview,
+  });
 
   final String keyPrefix;
+  final SiteDesign design;
+
+  /// The values of the block the items are in (for [FieldSpec.shownWhen]).
+  final Map<String, Object?> blockValues;
+
+  /// Shown under an item's title (a testimonial's avatar and rating).
+  final Widget Function(BlockItem item)? itemPreview;
   final ItemsFieldSpec field;
   final List<BlockItem> items;
   final List<WebsiteMedia> library;
@@ -677,7 +884,22 @@ class _ItemsEditor extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Expanded(child: Text('${field.itemLabel} ${i + 1}', style: const TextStyle(fontSize: 13))),
+                    Expanded(
+                      child: Wrap(
+                        spacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text('${field.itemLabel} ${i + 1}', style: const TextStyle(fontSize: 13)),
+                          if (field.badge?.call(items, i) case final badge?)
+                            Container(
+                              key: Key('$keyPrefix-item-${item.id}-badge'),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(color: const Color(0xFFE6EDE2), borderRadius: BorderRadius.circular(10)),
+                              child: Text(badge, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                            ),
+                        ],
+                      ),
+                    ),
                     IconButton(key: Key('$keyPrefix-item-${item.id}-up'), tooltip: 'Move up', onPressed: i == 0 ? null : () => _move(i, -1), icon: const Icon(Icons.arrow_upward, size: 18)),
                     IconButton(key: Key('$keyPrefix-item-${item.id}-down'), tooltip: 'Move down', onPressed: i == items.length - 1 ? null : () => _move(i, 1), icon: const Icon(Icons.arrow_downward, size: 18)),
                     IconButton(
@@ -688,18 +910,35 @@ class _ItemsEditor extends StatelessWidget {
                     ),
                   ],
                 ),
-                for (final f in field.itemFields)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8, right: 6),
-                    child: _FieldEditor(
-                      keyPrefix: '$keyPrefix-item-${item.id}-${f.key}',
-                      field: f,
-                      value: item.values[f.key],
-                      library: library,
-                      generation: generation,
-                      onChanged: (v) => onChanged([...items]..[i] = item.withValue(f.key, v)),
+                if (itemPreview?.call(item) case final preview?) Padding(padding: const EdgeInsets.only(bottom: 8, right: 6), child: preview),
+                ...groupedFields('$keyPrefix-item-${item.id}', [
+                  for (final f in field.itemFields)
+                    if (f.shownWhen?.call(item.values, blockValues) ?? true)
+                    (
+                      f,
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8, right: 6),
+                        child: _FieldEditor(
+                          keyPrefix: '$keyPrefix-item-${item.id}-${f.key}',
+                          field: f,
+                          value: item.values[f.key],
+                          library: library,
+                          generation: generation,
+                          onChanged: (v) => onChanged([
+                            for (final (j, other) in items.indexed)
+                              if (j == i)
+                                item.withValue(f.key, v)
+                              // One item only (the feature image): on here, off in the others.
+                              else if (f is ToggleFieldSpec && f.exclusive && v == true && other.values[f.key] == true)
+                                other.withValue(f.key, false)
+                              else
+                                other,
+                          ]),
+                          design: design,
+                        ),
+                      ),
                     ),
-                  ),
+                ]),
               ],
             ),
           ),
@@ -724,7 +963,7 @@ class _ItemsEditor extends StatelessWidget {
                           onChanged([
                             ...kept,
                             for (final id in chosen.take(room))
-                              BlockItem(id: BlockIds.item(), values: {for (final f in field.itemFields) f.key: f.key == media.key ? id : f.defaultValue}),
+                              BlockItem(id: BlockIds.item(), values: {for (final f in field.itemFields) f.key: f.key == media.key ? id : f.newValue}),
                           ]);
                         },
                   icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
@@ -735,7 +974,7 @@ class _ItemsEditor extends StatelessWidget {
                   key: Key('$keyPrefix-add'),
                   onPressed: items.length >= field.maxItems
                       ? null
-                      : () => onChanged([...items, BlockItem(id: BlockIds.item(), values: {for (final f in field.itemFields) f.key: f.defaultValue})]),
+                      : () => onChanged([...items, BlockItem(id: BlockIds.item(), values: {for (final f in field.itemFields) f.key: f.newValue})]),
                   icon: const Icon(Icons.add, size: 18),
                   label: Text(items.length >= field.maxItems ? 'At most ${field.maxItems}' : 'Add ${field.itemLabel.toLowerCase()}'),
                 ),
@@ -975,6 +1214,225 @@ class _ColumnsEditor extends StatelessWidget {
             onPressed: added == null ? null : () => onChanged(added),
             icon: const Icon(Icons.add, size: 18),
             label: Text(added == null ? 'At most $most columns' : 'Add column'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// [entries] (each field and its editor) with each run of fields in one
+/// [FieldSpec.group] folded into a collapsible section, closed at first
+/// (keys `<prefix>-group-<group, lower case, dashed>`).
+List<Widget> groupedFields(String prefix, List<(FieldSpec, Widget)> entries) {
+  final out = <Widget>[];
+  for (var i = 0; i < entries.length;) {
+    final group = entries[i].$1.group;
+    if (group == null) {
+      out.add(entries[i].$2);
+      i++;
+      continue;
+    }
+    final members = <Widget>[];
+    while (i < entries.length && entries[i].$1.group == group) {
+      members.add(entries[i].$2);
+      i++;
+    }
+    out.add(Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: Colors.transparent,
+        child: ExpansionTile(
+          key: Key('$prefix-group-${groupSlug(group)}'),
+          title: Text(group, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          tilePadding: const EdgeInsets.symmetric(horizontal: 8),
+          childrenPadding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+          dense: true,
+          shape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
+          collapsedShape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
+          expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+          children: members,
+        ),
+      ),
+    ));
+  }
+  return out;
+}
+
+/// [group] as a key part ("Layout on desktop" → "layout-on-desktop").
+String groupSlug(String group) => group.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '-').replaceAll(RegExp(r'^-|-$'), '');
+
+/// A whole number, or blank for Automatic ([NumberFieldSpec.automaticLabel]),
+/// with a reset to Automatic. A number out of range is explained (and
+/// stopped by validation when saving).
+class _NumberField extends StatefulWidget {
+  const _NumberField({super.key, required this.fieldKey, required this.field, required this.value, required this.onChanged});
+
+  final String fieldKey;
+  final NumberFieldSpec field;
+  final int? value;
+  final ValueChanged<Object?> onChanged;
+
+  @override
+  State<_NumberField> createState() => _NumberFieldState();
+}
+
+class _NumberFieldState extends State<_NumberField> {
+  late final _text = TextEditingController(text: widget.value?.toString() ?? '');
+
+  @override
+  void didUpdateWidget(_NumberField old) {
+    super.didUpdateWidget(old);
+    // Reset (or changed elsewhere): show what is set.
+    if (widget.value != int.tryParse(_text.text)) _text.text = widget.value?.toString() ?? '';
+  }
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final f = widget.field;
+    final unit = f.unit.isEmpty ? '' : ' ${f.unit}';
+    final range = '${f.min}–${f.max}$unit';
+    final n = int.tryParse(_text.text);
+    final error = _text.text.isEmpty ? null : (n == null || !f.allows(n) ? 'Must be from $range.' : null);
+    return TextField(
+      key: Key(widget.fieldKey),
+      controller: _text,
+      keyboardType: TextInputType.number,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(5)],
+      decoration: websiteField('${f.label}${f.unit.isEmpty ? '' : ' (${f.unit})'}', helper: _text.text.isEmpty ? '${f.automaticLabel}. Or enter $range.' : 'From $range.').copyWith(
+        hintText: 'Automatic',
+        errorText: error,
+        suffixIcon: widget.value == null && _text.text.isEmpty
+            ? null
+            : IconButton(
+                key: Key('${widget.fieldKey}-reset'),
+                tooltip: 'Reset to Automatic',
+                icon: const Icon(Icons.restart_alt, size: 18),
+                onPressed: () {
+                  setState(_text.clear);
+                  widget.onChanged(null);
+                },
+              ),
+      ),
+      onChanged: (t) {
+        setState(() {});
+        widget.onChanged(t.isEmpty ? null : int.tryParse(t));
+      },
+    );
+  }
+}
+
+/// Under an Asymmetric gallery's settings: images visitors won't see as
+/// intended (missing, unpublished, or without alt text and not marked
+/// decorative), and how the screen sizes work.
+class _AsymmetricGalleryNotes extends StatelessWidget {
+  const _AsymmetricGalleryNotes({required this.block, required this.library});
+
+  final StructuredBlock block;
+  final List<WebsiteMedia> library;
+
+  @override
+  Widget build(BuildContext context) {
+    final byId = {for (final m in library) m.id: m};
+    final notes = <String>[];
+    for (final (i, item) in block.items('images').indexed) {
+      final id = item.string('mediaId');
+      final media = byId[id];
+      final where = 'Image ${i + 1}';
+      if (id.isEmpty) continue;
+      if (media == null) {
+        notes.add('$where no longer exists in the Media library: choose another or remove it.');
+        continue;
+      }
+      if (!media.isPublished) notes.add('$where isn’t published: visitors won’t see it until it is.');
+      if (item.value<bool>('decorative') != true && item.text('alt').en.trim().isEmpty && media.alt.en.trim().isEmpty) {
+        notes.add('$where has no alt text: describe it here or in the Media library, or mark it decorative only.');
+      }
+    }
+    return Container(
+      key: Key('website-block-${block.id}-asymmetric-notes'),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(color: notes.isEmpty ? const Color(0xFFE6EDE2) : const Color(0xFFF3EADB), borderRadius: BorderRadius.circular(8)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final n in notes) Padding(padding: const EdgeInsets.only(bottom: 4), child: Text(n, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600))),
+          const Text(
+            'Desktop, tablets and phones each have their own layout (Automatic until you set it): switch the preview size above the canvas to see each. '
+            'The first image is the feature image unless you choose another.',
+            style: TextStyle(fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A testimonial as its card will show the person: the avatar (the
+/// profile photo, else the generated initials, else none), the name and
+/// the rating, updated as they are edited.
+class _TestimonialPreview extends StatelessWidget {
+  const _TestimonialPreview({required this.keyPrefix, required this.item, required this.block, required this.library});
+
+  final String keyPrefix;
+  final BlockItem item;
+  final StructuredBlock block;
+  final List<WebsiteMedia> library;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = item.text('name').en.trim();
+    final initials = Testimonials.initialsOf(name);
+    final photoId = item.string('photoMediaId').trim();
+    WebsiteMedia? photo;
+    for (final m in library) {
+      if (m.id == photoId) photo = m;
+    }
+    final rating = Testimonials.ratingOf(item);
+    final String ratingNote;
+    if (rating == null) {
+      ratingNote = 'No rating';
+    } else if (item.value<bool>('hideRating') == true) {
+      ratingNote = 'Rating hidden (${Testimonials.ratingText(rating)} / 5)';
+    } else if (block.toggle('showRatings')) {
+      ratingNote = '${[for (var i = 0; i < 5; i++) rating >= i + 1 ? '★' : (rating >= i + 0.5 ? '½' : '☆')].join()}  ${Testimonials.ratingText(rating)} / 5';
+    } else {
+      ratingNote = 'Ratings are turned off for this block (${Testimonials.ratingText(rating)} / 5)';
+    }
+    const size = 40.0;
+    final Widget? avatar = !block.toggle('showAvatars')
+        ? null
+        : photo != null
+            ? ClipOval(key: Key('$keyPrefix-preview-photo'), child: WebsiteMediaThumb(media: photo, size: size))
+            : initials.isEmpty
+                ? null
+                : Container(
+                    key: Key('$keyPrefix-preview-initials'),
+                    width: size,
+                    height: size,
+                    alignment: Alignment.center,
+                    decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFFF3EADB)),
+                    child: Text(initials, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: Color(0xFF163829))),
+                  );
+    return Row(
+      key: Key('$keyPrefix-preview'),
+      children: [
+        if (avatar != null) ...[avatar, const SizedBox(width: 10)],
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(name.isEmpty ? (photo == null ? 'No name or photo: no avatar is shown' : 'No name yet') : name,
+                  maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              Text(ratingNote, key: Key('$keyPrefix-preview-rating'), style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+            ],
           ),
         ),
       ],

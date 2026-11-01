@@ -6,11 +6,14 @@ import '../website_content_models.dart';
 import '../website_custom_page.dart';
 import '../website_design.dart';
 import 'accreditation_date.dart';
+import 'asymmetric_gallery.dart';
 import 'block_ids.dart';
+import 'block_spacing.dart';
 import 'block_limits.dart';
 import 'custom_html.dart';
 import 'embed_providers.dart';
 import 'field_spec.dart';
+import 'testimonials.dart';
 import 'website_block.dart';
 
 /// A block type: its stored name, schema version, admin label and fields,
@@ -107,6 +110,7 @@ class BlockStyle {
   /// Why [value] can't be the value of style [key], or null when it can
   /// (or [key] isn't one this version knows: it is kept as stored).
   static String? problem(String key, Object? value) {
+    if (BlockSpacing.kinds.contains(key)) return BlockSpacing.problem(value);
     if (key == 'background') {
       return backgrounds.contains(value) || SiteDesign.isColorValue(value) ? null : '“$value” is not a background option';
     }
@@ -133,8 +137,34 @@ const blockIconNames = [
   'family', 'school', 'spa', 'grid', 'care', 'star', 'book', 'palette', 'nature', 'heart', 'calendar', 'place', 'phone', 'mail', 'question', 'quote', 'check', //
 ];
 
+/// A card's icon choices: no icon, or one of [blockIconNames].
+const cardIconOptions = ['none', ...blockIconNames];
+
+/// A card with nothing to show (its English title and text, the
+/// fallback for every language, both empty; no image; no icon).
+List<String> _cardChecks(StructuredBlock block) => [
+      for (final (i, card) in block.items('cards').indexed)
+        if (card.text('title').en.trim().isEmpty && card.text('body').en.trim().isEmpty && card.string('imageMediaId').trim().isEmpty && card.string('icon') == 'none')
+          'Card ${i + 1}: add an image, an icon, a title or some text',
+    ];
+
+
+/// The backgrounds suggested for an accreditation card: the site palette's
+/// light colours (they follow the design) and two fixed ones.
+const accreditationBackgrounds = {
+  'token:surface': 'White',
+  'token:background': 'Soft ivory',
+  'token:goldLight': 'Warm beige',
+  'token:sageLight': 'Soft sage green',
+  '#EEF5EA': 'Pale green',
+  '#F2F2F0': 'Light grey',
+};
+
+/// A button of a Buttons, Call to action or Hero block. Labels may be a
+/// sentence ("Interested in becoming a Montessori educator? Explore our
+/// Teacher Training programmes"); a long one wraps onto more lines.
 const _buttonItem = [
-  TextFieldSpec('label', 'Button label', maxLength: 40, required: true, translationRequired: true),
+  TextFieldSpec('label', 'Button label', maxLength: 120, required: true, translationRequired: true),
   LinkFieldSpec('target', 'Button link', required: true),
   ChoiceFieldSpec('variant', 'Button style', options: ['primary', 'secondary', 'link', 'back'], initial: 'primary'),
 ];
@@ -265,20 +295,28 @@ class BlockRegistry {
     type: 'cards',
     version: 1,
     label: 'Cards',
-    description: 'Linked cards with icons',
+    description: 'Linked cards with an image or icon',
     styleKeys: ['background', 'spacing', 'textColor', 'bodyFontSize', 'headingColor', 'headingFontSize', 'width'],
     fields: [
       TextFieldSpec('heading', 'Heading', maxLength: 120, translationRequired: true),
       ..._perRowFields,
+      // Every part is optional ("none": no icon, nothing drawn in its
+      // place); a card needs an image, an icon, a title or some text (a link
+      // alone isn't enough). New cards start with none; an absent icon stays
+      // the star it always was, so saved cards look the same. The image was
+      // added later and is stored only when chosen; it is drawn as a 2:1
+      // banner (an image size saved by an earlier version is kept, unused).
       ItemsFieldSpec('cards', 'Cards', itemLabel: 'Card', minItems: 1, maxItems: 8, itemFields: [
-        ChoiceFieldSpec('icon', 'Icon', options: blockIconNames, initial: 'star'),
-        TextFieldSpec('title', 'Title', maxLength: 80, required: true, translationRequired: true),
+        ChoiceFieldSpec('icon', 'Icon', options: cardIconOptions, initial: 'star', initialForNew: 'none', optionLabels: {'none': 'None (no icon)'}),
+        MediaFieldSpec('imageMediaId', 'Image (optional)', omitDefault: true, removable: true),
+        TextFieldSpec('title', 'Title', maxLength: 80, translationRequired: true),
         TextFieldSpec('body', 'Text', maxLength: 400, multiline: true),
         TextFieldSpec('linkLabel', 'Link text', maxLength: 60),
         LinkFieldSpec('target', 'Link (optional)'),
         ChoiceFieldSpec('accent', 'Accent', options: ['primary', 'secondary'], initial: 'primary'),
       ]),
     ],
+    extraChecks: _cardChecks,
   );
 
   /// Short points with icons (e.g. the Montessori principles).
@@ -473,6 +511,30 @@ class BlockRegistry {
     ],
   );
 
+  /// An editorial composition of 1–12 photographs ([AsymmetricGallery]:
+  /// its fields, checks and layout). The Photo gallery is unchanged.
+  static final asymmetricGallery = BlockDefinition(
+    type: AsymmetricGallery.type,
+    version: 1,
+    label: 'Asymmetric gallery',
+    description: 'An editorial composition of photographs',
+    styleKeys: const ['background', 'spacing', 'textColor', 'headingColor', 'headingFontSize', 'bodyFontSize'],
+    fields: AsymmetricGallery.fields,
+    extraChecks: AsymmetricGallery.problems,
+  );
+
+  /// Quotes from families, students and educators as cards, each with an
+  /// avatar (photo or initials) and an optional star rating
+  /// ([Testimonials]).
+  static const testimonials = BlockDefinition(
+    type: Testimonials.type,
+    version: 1,
+    label: 'Testimonials',
+    description: 'Quotes with avatars and optional star ratings',
+    styleKeys: ['background', 'spacing', 'textColor', 'headingColor', 'headingFontSize', 'bodyFontSize'],
+    fields: Testimonials.fields,
+  );
+
   /// A Google map of a place the editor enters (an address or a place
   /// name), shown with Google's keyless embed, with an optional
   /// "Get directions" link (also the fallback when the map can't load) and
@@ -528,11 +590,55 @@ class BlockRegistry {
       ChoiceFieldSpec('desktopColumns', 'Cards per row on desktop', options: ['auto', '1', '2', '3', '4'], initial: 'auto', optionLabels: {'auto': 'Automatic (3)'}, omitDefault: true),
       ChoiceFieldSpec('tabletColumns', 'Cards per row on tablets', options: ['auto', '1', '2', '3'], initial: 'auto', optionLabels: {'auto': 'Automatic (2)'}, omitDefault: true),
       ChoiceFieldSpec('mobileColumns', 'Cards per row on phones', options: ['auto', '1', '2'], initial: 'auto', optionLabels: {'auto': 'Automatic (1)'}, omitDefault: true),
+      // The layout inside each card or logo (AccreditationLayout). Added
+      // after the first version: "auto" is how it looked before (stored
+      // only when changed), so existing blocks are unchanged.
+      ChoiceFieldSpec('imageAlign', 'Image position', options: ['auto', 'left', 'center', 'right'], initial: 'auto', optionLabels: {
+        'auto': 'Automatic (as now)',
+        'left': 'Left',
+        'center': 'Centre',
+        'right': 'Right',
+      }, omitDefault: true),
+      ChoiceFieldSpec('textAlign', 'Text alignment', options: ['auto', 'left', 'center', 'right'], initial: 'auto', optionLabels: {
+        'auto': 'Automatic (as now)',
+        'left': 'Left',
+        'center': 'Centre',
+        'right': 'Right',
+      }, omitDefault: true),
+      ChoiceFieldSpec('verticalAlign', 'Content position', options: ['top', 'center'], initial: 'top', optionLabels: {
+        'top': 'Top',
+        'center': 'Centre (cards in a row match)',
+      }, omitDefault: true),
+      ChoiceFieldSpec('imageSize', 'Image size', options: ['auto', 'small', 'medium', 'large'], initial: 'auto', optionLabels: {
+        'auto': 'Automatic',
+        'small': 'Small',
+        'medium': 'Medium',
+        'large': 'Large',
+      }, omitDefault: true),
+      ChoiceFieldSpec('imageSpacing', 'Space between image and text', options: ['auto', '8', '16', '24', '32'], initial: 'auto', optionLabels: {
+        'auto': 'Automatic',
+        '8': '8 px',
+        '16': '16 px',
+        '24': '24 px',
+        '32': '32 px',
+      }, omitDefault: true),
+      ChoiceFieldSpec('cardPadding', 'Card padding (certificate cards)', options: ['auto', '12', '16', '20', '24', '32'], initial: 'auto', optionLabels: {
+        'auto': 'Automatic (20 px)',
+        '12': '12 px',
+        '16': '16 px',
+        '20': '20 px',
+        '24': '24 px',
+        '32': '32 px',
+      }, omitDefault: true),
       ItemsFieldSpec('items', 'Accreditations', itemLabel: 'Accreditation', minItems: 1, maxItems: 12, itemFields: [
-        TextFieldSpec('name', 'Organisation or accrediting body', maxLength: 120, required: true, translationRequired: true),
+        // Optional: a credential or an image can stand on its own.
+        TextFieldSpec('name', 'Organisation or accrediting body', maxLength: 120, translationRequired: true),
         TextFieldSpec('title', 'Credential or recognition', maxLength: 160),
         MediaFieldSpec('logoMediaId', 'Logo (optional)'),
         MediaFieldSpec('certificateMediaId', 'Certificate image (optional)'),
+        // This card's own background (added later: "auto", the block's
+        // white card, is not stored, so existing items are unchanged).
+        ColorFieldSpec('background', 'Card background', omitDefault: true, presets: accreditationBackgrounds),
         TextFieldSpec('description', 'Short description', maxLength: 400, multiline: true),
         LinkFieldSpec('target', 'Verification or certificate link (optional)'),
         TextFieldSpec('issued', 'Issue date (optional: 2024, 2024-03 or 2024-03-05)', maxLength: 10, translatable: false),
@@ -548,7 +654,10 @@ class BlockRegistry {
           final expiresText = item.text('expires').en.trim();
           final issued = issuedText.isEmpty ? null : AccreditationDate.tryParse(issuedText);
           final expires = expiresText.isEmpty ? null : AccreditationDate.tryParse(expiresText);
+          bool has(String key) => item.text(key).values.values.any((t) => t.trim().isNotEmpty);
           return [
+            if (!has('name') && !has('title') && item.string('logoMediaId').isEmpty && item.string('certificateMediaId').isEmpty)
+              'Accreditation ${i + 1}: add an organisation, a credential or an image',
             if (issuedText.isNotEmpty && issued == null) 'Accreditation ${i + 1}: write the issue date as 2024, 2024-03 or 2024-03-05',
             if (expiresText.isNotEmpty && expires == null) 'Accreditation ${i + 1}: write the expiry date as 2024, 2024-03 or 2024-03-05',
             if (issued != null && expires != null && expires.last.isBefore(issued.first)) 'Accreditation ${i + 1}: the expiry date is before the issue date',
@@ -637,7 +746,7 @@ class BlockRegistry {
   );
 
   /// Every known block type, in the order the "Add block" menus show.
-  static final List<BlockDefinition> all = [text, image, columns, cta, buttons, gallery, divider, section, hero, cards, features, pageHeader, notice, galleryFeed, eventsFeed, announcementsFeed, form, map, accreditations, html, embed];
+  static final List<BlockDefinition> all = [text, image, columns, cta, buttons, gallery, asymmetricGallery, divider, section, hero, cards, features, pageHeader, notice, galleryFeed, eventsFeed, announcementsFeed, form, map, accreditations, testimonials, html, embed];
 
   /// The block types that can go inside a section or columns.
   static List<BlockDefinition> get nestable => [for (final d in all) if (!containerTypes.contains(d.type)) d];
@@ -695,11 +804,11 @@ class BlockRegistry {
   /// A new, empty block of [type] with fresh ids (and the minimum items,
   /// or the layout's columns).
   static StructuredBlock create(BlockDefinition definition) {
-    final values = <String, Object?>{for (final f in definition.fields) f.key: f.defaultValue};
+    final values = <String, Object?>{for (final f in definition.fields) f.key: f.newValue};
     for (final f in definition.fields) {
       if (f is ItemsFieldSpec) {
         values[f.key] = [
-          for (var i = 0; i < f.minItems; i++) BlockItem(id: BlockIds.item(), values: {for (final g in f.itemFields) g.key: g.defaultValue}),
+          for (var i = 0; i < f.minItems; i++) BlockItem(id: BlockIds.item(), values: {for (final g in f.itemFields) g.key: g.newValue}),
         ];
       }
       if (f is ColumnsFieldSpec) {
@@ -835,6 +944,11 @@ class BlockRegistry {
         return [if (!field.options.contains(value)) '“$value” is not a ${label.toLowerCase()} option'];
       case ToggleFieldSpec():
         return const [];
+      case NumberFieldSpec():
+        final n = value as int?;
+        return [if (n != null && !field.allows(n)) '${label[0].toLowerCase()}${label.substring(1)} must be from ${field.min} to ${field.max}${field.unit.isEmpty ? '' : ' ${field.unit}'}'];
+      case ColorFieldSpec():
+        return [if (!ColorFieldSpec.isValid(value)) '“$value” is not a ${label.toLowerCase()} option'];
       case FormRefFieldSpec():
         final id = (value as String? ?? '').trim();
         if (id.isEmpty) return [if (field.required) 'choose a form'];

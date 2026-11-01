@@ -130,6 +130,29 @@ class PublicStrings {
   String accreditationLogo(String name) => _get('accreditationLogo').replaceAll('{name}', name);
   String accreditationCertificate(String name) => _get('accreditationCertificate').replaceAll('{name}', name);
   String get accreditationLink => _get('accreditationLink');
+
+  /// An accreditation's name in labels when it has neither an
+  /// organisation nor a credential.
+  String get accreditationUnnamed => _get('accreditationUnnamed');
+
+  /// The details' link to the accreditation's verification page.
+  String get accreditationVerify => _get('accreditationVerify');
+  String accreditationVerifyFor(String name) => _get('accreditationVerifyFor').replaceAll('{name}', name);
+
+  /// A photograph with nothing else to name it ("Image 3").
+  String galleryImageNumber(int n) => _get('galleryImageNumber').replaceAll('{n}', '$n');
+
+  /// A testimonial's rating for screen readers ("4.5 out of 5 stars").
+  String ratingOutOfFive(String rating) => _get('ratingOutOfFive').replaceAll('{rating}', rating);
+
+  /// A testimonial's initials avatar, and a profile photo without its own
+  /// description, for screen readers.
+  String initialsOf(String name) => _get('initialsOf').replaceAll('{name}', name);
+  String photoOf(String name) => _get('photoOf').replaceAll('{name}', name);
+  String get profilePhoto => _get('profilePhoto');
+
+  /// A clickable accreditation's name for screen readers.
+  String accreditationDetailsFor(String name) => _get('accreditationDetailsFor').replaceAll('{name}', name);
   String accreditationLinkFor(String name) => _get('accreditationLinkFor').replaceAll('{name}', name);
   String embedLoad(String provider) => _get('embedLoad').replaceAll('{provider}', provider);
   String embedLoadFor(String provider, String title) => _get('embedLoadFor').replaceAll('{provider}', provider).replaceAll('{title}', title);
@@ -268,6 +291,15 @@ class PublicStrings {
     'accreditationLogo': '{name} logo',
     'accreditationCertificate': '{name} certificate',
     'accreditationLink': 'More information',
+    'accreditationUnnamed': 'Accreditation',
+    'accreditationDetailsFor': '{name}: show details',
+    'accreditationVerify': 'Verify',
+    'galleryImageNumber': 'Image {n}',
+    'ratingOutOfFive': '{rating} out of 5 stars',
+    'initialsOf': 'Initials of {name}',
+    'photoOf': 'Photo of {name}',
+    'profilePhoto': 'Profile photo',
+    'accreditationVerifyFor': 'Verify {name} (opens in a new tab)',
     'accreditationLinkFor': 'More information about {name}',
     'embedLoad': 'Load {provider}',
     'embedLoadFor': 'Load {provider}: {title}',
@@ -370,6 +402,15 @@ class PublicStrings {
     'accreditationLogo': '{name} சின்னம்',
     'accreditationCertificate': '{name} சான்றிதழ்',
     'accreditationLink': 'மேலும் தகவல்',
+    'accreditationUnnamed': 'அங்கீகாரம்',
+    'accreditationDetailsFor': '{name}: விவரங்களைக் காண்க',
+    'accreditationVerify': 'சரிபார்க்க',
+    'galleryImageNumber': 'படம் {n}',
+    'ratingOutOfFive': '5 இல் {rating} நட்சத்திரங்கள்',
+    'initialsOf': '{name} இன் முதலெழுத்துகள்',
+    'photoOf': '{name} இன் புகைப்படம்',
+    'profilePhoto': 'சுயவிவரப் புகைப்படம்',
+    'accreditationVerifyFor': '{name} சரிபார்க்க (புதிய தாவலில் திறக்கும்)',
     'accreditationLinkFor': '{name} பற்றி மேலும் தகவல்',
     'embedLoad': '{provider} ஐ ஏற்று',
     'embedLoadFor': '{provider} ஐ ஏற்று: {title}',

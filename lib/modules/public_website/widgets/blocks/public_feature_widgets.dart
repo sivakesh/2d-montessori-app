@@ -64,6 +64,7 @@ class PublicPathwayCard extends StatelessWidget {
     required this.cta,
     required this.route,
     required this.accent,
+    this.image,
     this.onTap,
     this.enabled = true,
     this.ctaColor,
@@ -71,7 +72,14 @@ class PublicPathwayCard extends StatelessWidget {
     this.bodyColor,
   });
 
-  final IconData icon;
+  /// Null: no icon (nothing in its place).
+  final IconData? icon;
+
+  /// Across the top of the card, edge to edge, above the icon and the
+  /// text; null: none (no space).
+  final Widget? image;
+
+  /// Empty: none (no space).
   final String title;
   final String body;
   final String cta;
@@ -93,6 +101,40 @@ class PublicPathwayCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final link = ctaColor ?? (accent == PublicColors.gold ? const Color(0xFF8A6A33) : accent);
+    final hasContent = icon != null || title.isNotEmpty || body.isNotEmpty || cta.isNotEmpty;
+    // Only the parts there are, 20 px apart (8 between the title and its
+    // text).
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (icon != null)
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(color: accent.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(14)),
+            child: Icon(icon, color: accent),
+          ),
+        if (title.isNotEmpty) ...[
+          if (icon != null) const SizedBox(height: 20),
+          Text(title, style: PublicText.title.copyWith(fontSize: 22, color: titleColor)),
+        ],
+        if (body.isNotEmpty) ...[
+          if (title.isNotEmpty) const SizedBox(height: 8) else if (icon != null) const SizedBox(height: 20),
+          Text(body, style: PublicText.body.copyWith(color: bodyColor)),
+        ],
+        if (cta.isNotEmpty) ...[
+          if (icon != null || title.isNotEmpty || body.isNotEmpty) const SizedBox(height: 20),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(child: Text(cta, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: link))),
+              const SizedBox(width: 6),
+              Icon(Icons.arrow_forward_rounded, size: 18, color: link),
+            ],
+          ),
+        ],
+      ],
+    );
     return Material(
       color: PublicColors.background,
       shape: RoundedRectangleBorder(
@@ -102,35 +144,17 @@ class PublicPathwayCard extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: !enabled ? null : onTap ?? (route.isEmpty ? null : () => PublicRoutes.open(context, route)),
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(color: accent.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(14)),
-                child: Icon(icon, color: accent),
+        child: image == null
+            ? Padding(padding: const EdgeInsets.all(28), child: content)
+            // The image across the top, edge to edge (the card's corners
+            // round it); the rest padded below it, if there is any.
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(width: double.infinity, child: image),
+                  if (hasContent) Padding(padding: const EdgeInsets.all(28), child: content),
+                ],
               ),
-              const SizedBox(height: 20),
-              Text(title, style: PublicText.title.copyWith(fontSize: 22, color: titleColor)),
-              const SizedBox(height: 8),
-              if (body.isNotEmpty) Text(body, style: PublicText.body.copyWith(color: bodyColor)),
-              if (cta.isNotEmpty) ...[
-                const SizedBox(height: 20),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(child: Text(cta, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: link))),
-                    const SizedBox(width: 6),
-                    Icon(Icons.arrow_forward_rounded, size: 18, color: link),
-                  ],
-                ),
-              ],
-            ],
-          ),
-        ),
       ),
     );
   }

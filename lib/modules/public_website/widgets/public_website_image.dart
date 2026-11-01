@@ -18,7 +18,12 @@ class PublicWebsiteImage extends StatelessWidget {
     this.borderRadius = 20,
     this.fit = BoxFit.cover,
     this.errorLabel,
+    this.alignment,
   });
+
+  /// Where the image sits when it doesn't fill (or is cropped): null for
+  /// the library's focal point under [BoxFit.cover], else centred.
+  final Alignment? alignment;
 
   /// The image, or null for the placeholder.
   final WebsiteMedia? media;
@@ -60,7 +65,7 @@ class PublicWebsiteImage extends StatelessWidget {
                     media.urlForWidth(coverWidth.isFinite ? coverWidth : physicalWidth),
                     key: ValueKey('public-image-${media.id}'),
                     fit: fit,
-                    alignment: fit == BoxFit.cover ? media.alignment : Alignment.center,
+                    alignment: alignment ?? (fit == BoxFit.cover ? media.alignment : Alignment.center),
                     width: double.infinity,
                     height: double.infinity,
                     cacheWidth: decodeWidth,
