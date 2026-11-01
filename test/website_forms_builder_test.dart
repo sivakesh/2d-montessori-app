@@ -615,6 +615,7 @@ service cloud.firestore {
       expect(find.byKey(const Key('builder-unsaved')), findsNothing);
       await tap(tester, 'form-structure-$heading-menu');
       await tap(tester, 'form-structure-$heading-remove');
+      await tap(tester, 'builder-remove-confirm');
       expect(structure(tester).contains(heading), isFalse);
       expect(structure(tester).where((id) => before.contains(id)), before, reason: 'questions keep their ids and order');
     });

@@ -138,12 +138,32 @@ class _FormBuilderScreenState extends ConsumerState<FormBuilderScreen> {
         _selectedId = copy.id;
       });
 
-  void _remove(int index) => setState(() {
-        final items = [..._form!.items];
-        final removed = items.removeAt(index);
-        _form = _form!.copyWith(items: items);
-        if (_selectedId == removed.id) _selectedId = null;
-      });
+  /// Removes item [index] after asking (a question's earlier answers stay
+  /// readable in their submissions' snapshots).
+  Future<void> _remove(int index) async {
+    final item = _form!.items[index];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        key: const Key('builder-remove-dialog'),
+        title: Text(item is WebsiteFormField ? 'Remove this question?' : 'Remove this content?'),
+        content: Text(item is WebsiteFormField
+            ? '“${item.label.en.trim().isEmpty ? item.type?.label ?? 'Question' : item.label.en.trim()}” is removed from the form when you save. Answers already sent keep it in their record.'
+            : 'It is removed from the form when you save.'),
+        actions: [
+          TextButton(key: const Key('builder-remove-cancel'), onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(key: const Key('builder-remove-confirm'), onPressed: () => Navigator.pop(context, true), child: const Text('Remove')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      final items = [..._form!.items];
+      final removed = items.removeAt(index);
+      _form = _form!.copyWith(items: items);
+      if (_selectedId == removed.id) _selectedId = null;
+    });
+  }
 
   Future<bool> _run(Future<void> Function() action, String done) async {
     setState(() => _busy = true);
@@ -364,11 +384,17 @@ class _FormBuilderScreenState extends ConsumerState<FormBuilderScreen> {
             PopupMenuItem(
               key: Key('builder-add-${t.id}'),
               value: () => WebsiteFormField.create(t, '', options: t.hasOptions ? const ['Option 1', 'Option 2'] : const []),
-              child: Text(t.label),
+              child: _menuRow(_typeIcon(t), t == FormFieldType.longText ? 'Long text (multiline)' : t.label),
             ),
+          PopupMenuItem(
+            key: const Key('builder-add-consent'),
+            value: () => WebsiteFormField.create(FormFieldType.checkbox, consentStarterText, required: true),
+            child: _menuRow(Icons.verified_user_outlined, 'Consent checkbox (required)'),
+          ),
           const PopupMenuDivider(),
           const PopupMenuItem(enabled: false, height: 28, child: Text('Content', style: TextStyle(fontWeight: FontWeight.w700))),
-          for (final t in FormBlockType.values) PopupMenuItem(key: Key('builder-add-content-${t.id}'), value: () => FormContentBlock.create(t), child: Text(t.label)),
+          for (final t in FormBlockType.values)
+            PopupMenuItem(key: Key('builder-add-content-${t.id}'), value: () => FormContentBlock.create(t), child: _menuRow(_blockIcon(t), t.label)),
         ],
         child: const Padding(
           padding: EdgeInsets.symmetric(vertical: 8, horizontal: 12),
@@ -378,25 +404,35 @@ class _FormBuilderScreenState extends ConsumerState<FormBuilderScreen> {
 
   void _snack(String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 
+  /// A consent checkbox's first wording, for the school to adapt.
+  static const consentStarterText = 'I agree to the school using these details to respond to this request.';
+
+  static Widget _menuRow(IconData icon, String label) => Row(children: [Icon(icon, size: 18, color: AppColors.textSecondary), const SizedBox(width: 10), Flexible(child: Text(label))]);
+
+  static IconData _typeIcon(FormFieldType? type) => switch (type) {
+        FormFieldType.email => Icons.alternate_email,
+        FormFieldType.phone => Icons.phone_outlined,
+        FormFieldType.dropdown => Icons.arrow_drop_down_circle_outlined,
+        FormFieldType.radio => Icons.radio_button_checked,
+        FormFieldType.checkbox => Icons.check_box_outlined,
+        FormFieldType.longText => Icons.notes,
+        FormFieldType.date => Icons.calendar_today_outlined,
+        FormFieldType.number => Icons.pin_outlined,
+        FormFieldType.attachment => Icons.attach_file,
+        _ => Icons.short_text,
+      };
+
+  static IconData _blockIcon(FormBlockType? type) => switch (type) {
+        FormBlockType.heading => Icons.title,
+        FormBlockType.image => Icons.image_outlined,
+        FormBlockType.divider => Icons.horizontal_rule,
+        FormBlockType.pageBreak => Icons.view_day_outlined,
+        _ => Icons.subject,
+      };
+
   static IconData _icon(FormItem item) => switch (item) {
-        WebsiteFormField(:final type) => switch (type) {
-            FormFieldType.email => Icons.alternate_email,
-            FormFieldType.phone => Icons.phone_outlined,
-            FormFieldType.dropdown => Icons.arrow_drop_down_circle_outlined,
-            FormFieldType.radio => Icons.radio_button_checked,
-            FormFieldType.checkbox => Icons.check_box_outlined,
-            FormFieldType.longText => Icons.notes,
-            FormFieldType.date => Icons.calendar_today_outlined,
-            FormFieldType.number => Icons.pin_outlined,
-            FormFieldType.attachment => Icons.attach_file,
-            _ => Icons.short_text,
-          },
-        FormContentBlock(:final type) => switch (type) {
-            FormBlockType.heading => Icons.title,
-            FormBlockType.image => Icons.image_outlined,
-            FormBlockType.divider => Icons.horizontal_rule,
-            _ => Icons.subject,
-          },
+        WebsiteFormField(:final type) => _typeIcon(type),
+        FormContentBlock(:final type) => _blockIcon(type),
       };
 
   Widget _structure(WebsiteForm form) {
@@ -445,6 +481,10 @@ class _FormBuilderScreenState extends ConsumerState<FormBuilderScreen> {
                               Icon(_icon(item), size: 18),
                               const SizedBox(width: 6),
                               Expanded(child: Text(item.displayLabel, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13))),
+                              if (item is WebsiteFormField && item.required)
+                                Tooltip(message: 'Required', child: Text('*', key: Key('$k-required'), style: const TextStyle(color: Color(0xFFB3261E), fontWeight: FontWeight.w700))),
+                              if (item is WebsiteFormField ? item.hidden : (item as FormContentBlock).hidden)
+                                Tooltip(message: 'Hidden from visitors', child: Icon(Icons.visibility_off_outlined, key: Key('$k-hidden'), size: 16, color: AppColors.textSecondary)),
                               if (problems.isNotEmpty) Tooltip(message: problems.first, child: Icon(Icons.error_outline, key: Key('$k-problem'), size: 16, color: const Color(0xFFB3261E))),
                               PopupMenuButton<String>(
                                 key: Key('$k-menu'),
@@ -536,8 +576,9 @@ class _FormBuilderScreenState extends ConsumerState<FormBuilderScreen> {
                   child: MediaQuery(
                     data: MediaQuery.of(context).copyWith(size: Size(width, MediaQuery.sizeOf(context).height)),
                     child: PublicWebsiteFormView(
-                      key: ValueKey('canvas-$_generation'),
-                      form: form.toPublic(form.version),
+                      // Rebuilt when a default answer changes, so it shows.
+                      key: ValueKey('canvas-$_generation-${Object.hashAll([for (final f in form.fields) f.defaultValue])}'),
+                      form: form.toPublic(form.version, includeHidden: true),
                       language: PublicLanguage.english,
                       interactive: false,
                       media: _eligible,
@@ -580,6 +621,43 @@ class _FormBuilderScreenState extends ConsumerState<FormBuilderScreen> {
           maxLines: multiline ? 6 : 1,
           decoration: websiteField(label, helper: helper).copyWith(isDense: true),
           onChanged: onChanged,
+        ),
+      );
+
+  /// A collapsible group of settings (`<key>`), open at first when [open].
+  Widget _group(String key, String title, List<Widget> children, {bool open = false}) => children.isEmpty
+      ? const SizedBox.shrink()
+      : Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Material(
+            color: Colors.transparent,
+            child: ExpansionTile(
+              key: Key(key),
+              initiallyExpanded: open,
+              title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
+              tilePadding: const EdgeInsets.symmetric(horizontal: 8),
+              childrenPadding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+              dense: true,
+              expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+              shape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
+              collapsedShape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
+              children: children,
+            ),
+          ),
+        );
+
+  /// A choice among [options] (value → label).
+  Widget _choice<T>(String key, String label, T value, Map<T, String> options, ValueChanged<T> onChanged, {String? helper}) => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: DropdownButtonFormField<T>(
+          key: Key(key),
+          initialValue: options.containsKey(value) ? value : null,
+          isExpanded: true,
+          decoration: websiteField(label, helper: helper).copyWith(isDense: true),
+          items: [for (final e in options.entries) DropdownMenuItem(value: e.key, child: Text(e.value, key: Key('$key-${e.key}'), overflow: TextOverflow.ellipsis))],
+          onChanged: (v) {
+            if (v != null) onChanged(v);
+          },
         ),
       );
 
@@ -638,8 +716,32 @@ class _FormBuilderScreenState extends ConsumerState<FormBuilderScreen> {
         const Text('Cover image', style: TextStyle(fontWeight: FontWeight.w600)),
         const SizedBox(height: 6),
         _imagePicker('builder-cover', 'cover image', form.coverMediaId, (id) => _edit((f) => f.copyWith(coverMediaId: () => id)), required: true),
+        _text('builder-completion-title-en', 'Completion heading (optional)', form.completionTitle.en,
+            (v) => _edit((f) => f.copyWith(completionTitle: f.completionTitle.withText('en', v))), maxLength: FormLimits.maxTitle, helper: 'For example “Thank you”. Shown above the success message.'),
         _text('builder-success-en', 'Success message', form.successMessage.en, (v) => _edit((f) => f.copyWith(successMessage: f.successMessage.withText('en', v))),
             maxLength: FormLimits.maxSuccessMessage, multiline: true, helper: 'Shown after a visitor sends the form, with their reference.'),
+        _group('builder-group-steps', 'Steps', open: form.multiStep, [
+          SwitchListTile(
+            key: const Key('builder-multi-step'),
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Show the form in steps'),
+            subtitle: const Text('Each page break starts a new step, with a progress indicator and Previous / Next. Off: one page (the default).'),
+            value: form.multiStep,
+            onChanged: (v) => _edit((f) => f.copyWith(multiStep: v)),
+          ),
+          if (form.multiStep) ...[
+            SwitchListTile(
+              key: const Key('builder-review-step'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Review answers before sending'),
+              subtitle: const Text('A last step lists every answer, each with Change.'),
+              value: form.reviewStep,
+              onChanged: (v) => _edit((f) => f.copyWith(reviewStep: v)),
+            ),
+            if (!form.items.any((i) => i is FormContentBlock && i.type == FormBlockType.pageBreak))
+              const Text('Add a page break (+ Add → Page break) where each new step should start.', key: Key('builder-steps-hint'), style: TextStyle(fontSize: 12.5, color: Color(0xFF8A6A33))),
+          ],
+        ]),
         _text('builder-description', 'Internal description (administrators only)', form.internalDescription, (v) => _edit((f) => f.copyWith(internalDescription: v)),
             maxLength: FormLimits.maxDescription, multiline: true, helper: 'Never shown on the website.'),
         const Divider(height: 24),
@@ -677,46 +779,112 @@ class _FormBuilderScreenState extends ConsumerState<FormBuilderScreen> {
     void edit(WebsiteFormField Function(WebsiteFormField f) change) => _editItem(field.id, (i) => change(i as WebsiteFormField));
     final labelMax = type == FormFieldType.checkbox ? FormLimits.maxConsentLabel : FormLimits.maxLabel;
     final problems = field.problems(complete: true);
+    final textual = type == FormFieldType.shortText || type == FormFieldType.longText;
+    final long = type == FormFieldType.longText;
     return [
-      _heading(type?.label ?? 'Unsupported field'),
+      Row(children: [Icon(_typeIcon(type), size: 20), const SizedBox(width: 8), Expanded(child: _heading(type?.label ?? 'Unsupported field'))]),
       if (problems.isNotEmpty)
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: Text(problems.join('\n'), key: Key('$k-problems'), style: const TextStyle(fontSize: 12.5, color: Color(0xFFB3261E))),
         ),
-      _text('$k-label-en', type == FormFieldType.checkbox ? 'Consent or checkbox text' : 'Label', field.label.en,
-          (v) => edit((x) => x.copyWith(label: x.label.withText('en', v))), maxLength: labelMax, multiline: type == FormFieldType.checkbox),
-      if (type != null && type.isText && type != FormFieldType.date)
-        _text('$k-placeholder-en', 'Placeholder (optional)', field.placeholder.en, (v) => edit((x) => x.copyWith(placeholder: x.placeholder.withText('en', v))),
-            maxLength: FormLimits.maxPlaceholder),
-      _text('$k-help-en', 'Help text (optional)', field.helpText.en, (v) => edit((x) => x.copyWith(helpText: x.helpText.withText('en', v))), maxLength: FormLimits.maxHelpText),
-      if (type != FormFieldType.attachment)
-        _text('$k-error-en', 'Error message (optional)', field.errorMessage.en, (v) => edit((x) => x.copyWith(errorMessage: x.errorMessage.withText('en', v))),
-            maxLength: FormLimits.maxErrorMessage, helper: 'Shown instead of the standard message when the answer isn’t accepted.'),
-      if (type != FormFieldType.attachment)
+      _group('$k-group-basic', 'Basic information', open: true, [
+        _text('$k-label-en', type == FormFieldType.checkbox ? 'Consent or checkbox text' : 'Label', field.label.en,
+            (v) => edit((x) => x.copyWith(label: x.label.withText('en', v))), maxLength: labelMax, multiline: type == FormFieldType.checkbox),
+        if (type != FormFieldType.attachment)
+          SwitchListTile(
+            key: Key('$k-required'),
+            contentPadding: EdgeInsets.zero,
+            title: Text(type == FormFieldType.checkbox ? 'Must be ticked' : 'Required'),
+            subtitle: type == FormFieldType.checkbox ? const Text('For consent: visitors must tick it themselves; it is never ticked in advance.') : null,
+            value: field.required,
+            onChanged: (v) => edit((x) => x.copyWith(required: v)),
+          ),
+        if (type?.hasOptions ?? false) ..._optionsEditor(field, edit),
+      ]),
+      _group('$k-group-help', 'Placeholder and help text', open: true, [
+        if (type != null && type.isText && type != FormFieldType.date)
+          _text('$k-placeholder-en', 'Placeholder (optional)', field.placeholder.en, (v) => edit((x) => x.copyWith(placeholder: x.placeholder.withText('en', v))),
+              maxLength: FormLimits.maxPlaceholder),
+        _text('$k-help-en', 'Help text (optional)', field.helpText.en, (v) => edit((x) => x.copyWith(helpText: x.helpText.withText('en', v))), maxLength: FormLimits.maxHelpText),
+        if (field.takesDefault) _defaultEditor(field, edit),
+      ]),
+      _group('$k-group-validation', 'Validation', open: true, [
+        if (textual) ...[
+          _number('$k-min-length', 'Fewest characters (optional)', field.minLength, (v) => edit((x) => x.copyWith(minLength: () => v?.toInt()))),
+          _number('$k-max-length', 'Most characters (optional, up to ${long ? FormLimits.maxLongText : FormLimits.maxShortText})', field.maxLength,
+              (v) => edit((x) => x.copyWith(maxLength: () => v?.toInt()))),
+        ],
+        if (type == FormFieldType.number) ...[
+          _number('$k-min', 'Smallest value (optional)', field.min, (v) => edit((x) => x.copyWith(min: () => v)), decimal: true),
+          _number('$k-max', 'Largest value (optional)', field.max, (v) => edit((x) => x.copyWith(max: () => v)), decimal: true),
+        ],
+        if (type == FormFieldType.date) ...[
+          _text('$k-min-date', 'Earliest date (optional, YYYY-MM-DD)', field.minDate ?? '', (v) => edit((x) => x.copyWith(minDate: () => v.trim().isEmpty ? null : v.trim()))),
+          _text('$k-max-date', 'Latest date (optional, YYYY-MM-DD)', field.maxDate ?? '', (v) => edit((x) => x.copyWith(maxDate: () => v.trim().isEmpty ? null : v.trim()))),
+        ],
+        if (type != FormFieldType.attachment)
+          _text('$k-error-en', 'Error message (optional)', field.errorMessage.en, (v) => edit((x) => x.copyWith(errorMessage: x.errorMessage.withText('en', v))),
+              maxLength: FormLimits.maxErrorMessage, helper: 'Shown instead of the standard message when the answer isn’t accepted.'),
+        if (type == FormFieldType.attachment) ..._attachmentSettings(field, edit),
+      ]),
+      _group('$k-group-display', 'Display and layout', [
+        _choice<String>('$k-width', 'Width on wider screens', field.width ?? 'auto', const {
+          'auto': 'Automatic (short questions two to a row)',
+          'full': 'Full width',
+          'half': 'Half',
+          'third': 'One third',
+        }, (v) => edit((x) => x.copyWith(width: () => v == 'auto' ? null : v)), helper: 'On phones every question takes the whole width.'),
+        if (long) ...[
+          _choice<int>('$k-rows', 'Visible rows', field.visibleRows, {
+            for (var r = WebsiteFormField.minRows; r <= WebsiteFormField.maxRows; r++) r: r == WebsiteFormField.defaultRows ? '$r (default)' : '$r',
+          }, (v) => edit((x) => x.copyWith(rows: () => v == WebsiteFormField.defaultRows ? null : v))),
+          _choice<String>('$k-resize', 'Height', field.resize ?? 'grow', const {
+            'grow': 'Grows with the answer (default)',
+            'fixed': 'Fixed at its rows (longer answers scroll)',
+          }, (v) => edit((x) => x.copyWith(resize: () => v == 'grow' ? null : v))),
+        ],
+        if (textual)
+          _choice<String>('$k-counter', 'Character counter', field.counter ?? 'auto', {
+            'auto': long ? 'Automatic (shown)' : 'Automatic (shown with a most-characters limit)',
+            'show': 'Show',
+            'hide': 'Hide',
+          }, (v) => edit((x) => x.copyWith(counter: () => v == 'auto' ? null : v))),
         SwitchListTile(
-          key: Key('$k-required'),
+          key: Key('$k-visible'),
           contentPadding: EdgeInsets.zero,
-          title: Text(type == FormFieldType.checkbox ? 'Must be ticked' : 'Required'),
-          value: field.required,
-          onChanged: (v) => edit((x) => x.copyWith(required: v)),
+          title: const Text('Show to visitors'),
+          subtitle: const Text('Off: kept here, but left out of the version visitors see (so never asked or required).'),
+          value: !field.hidden,
+          onChanged: (v) => edit((x) => x.copyWith(hidden: !v)),
         ),
-      if (type == FormFieldType.shortText || type == FormFieldType.longText) ...[
-        _number('$k-min-length', 'Fewest characters (optional)', field.minLength, (v) => edit((x) => x.copyWith(minLength: () => v?.toInt()))),
-        _number('$k-max-length', 'Most characters (optional, up to ${type == FormFieldType.longText ? FormLimits.maxLongText : FormLimits.maxShortText})', field.maxLength,
-            (v) => edit((x) => x.copyWith(maxLength: () => v?.toInt()))),
-      ],
-      if (type == FormFieldType.number) ...[
-        _number('$k-min', 'Smallest value (optional)', field.min, (v) => edit((x) => x.copyWith(min: () => v)), decimal: true),
-        _number('$k-max', 'Largest value (optional)', field.max, (v) => edit((x) => x.copyWith(max: () => v)), decimal: true),
-      ],
-      if (type == FormFieldType.date) ...[
-        _text('$k-min-date', 'Earliest date (optional, YYYY-MM-DD)', field.minDate ?? '', (v) => edit((x) => x.copyWith(minDate: () => v.trim().isEmpty ? null : v.trim()))),
-        _text('$k-max-date', 'Latest date (optional, YYYY-MM-DD)', field.maxDate ?? '', (v) => edit((x) => x.copyWith(maxDate: () => v.trim().isEmpty ? null : v.trim()))),
-      ],
-      if (type?.hasOptions ?? false) ..._optionsEditor(field, edit),
-      if (type == FormFieldType.attachment) ..._attachmentSettings(field, edit),
+      ]),
+      _group('$k-group-advanced', 'Advanced', [
+        SelectableText('Field ID: ${field.id}', key: Key('$k-id'), style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary)),
+        const SizedBox(height: 4),
+        Text('This question’s ID stays the same when you edit, move or save it. A duplicate gets its own ID.',
+            key: Key('$k-id-note'), style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+        const SizedBox(height: 6),
+      ]),
     ];
+  }
+
+  /// The answer filled in at first: typed, or one of the options.
+  Widget _defaultEditor(WebsiteFormField field, void Function(WebsiteFormField Function(WebsiteFormField f)) edit) {
+    final k = 'builder-field-${field.id}';
+    if (field.type?.hasOptions ?? false) {
+      return _choice<String>('$k-default', 'Default answer (optional)', field.defaultValue ?? '', {
+        '': 'None',
+        for (final o in field.options) o.id: o.label.en.trim().isEmpty ? '(no label yet)' : o.label.en.trim(),
+      }, (v) => edit((x) => x.copyWith(defaultValue: () => v.isEmpty ? null : v)));
+    }
+    return _text(
+      '$k-default',
+      field.type == FormFieldType.date ? 'Default answer (optional, YYYY-MM-DD)' : 'Default answer (optional)',
+      field.defaultValue ?? '',
+      (v) => edit((x) => x.copyWith(defaultValue: () => v.trim().isEmpty ? null : v)),
+      helper: 'Filled in at first; visitors can change it.',
+    );
   }
 
   List<Widget> _optionsEditor(WebsiteFormField field, void Function(WebsiteFormField Function(WebsiteFormField f)) edit) {
@@ -811,13 +979,28 @@ class _FormBuilderScreenState extends ConsumerState<FormBuilderScreen> {
       if (block.type == FormBlockType.heading) ...[
         _text('$k-title-en', 'Heading', block.title.en, (v) => edit((b) => b.copyWith(title: b.title.withText('en', v))), maxLength: FormLimits.maxTitle),
       ],
+      if (block.type == FormBlockType.pageBreak) ...[
+        _text('$k-title-en', 'Next step’s title (optional)', block.title.en, (v) => edit((b) => b.copyWith(title: b.title.withText('en', v))), maxLength: FormLimits.maxTitle,
+            helper: 'Shown with the progress, e.g. “About your child”.'),
+        Text(_form!.multiStep ? 'Everything after it, up to the next page break, is one step.' : 'The form is on one page, so this has no effect. Turn on steps in Form settings.',
+            style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary)),
+        const SizedBox(height: 8),
+      ],
       if (block.type == FormBlockType.image)
         _imagePicker('$k-image', 'image', block.mediaId.isEmpty ? null : block.mediaId, (id) => edit((b) => b.copyWith(mediaId: id ?? '')), required: true),
-      if (block.type != FormBlockType.divider && block.type != null) ...[
+      if (block.type != FormBlockType.divider && block.type != FormBlockType.pageBreak && block.type != null) ...[
         _text('$k-body-en', switch (block.type) { FormBlockType.heading => 'Description (optional)', FormBlockType.image => 'Caption (optional)', _ => 'Text' },
             block.body.en, (v) => edit((b) => b.copyWith(body: b.body.withText('en', v))), maxLength: FormLimits.maxContentText, multiline: true),
       ],
       if (block.type == FormBlockType.divider) const Text('A line between parts of the form.', style: TextStyle(color: AppColors.textSecondary)),
+      if (block.type != FormBlockType.pageBreak)
+        SwitchListTile(
+          key: Key('$k-visible'),
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Show to visitors'),
+          value: !block.hidden,
+          onChanged: (v) => edit((b) => b.copyWith(hidden: !v)),
+        ),
     ];
   }
 }

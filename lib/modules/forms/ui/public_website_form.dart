@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -43,6 +45,17 @@ class FormStrings {
         '$types · அதிகபட்சம் $mb MB${files > 1 ? ' · அதிகபட்சம் $files கோப்புகள்' : ''}',
       );
   String reference(String ref) => _t('Your reference: $ref', 'உங்கள் குறிப்பு எண்: $ref');
+  String get next => _t('Next', 'அடுத்து');
+  String get previous => _t('Previous', 'முந்தையது');
+  String get review => _t('Review your answers', 'உங்கள் பதில்களைச் சரிபார்க்கவும்');
+  String get edit => _t('Change', 'மாற்று');
+  String get notAnswered => _t('Not answered', 'பதில் இல்லை');
+  String get yes => _t('Yes', 'ஆம்');
+  String get no => _t('No', 'இல்லை');
+  String get requiredNote => _t('Fields marked * are required.', '* குறியிட்ட புலங்கள் அவசியம்.');
+  String step(int n, int total) => _t('Step $n of $total', 'படி $n / $total');
+  String errorCount(int n) => _t(n == 1 ? 'There is 1 answer to check:' : 'There are $n answers to check:', 'சரிபார்க்க வேண்டிய பதில்கள்: $n');
+  String characters(int n, int max) => _t('$n of $max characters', '$max இல் $n எழுத்துகள்');
 
   String error(FormAnswerError e) => switch (e) {
         FormAnswerError.required => _t('This is required.', 'இது அவசியம்.'),
@@ -199,7 +212,15 @@ class PublicWebsiteFormView extends ConsumerStatefulWidget {
 class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
   final Map<String, Object?> _answers = {};
   final Map<String, TextEditingController> _dates = {};
+  final Map<String, FocusNode> _focus = {};
   Map<String, FormAnswerError> _errors = {};
+
+  /// A multi-step form's current step (an index into [_steps], or
+  /// [_steps].length for the review).
+  int _step = 0;
+
+  /// The error summary is shown (after Send or Next found problems).
+  bool _summary = false;
   String _key = FormIds.submissionKey();
   bool _sending = false;
   String? _message;
@@ -235,21 +256,105 @@ class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
   static const _compact = {FormFieldType.shortText, FormFieldType.email, FormFieldType.phone, FormFieldType.date, FormFieldType.number};
 
   @override
+  void initState() {
+    super.initState();
+    // Default answers, filled in as if typed (and sent unless changed).
+    for (final f in widget.form.fields) {
+      final value = f.defaultValue;
+      if (value == null || value.trim().isEmpty || !f.takesDefault) continue;
+      _answers[f.id] = value;
+      if (f.type == FormFieldType.date) _dates[f.id] = TextEditingController(text: value);
+    }
+  }
+
+  @override
   void dispose() {
     for (final c in _dates.values) {
       c.dispose();
     }
+    for (final n in _focus.values) {
+      n.dispose();
+    }
     super.dispose();
   }
+
+  FocusNode _focusOf(String id) => _focus.putIfAbsent(id, () => FocusNode(debugLabel: 'form-$id'));
+
+  /// The form's steps: one, unless it is a multi-step form, then split at
+  /// its page breaks (steps with nothing in them are skipped). Each with
+  /// its title (a page break's) and items.
+  List<({String title, List<FormItem> items})> get _steps {
+    final form = widget.form;
+    if (!form.multiStep || _selecting) return [(title: '', items: [for (final i in form.items) if (!_isBreak(i)) i])];
+    final steps = <({String title, List<FormItem> items})>[(title: '', items: <FormItem>[])];
+    for (final item in form.items) {
+      if (_isBreak(item)) {
+        steps.add((title: (item as FormContentBlock).title.resolve(widget.language).trim(), items: <FormItem>[]));
+      } else {
+        steps.last.items.add(item);
+      }
+    }
+    return [for (final s in steps) if (s.items.isNotEmpty) s];
+  }
+
+  static bool _isBreak(FormItem item) => item is FormContentBlock && item.type == FormBlockType.pageBreak;
+
+  bool get _reviewing => widget.form.multiStep && widget.form.reviewStep && !_selecting && _step >= _steps.length;
+
+  /// [fields]' answers checked (only theirs, so a step is checked alone).
+  ({Map<String, Object> values, Map<String, FormAnswerError> errors}) _check(List<WebsiteFormField> fields) =>
+      validateFormAnswers(fields, {for (final f in fields) if (_answers.containsKey(f.id)) f.id: _answers[f.id]});
+
+  /// Shows [errors] and moves to the first: its step, then its question.
+  void _showErrors(Map<String, FormAnswerError> errors) {
+    final steps = _steps;
+    final first = widget.form.fields.where((f) => errors.containsKey(f.id)).firstOrNull;
+    setState(() {
+      _errors = errors;
+      _summary = true;
+      _message = _strings.fixErrors;
+      if (first != null) {
+        final at = steps.indexWhere((s) => s.items.any((i) => i.id == first.id));
+        if (at >= 0) _step = at;
+      }
+    });
+    if (first != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final node = _focus[first.id];
+        node?.requestFocus();
+        final ctx = node?.context;
+        if (ctx != null && ctx.mounted) Scrollable.ensureVisible(ctx, alignment: 0.2, duration: const Duration(milliseconds: 200));
+      });
+    }
+  }
+
+  void _next() {
+    final steps = _steps;
+    final fields = steps[_step].items.whereType<WebsiteFormField>().toList();
+    final checked = _check(fields);
+    if (checked.errors.isNotEmpty) return _showErrors(checked.errors);
+    setState(() {
+      _step++;
+      _summary = false;
+      _message = null;
+    });
+  }
+
+  void _previous() => setState(() {
+        _step = math.max(0, _step - 1);
+        _summary = false;
+      });
 
   Future<void> _send() async {
     if (_sending || _receipt != null) return;
     final checked = validateFormAnswers(widget.form.fields, _answers);
+    if (checked.errors.isNotEmpty) return _showErrors(checked.errors);
     setState(() {
-      _errors = checked.errors;
-      _message = checked.errors.isEmpty ? null : _strings.fixErrors;
+      _errors = const {};
+      _summary = false;
+      _message = null;
     });
-    if (checked.errors.isNotEmpty) return;
     if (!widget.interactive) {
       setState(() => _message = _strings.preview);
       return;
@@ -262,6 +367,7 @@ class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
       if (mounted) setState(() => _receipt = receipt);
     } on FormSubmissionException catch (e) {
       if (mounted) {
+        if (e.fieldErrors.isNotEmpty) _showErrors(e.fieldErrors);
         setState(() {
           _errors = e.fieldErrors;
           // Closed meanwhile: said by the closed notice, not twice.
@@ -281,7 +387,10 @@ class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
 
   void _set(String id, Object? value) => setState(() {
         _answers[id] = value;
-        if (_errors.remove(id) != null && _errors.isEmpty) _message = null;
+        if (_errors.remove(id) != null && _errors.isEmpty) {
+          _message = null;
+          _summary = false;
+        }
       });
 
   Map<String, WebsiteMedia> get _media =>
@@ -310,6 +419,10 @@ class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
             children: [
               Icon(Icons.check_circle_outline, color: widget.accent),
               const SizedBox(height: 8),
+              if (form.completionTitle.resolve(widget.language).trim() case final title when title.isNotEmpty) ...[
+                Semantics(header: true, child: Text(title, key: const Key('website-form-completion-title'), style: PublicText.title)),
+                const SizedBox(height: 6),
+              ],
               Text(form.successMessage.resolve(widget.language), style: widget.bodyStyle),
               const SizedBox(height: 8),
               SelectableText(strings.reference(receipt.reference), key: const Key('website-form-reference'), style: widget.bodyStyle.copyWith(fontWeight: FontWeight.w600)),
@@ -318,36 +431,50 @@ class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
         ),
       );
     }
+    final steps = _steps;
+    final multi = form.multiStep && !_selecting && (steps.length > 1 || form.reviewStep);
+    final step = _step.clamp(0, steps.length);
+    final last = step >= steps.length - 1;
+    final review = _reviewing;
+    final items = _selecting ? form.items : (review ? const <FormItem>[] : steps[math.min(step, steps.length - 1)].items);
+    final total = steps.length + (form.reviewStep ? 1 : 0);
     return LayoutBuilder(builder: (context, constraints) {
       final wide = constraints.maxWidth >= 640;
-      // Consecutive short questions sit two to a row on wide screens;
-      // content always takes a row of its own.
-      final rows = <List<FormItem>>[];
-      for (final item in form.items) {
-        final compact = item is WebsiteFormField && _compact.contains(item.type);
-        final last = rows.isEmpty ? null : rows.last;
-        if (wide && compact && last != null && last.length == 1 && last.single is WebsiteFormField && _compact.contains((last.single as WebsiteFormField).type)) {
-          last.add(item);
-        } else {
-          rows.add([item]);
-        }
-      }
+      final rows = _rows(items, wide: wide);
       Widget cell(FormItem item) => _selectable(item.id, item is WebsiteFormField ? _field(context, item) : _content(item as FormContentBlock, media));
+      final invalid = [for (final f in form.fields) if (_errors.containsKey(f.id) && items.any((i) => i.id == f.id)) f];
       return FocusTraversalGroup(
         child: Column(
           key: Key('website-form-${form.id}'),
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (widget.showHeader) _selectable(null, _header(form, media)),
+            if (widget.showHeader && (step == 0 || _selecting)) _selectable(null, _header(form, media)),
+            if (multi) _progress(steps, step, total, review),
+            if (form.fields.any((f) => f.required) && !review)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(_strings.requiredNote, key: const Key('website-form-required-note'), style: widget.bodyStyle.copyWith(fontSize: 13)),
+              ),
+            if (_summary && invalid.isNotEmpty) _errorSummary(invalid),
+            if (review) _review(steps),
             for (final row in rows)
               Padding(
                 padding: const EdgeInsets.only(bottom: 16),
-                child: row.length == 1
-                    ? cell(row.single)
+                child: row.length == 1 && row.single.$2 >= 1
+                    ? cell(row.single.$1)
                     : Row(
-                        key: Key('website-form-row-${row.first.id}'),
+                        key: Key('website-form-row-${row.first.$1.id}'),
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [Expanded(child: cell(row[0])), const SizedBox(width: 16), Expanded(child: cell(row[1]))],
+                        children: [
+                          for (final (j, (item, share)) in row.indexed) ...[
+                            if (j > 0) const SizedBox(width: 16),
+                            Expanded(flex: (share * 600).round(), child: cell(item)),
+                          ],
+                          if (row.fold<double>(0, (sum, c) => sum + c.$2) case final used when used < 0.999) ...[
+                            const SizedBox(width: 16),
+                            Spacer(flex: ((1 - used) * 600).round()),
+                          ],
+                        ],
                       ),
               ),
             // Closed (switched off): said up front, and Send is disabled,
@@ -378,16 +505,35 @@ class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
                   child: Text(m, key: const Key('website-form-message'), style: widget.bodyStyle.copyWith(color: m == strings.preview ? null : const Color(0xFFB3261E))),
                 ),
               ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: IgnorePointer(
-                ignoring: _selecting,
-                child: FilledButton(
-                  key: const Key('website-form-submit'),
-                  onPressed: _sending || _closed ? null : _send,
-                  style: FilledButton.styleFrom(backgroundColor: widget.accent, minimumSize: const Size(140, 48)),
-                  child: Text(_sending ? strings.sending : strings.send),
-                ),
+            IgnorePointer(
+              ignoring: _selecting,
+              child: Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  if (multi && step > 0)
+                    OutlinedButton.icon(
+                      key: const Key('website-form-previous'),
+                      onPressed: _sending ? null : _previous,
+                      icon: const Icon(Icons.arrow_back),
+                      label: Text(strings.previous),
+                      style: OutlinedButton.styleFrom(foregroundColor: widget.accent, minimumSize: const Size(120, 48)),
+                    ),
+                  if (multi && !review && !(last && !form.reviewStep))
+                    FilledButton(
+                      key: const Key('website-form-next'),
+                      onPressed: _next,
+                      style: FilledButton.styleFrom(backgroundColor: widget.accent, minimumSize: const Size(140, 48)),
+                      child: Text(last ? strings.review : strings.next),
+                    )
+                  else
+                    FilledButton(
+                      key: const Key('website-form-submit'),
+                      onPressed: _sending || _closed ? null : _send,
+                      style: FilledButton.styleFrom(backgroundColor: widget.accent, minimumSize: const Size(140, 48)),
+                      child: Text(_sending ? strings.sending : strings.send),
+                    ),
+                ],
               ),
             ),
           ],
@@ -396,10 +542,167 @@ class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
     });
   }
 
+  /// [items] in rows, each with its share of the row: content and
+  /// full-width questions alone; questions with a width share a row while
+  /// they fit; others (automatic) as before: short questions two to a row.
+  /// On narrower screens, one per row.
+  List<List<(FormItem, double)>> _rows(List<FormItem> items, {required bool wide}) {
+    final rows = <List<(FormItem, double)>>[];
+    var explicit = false;
+    for (final item in items) {
+      final field = item is WebsiteFormField ? item : null;
+      final share = field?.widthFraction;
+      final last = rows.isEmpty ? null : rows.last;
+      final used = last?.fold<double>(0, (sum, c) => sum + c.$2) ?? 1;
+      if (!wide || field == null) {
+        rows.add([(item, 1)]);
+        explicit = false;
+      } else if (share != null) {
+        if (explicit && last != null && used + share <= 1.001) {
+          last.add((item, share));
+        } else {
+          rows.add([(item, share)]);
+        }
+        explicit = share < 1;
+      } else if (_compact.contains(field.type) &&
+          !explicit &&
+          last != null &&
+          last.length == 1 &&
+          last.single.$1 is WebsiteFormField &&
+          (last.single.$1 as WebsiteFormField).widthFraction == null &&
+          _compact.contains((last.single.$1 as WebsiteFormField).type) &&
+          last.single.$2 == 1) {
+        rows[rows.length - 1] = [(last.single.$1, 0.5), (item, 0.5)];
+      } else {
+        rows.add([(item, 1)]);
+        explicit = false;
+      }
+    }
+    // An automatic short question alone keeps the whole row, as before.
+    return rows;
+  }
+
+  Widget _progress(List<({String title, List<FormItem> items})> steps, int step, int total, bool review) {
+    final n = math.min(step + 1, total);
+    final title = review ? _strings.review : steps[step].title;
+    return Padding(
+      key: const Key('website-form-progress'),
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Semantics(
+        container: true,
+        liveRegion: true,
+        label: '${_strings.step(n, total)}${title.isEmpty ? '' : ': $title'}',
+        child: ExcludeSemantics(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('${_strings.step(n, total)}${title.isEmpty ? '' : ' · $title'}', key: const Key('website-form-step'), style: widget.bodyStyle.copyWith(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(value: n / total, minHeight: 6, color: widget.accent, backgroundColor: widget.accent.withValues(alpha: 0.15)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// What to fix, each a link to its question.
+  Widget _errorSummary(List<WebsiteFormField> invalid) {
+    const red = Color(0xFFB3261E);
+    return Container(
+      key: const Key('website-form-error-summary'),
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: const Color(0xFFFDECEA), borderRadius: BorderRadius.circular(10), border: Border.all(color: red.withValues(alpha: 0.4))),
+      child: Semantics(
+        container: true,
+        liveRegion: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(_strings.errorCount(invalid.length), style: widget.bodyStyle.copyWith(fontWeight: FontWeight.w600, color: red)),
+            for (final f in invalid)
+              TextButton(
+                key: Key('website-form-error-link-${f.id}'),
+                style: TextButton.styleFrom(foregroundColor: red, padding: const EdgeInsets.symmetric(vertical: 4), alignment: Alignment.centerLeft),
+                onPressed: () {
+                  final node = _focus[f.id];
+                  node?.requestFocus();
+                  if (node?.context case final ctx? when ctx.mounted) Scrollable.ensureVisible(ctx, alignment: 0.2);
+                },
+                child: Text('${f.label.resolve(widget.language)}: ${_errorText(f)}', textAlign: TextAlign.start),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _errorText(WebsiteFormField f) {
+    final custom = f.errorMessage.resolve(widget.language);
+    final e = _errors[f.id];
+    return e == null ? '' : (custom.isNotEmpty ? custom : _strings.error(e));
+  }
+
+  /// A multi-step form's last step: every answer, by step, to change.
+  Widget _review(List<({String title, List<FormItem> items})> steps) {
+    String shown(WebsiteFormField f) {
+      final v = _answers[f.id];
+      if (v == null || (v is String && v.trim().isEmpty)) return _strings.notAnswered;
+      if (f.type == FormFieldType.checkbox) return v == true ? _strings.yes : _strings.no;
+      if (f.type?.hasOptions ?? false) {
+        final option = f.options.where((o) => o.id == v).firstOrNull;
+        return option?.label.resolve(widget.language) ?? _strings.notAnswered;
+      }
+      return v.toString().trim();
+    }
+
+    return Column(
+      key: const Key('website-form-review'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Semantics(header: true, child: Text(_strings.review, style: PublicText.title)),
+        const SizedBox(height: 12),
+        for (final (i, s) in steps.indexed)
+          for (final f in s.items.whereType<WebsiteFormField>())
+            if (f.type != FormFieldType.attachment)
+              Padding(
+                key: Key('website-form-review-${f.id}'),
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(f.label.resolve(widget.language), style: widget.bodyStyle.copyWith(fontWeight: FontWeight.w600, fontSize: 14)),
+                          Text(shown(f), style: widget.bodyStyle),
+                        ],
+                      ),
+                    ),
+                    TextButton(
+                      key: Key('website-form-review-edit-${f.id}'),
+                      onPressed: () => setState(() => _step = i),
+                      child: Text(_strings.edit, semanticsLabel: '${_strings.edit}: ${f.label.resolve(widget.language)}'),
+                    ),
+                  ],
+                ),
+              ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
   /// On the builder's canvas: selectable and outlined; elsewhere as is.
   Widget _selectable(String? id, Widget child) {
     if (!_selecting) return child;
     final selected = widget.selectedId == id;
+    final item = id == null ? null : widget.form.items.where((i) => i.id == id).firstOrNull;
+    final hidden = item is WebsiteFormField ? item.hidden : (item is FormContentBlock && item.hidden);
     return GestureDetector(
       key: Key(id == null ? 'form-canvas-header' : 'form-canvas-item-$id'),
       behavior: HitTestBehavior.opaque,
@@ -410,7 +713,19 @@ class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
           border: Border.all(color: selected ? widget.accent : Colors.transparent, width: 2),
           borderRadius: BorderRadius.circular(10),
         ),
-        child: AbsorbPointer(child: child),
+        child: !hidden
+            ? AbsorbPointer(child: child)
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(key: Key('form-canvas-hidden-$id'), children: const [
+                    Icon(Icons.visibility_off_outlined, size: 16, color: Color(0xFF6E6E73)),
+                    SizedBox(width: 4),
+                    Text('Hidden from visitors', style: TextStyle(fontSize: 12, color: Color(0xFF6E6E73))),
+                  ]),
+                  Opacity(opacity: 0.45, child: AbsorbPointer(child: child)),
+                ],
+              ),
       ),
     );
   }
@@ -486,6 +801,25 @@ class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
         );
       case FormBlockType.divider:
         return Divider(key: key, height: 16, color: PublicColors.line);
+      case FormBlockType.pageBreak:
+        // Steps are made from page breaks; only the builder's canvas shows
+        // where they are.
+        if (!_selecting) return SizedBox.shrink(key: key);
+        final step = 1 + widget.form.items.takeWhile((i) => i.id != block.id).where(_isBreak).length + 1;
+        return Row(
+          key: key,
+          children: [
+            const Expanded(child: Divider(color: Color(0xFF8A6A33))),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
+                widget.form.multiStep ? 'Page break · step $step${title.isEmpty ? '' : ': $title'}' : 'Page break (no effect: the form is on one page)',
+                style: const TextStyle(fontSize: 12, color: Color(0xFF8A6A33), fontWeight: FontWeight.w600),
+              ),
+            ),
+            const Expanded(child: Divider(color: Color(0xFF8A6A33))),
+          ],
+        );
       case null:
         return SizedBox.shrink(key: key);
     }
@@ -518,14 +852,24 @@ class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
       case FormFieldType.longText:
       case FormFieldType.number:
         final long = f.type == FormFieldType.longText;
+        final rows = f.visibleRows;
+        final textual = long || f.type == FormFieldType.shortText;
         return TextFormField(
           key: key,
+          focusNode: _focusOf(f.id),
+          // Kept when a step is left and come back to, or an answer is
+          // refused.
+          initialValue: _answers[f.id] as String?,
           enabled: !_sending,
           readOnly: _selecting,
           decoration: deco(),
-          minLines: long ? 4 : 1,
-          maxLines: long ? 10 : 1,
-          maxLength: long || f.maxLength != null ? f.maxAnswerLength : null,
+          minLines: long ? rows : 1,
+          maxLines: long ? (f.resize == 'fixed' ? rows : math.max(rows, FormFieldLimits.growTo)) : 1,
+          maxLength: long || f.maxLength != null || (textual && f.showsCounter) ? f.maxAnswerLength : null,
+          // The counter stays beside an error message; read as a sentence.
+          buildCounter: (context, {required currentLength, required isFocused, maxLength}) => !f.showsCounter || maxLength == null
+              ? null
+              : Text('$currentLength / $maxLength', key: Key('website-form-counter-${f.id}'), semanticsLabel: _strings.characters(currentLength, maxLength), style: const TextStyle(fontSize: 12)),
           keyboardType: switch (f.type) {
             FormFieldType.email => TextInputType.emailAddress,
             FormFieldType.phone => TextInputType.phone,
@@ -548,6 +892,7 @@ class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
           enabled: !_sending,
           readOnly: _selecting,
           keyboardType: TextInputType.datetime,
+          focusNode: _focusOf(f.id),
           decoration: deco(
             hintText: strings.dateHint,
             suffix: IconButton(
@@ -574,6 +919,7 @@ class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
       case FormFieldType.dropdown:
         return DropdownButtonFormField<String>(
           key: key,
+          focusNode: _focusOf(f.id),
           isExpanded: true,
           initialValue: _answers[f.id] as String?,
           decoration: deco(hintText: strings.choose),
@@ -589,9 +935,10 @@ class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
             onChanged: (v) => locked ? null : _set(f.id, v),
             child: Column(
               children: [
-                for (final o in f.options)
+                for (final (j, o) in f.options.indexed)
                   RadioListTile<String>(
                     key: Key('website-form-option-${f.id}-${o.id}'),
+                    focusNode: j == 0 ? _focusOf(f.id) : null,
                     contentPadding: EdgeInsets.zero,
                     dense: true,
                     value: o.id,
@@ -607,6 +954,7 @@ class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
           children: [
             CheckboxListTile(
               key: key,
+              focusNode: _focusOf(f.id),
               contentPadding: EdgeInsets.zero,
               controlAffinity: ListTileControlAffinity.leading,
               value: _answers[f.id] == true,
@@ -637,4 +985,11 @@ class _PublicWebsiteFormViewState extends ConsumerState<PublicWebsiteFormView> {
         );
     }
   }
+}
+
+/// How long text grows in the form.
+class FormFieldLimits {
+  /// A growing long text answer box reaches this many rows before it
+  /// scrolls (or its own rows, if more).
+  static const growTo = 10;
 }
