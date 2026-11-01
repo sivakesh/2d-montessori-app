@@ -6,6 +6,8 @@ import '../../../core/widgets/responsive_dialog_shell.dart';
 import '../../finance/widgets/finance_status_chip.dart';
 import '../models/calendar_event_model.dart';
 import 'calendar_event_style.dart';
+import '../services/calendar_website_publisher.dart';
+import 'calendar_website_controls.dart';
 
 /// Full detail view for one calendar item, opened by tapping an event in
 /// any of the three views (List/Month/Week) so the level of detail a user
@@ -20,6 +22,7 @@ Future<void> showCalendarEventDetail(
   VoidCallback? onPublish,
   VoidCallback? onArchive,
   VoidCallback? onDelete,
+  CalendarWebsiteActions? website,
 }) {
   return showDialog<void>(
     context: context,
@@ -50,6 +53,7 @@ Future<void> showCalendarEventDetail(
               Navigator.of(dialogContext).pop();
               onDelete();
             },
+      website: website?.after(() => Navigator.of(dialogContext).pop()),
     ),
   );
 }
@@ -62,6 +66,7 @@ class _CalendarEventDetailDialog extends StatelessWidget {
     this.onPublish,
     this.onArchive,
     this.onDelete,
+    this.website,
   });
 
   final CalendarEventModel event;
@@ -71,8 +76,26 @@ class _CalendarEventDetailDialog extends StatelessWidget {
   final VoidCallback? onArchive;
   final VoidCallback? onDelete;
 
+  /// Admin only: the event on the public website.
+  final CalendarWebsiteActions? website;
+
   @override
   Widget build(BuildContext context) {
+    final website = isAdmin ? this.website : null;
+    final websiteNote = website == null
+        ? null
+        : website.state == null
+            ? 'Public website: status couldn’t be loaded.'
+            : website.state == CalendarWebsiteState.noLongerEligible
+                ? 'Public website: still shown there. ${website.unavailableReason ?? ''} Remove it from the website.'
+                : website.state == CalendarWebsiteState.notVisible
+                ? 'Public website: ${website.visibilityReason ?? 'visitors don’t see it.'}'
+                : website.state == CalendarWebsiteState.outOfDate
+                    ? 'Public website: shows an older version${website.differences.isEmpty ? '' : ' (its ${website.differences.join(', ')} differ${website.differences.length == 1 ? 's' : ''})'}. '
+                        'Visitors see it until you update it, or remove it from the website.'
+                    : website.state == CalendarWebsiteState.notShown && website.unavailableReason != null
+                        ? 'Public website: ${website.unavailableReason}'
+                        : null;
     final (typeColor, typeIcon) = calendarEventTypeStyle(event.eventType);
     final (statusLabel, statusColor) = calendarEventStatusStyle(event.status);
     final timeLabel = event.startTime != null
@@ -100,6 +123,7 @@ class _CalendarEventDetailDialog extends StatelessWidget {
                 visualDensity: VisualDensity.compact,
               ),
               if (isAdmin) FinanceStatusChip(label: statusLabel, color: statusColor),
+              if (website != null) CalendarWebsiteChip(state: website.state),
             ],
           ),
           const SizedBox(height: 16),
@@ -121,13 +145,21 @@ class _CalendarEventDetailDialog extends StatelessWidget {
             const SizedBox(height: 16),
             Text(event.description, style: const TextStyle(fontSize: 14, color: AppColors.textPrimary)),
           ],
+          if (websiteNote != null) ...[
+            const SizedBox(height: 16),
+            _DetailRow(key: const Key('calendar-website-note'), icon: Icons.public, text: websiteNote),
+          ],
           // Admin management actions are rendered as a wrapping row inside
           // the scrollable content — NOT via ResponsiveDialogShell.form's
           // `actions` (a plain, non-wrapping Row) — since there can be up
           // to three of them here (Publish/Edit/Archive) and that row would
           // overflow at narrow widths.
           if (isAdmin &&
-              (onEdit != null || onPublish != null || onArchive != null || onDelete != null)) ...[
+              (onEdit != null ||
+                  onPublish != null ||
+                  onArchive != null ||
+                  onDelete != null ||
+                  (website?.hasActions ?? false))) ...[
             const Divider(height: 32),
             Wrap(
               alignment: WrapAlignment.end,
@@ -146,6 +178,7 @@ class _CalendarEventDetailDialog extends StatelessWidget {
                     icon: const Icon(Icons.edit_outlined, size: 18),
                     label: const Text('Edit'),
                   ),
+                ...calendarWebsiteButtons(website),
                 if (event.status != CalendarEventStatus.archived && onArchive != null)
                   TextButton.icon(
                     onPressed: onArchive,
@@ -174,7 +207,7 @@ class _CalendarEventDetailDialog extends StatelessWidget {
 }
 
 class _DetailRow extends StatelessWidget {
-  const _DetailRow({required this.icon, required this.text});
+  const _DetailRow({super.key, required this.icon, required this.text});
 
   final IconData icon;
   final String text;

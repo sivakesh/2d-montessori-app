@@ -16,6 +16,10 @@ class AdminNotificationService {
 
   final FirebaseFirestore _firestore;
   final FirebaseStorage _storage;
+
+  /// The Firestore this service uses, so the announcement website publisher
+  /// uses the same one.
+  FirebaseFirestore get firestore => _firestore;
   final FilePicker _filePicker;
   CollectionReference<Map<String, dynamic>> get _notifications => _firestore.collection('school_notifications');
   CollectionReference<Map<String, dynamic>> get _classes => _firestore.collection('classes');
