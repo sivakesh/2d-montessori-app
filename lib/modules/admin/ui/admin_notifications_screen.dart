@@ -1,28 +1,50 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/config/app_env.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_sizes.dart';
 import '../../finance/widgets/finance_status_chip.dart';
+import '../../auth/providers/auth_provider.dart';
+import '../../public_website/content/website_content_repository.dart';
+import '../../public_website/content/website_public_item.dart';
 import '../notifications/data/admin_notification_service.dart';
+import '../notifications/data/announcement_website_publisher.dart';
 import '../notifications/models/admin_notification_model.dart';
 import '../notifications/ui/admin_notification_form_dialog.dart';
 import '../notifications/ui/admin_notification_view_dialog.dart';
+import '../notifications/ui/announcement_website_dialog.dart';
+import '../website/data/website_copy_status.dart';
 import 'admin_fab.dart';
 import 'admin_layout.dart';
 
-class AdminNotificationsScreen extends StatefulWidget {
-  const AdminNotificationsScreen({super.key, AdminNotificationService? service})
+class AdminNotificationsScreen extends ConsumerStatefulWidget {
+  const AdminNotificationsScreen({super.key, AdminNotificationService? service, this.websitePublisher})
       : _service = service;
 
   final AdminNotificationService? _service;
 
+  /// Shows announcements on the public website (Public website); defaults
+  /// to one using the app's Firestore.
+  final AnnouncementWebsitePublisher? websitePublisher;
+
   @override
-  State<AdminNotificationsScreen> createState() => _AdminNotificationsScreenState();
+  ConsumerState<AdminNotificationsScreen> createState() => _AdminNotificationsScreenState();
 }
 
-class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
+class _AdminNotificationsScreenState extends ConsumerState<AdminNotificationsScreen> {
   late final _service = widget._service ?? AdminNotificationService();
+  late final _websitePublisher = widget.websitePublisher ?? AnnouncementWebsitePublisher(firestore: _service.firestore, notifications: _service);
+
+  /// The website copies of announcements, by id; null when they couldn't
+  /// be loaded (the website actions are then unavailable).
+  Map<String, WebsitePublicItem>? _websiteItems;
+
+  String get _role => ref.read(currentUserProvider)?.role ?? '';
+
+  /// The website steps need an admin; for anyone else the list and archive
+  /// work exactly as without them.
+  bool get _websiteEnabled => _role.toLowerCase() == 'admin';
   final _searchController = TextEditingController();
   String _type = 'All';
   String _category = 'All';
@@ -49,11 +71,44 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
 
   Future<void> _load() async {
     final items = await _service.getNotifications();
+    // Best-effort: the list works without it, only the website actions
+    // don't.
+    Map<String, WebsitePublicItem>? websiteItems;
+    if (_websiteEnabled) {
+      try {
+        websiteItems = await _websitePublisher.loadItems(requesterRole: _role);
+      } catch (_) {
+        websiteItems = null;
+      }
+    }
     if (!mounted) return;
+    // The website's announcements (if open in this session) then show what
+    // was just shown, updated or removed.
+    ref.invalidate(publicAnnouncementItemsProvider);
+    ref.invalidate(publicAnnouncementProvider);
     setState(() {
       _items = items;
+      _websiteItems = websiteItems;
       _loading = false;
     });
+  }
+
+  /// Opens [notice]'s Public website settings; reloads after a change.
+  Future<void> _openWebsite(AdminNotificationModel notice) async {
+    final message = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AnnouncementWebsiteDialog(
+        notice: notice,
+        item: _websiteItems?[notice.id],
+        publisher: _websitePublisher,
+        requesterRole: _role,
+        actor: ref.read(currentUserProvider),
+      ),
+    );
+    if (message == null) return;
+    await _load();
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _openForm({AdminNotificationModel? model}) async {
@@ -82,7 +137,8 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
         content: Text(
           'Archive $title? It will no longer appear in Parent, Staff, or Public '
           'notification feeds. This does not delete it — it stays visible to '
-          'Admin and can be found via the Archived status filter.',
+          'Admin and can be found via the Archived status filter.'
+          '${_websiteItems?.containsKey(notification.id) == true ? ' It will also be removed from the public website.' : ''}',
         ),
         actions: [
           TextButton(
@@ -99,11 +155,27 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
     if (confirmed != true) return;
 
     try {
-      await _service.archiveNotification(notification.id);
+      // The website copy goes first, so it can't stay visible.
+      var websiteChecked = true;
+      if (_websiteEnabled) {
+        websiteChecked = await _websitePublisher.archive(
+          requesterRole: _role,
+          notice: notification,
+          onWebsite: _websiteItems?.containsKey(notification.id),
+        );
+      } else {
+        await _service.archiveNotification(notification.id);
+      }
       await _load();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Notification archived')),
+        SnackBar(
+          content: Text(
+            websiteChecked
+                ? 'Notification archived'
+                : 'Notification archived. The public website couldn’t be checked: if it is shown there, remove it once its website status loads.',
+          ),
+        ),
       );
     } catch (e) {
       if (!mounted) return;
@@ -562,6 +634,8 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
                           ),
                           onEdit: () => _openForm(model: n),
                           onArchive: () => _archiveNotification(n),
+                          websiteState: _websiteItems == null ? null : AnnouncementWebsitePublisher.stateOf(n, _websiteItems![n.id]),
+                          onWebsite: _websiteItems == null ? null : () => _openWebsite(n),
                         ),
                       );
                     },
@@ -603,12 +677,20 @@ class _NotificationRow extends StatelessWidget {
     required this.onView,
     required this.onEdit,
     required this.onArchive,
+    this.websiteState,
+    this.onWebsite,
   });
 
   final AdminNotificationModel notification;
   final VoidCallback onView;
   final VoidCallback onEdit;
   final VoidCallback onArchive;
+
+  /// Where it stands on the public website (null when unknown).
+  final WebsiteCopyState? websiteState;
+
+  /// Opens its Public website settings (null when unavailable).
+  final VoidCallback? onWebsite;
 
   @override
   Widget build(BuildContext context) {
@@ -652,6 +734,10 @@ class _NotificationRow extends StatelessWidget {
                     FinanceStatusChip(label: notification.status.toUpperCase(), color: _statusColor(notification.status)),
                   ],
                 ),
+                if (announcementWebsiteChip(websiteState) case (final label, final color)) ...[
+                  const SizedBox(height: 4),
+                  FinanceStatusChip(key: Key('announcement-website-chip-${notification.id}'), label: label, color: color),
+                ],
                 if (metaLine.isNotEmpty) ...[
                   const SizedBox(height: 3),
                   Text(metaLine, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
@@ -684,6 +770,14 @@ class _NotificationRow extends StatelessWidget {
                 icon: const Icon(Icons.edit_outlined, size: 20),
                 onPressed: onEdit,
               ),
+              if (onWebsite != null)
+                IconButton(
+                  key: Key('announcement-website-open-${notification.id}'),
+                  tooltip: 'Public website',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.public, size: 20),
+                  onPressed: onWebsite,
+                ),
               if (notification.status != 'Archived')
                 IconButton(
                   tooltip: 'Archive',

@@ -504,61 +504,166 @@ class FeeService {
   /// this collection model has none), reverses the amount out of the
   /// parent assignment's paidAmount/balanceAmount/status, and reverses the
   /// linked Finance income entry via the existing
-  /// [FinanceService.reverseFeeIncomeByCollectionId]. Guarded against
-  /// double-voiding: a receipt already marked `isDeleted` is refused
-  /// rather than re-subtracting its amount from the assignment a second
-  /// time.
-  Future<void> voidReceipt(String id) async {
+  /// [FinanceService.reverseFeeIncomeByCollectionId].
+  ///
+  /// Not one atomic write: Firestore transactions can't run the query that
+  /// finds the Finance entry. Instead it runs as two atomic steps — the
+  /// Finance reversal (income, ledger, account in one transaction), then
+  /// the Fees step (receipt + assignment in one transaction) — after a
+  /// read-only status check, so every retry is safe:
+  /// - Receipt or Finance records ambiguous/inconsistent, or (with
+  ///   [expectedFinanceIncomeId]) the Finance entry missing or a different
+  ///   one: refused with a [FeeVoidException] before anything is written.
+  /// - Receipt active, Finance active: both steps run.
+  /// - Receipt active, Finance already reversed (an earlier attempt failed
+  ///   after the Finance step): only the Fees step runs.
+  /// - Receipt active, no Finance entry (collections recorded before the
+  ///   Finance link existed): only the Fees step runs.
+  /// - Receipt voided, Finance still active: only the Finance step runs;
+  ///   returns [FeeVoidOutcome.financeReconciled].
+  /// - Receipt voided, Finance reversed or absent: refused as already
+  ///   voided.
+  /// - Whenever a write would follow and a Finance entry exists, the
+  ///   receipt, Finance income and ledger amounts must agree to the paisa;
+  ///   otherwise refused ([FeeVoidFailure.amountMismatch]) before anything
+  ///   is written. Neither amount is changed or treated as authoritative,
+  ///   and since the check runs on every attempt a retry can't skip it.
+  /// Each step re-checks its own state inside its transaction, so a
+  /// repeated or concurrent void never reverses the account balance or
+  /// restores the assignment balance twice.
+  Future<FeeVoidOutcome> voidReceipt(String id, {String? expectedFinanceIncomeId}) async {
     final snap = await _receipts.doc(id).get();
     if (!snap.exists || snap.data() == null) {
-      throw StateError('Collection not found');
+      throw FeeVoidException(FeeVoidFailure.collectionNotFound, 'Collection not found');
     }
-    final data = snap.data()!;
-    if (data['isDeleted'] == true) {
-      throw StateError('This collection has already been voided.');
+    final receiptVoided = snap.data()!['isDeleted'] == true;
+    final receiptAmount = (snap.data()!['amount'] as num?)?.toDouble() ?? 0.0;
+
+    final link = await _financeService.inspectFeeIncomeLink(id);
+    switch (link.state) {
+      case FeeIncomeLinkState.ambiguous:
+        throw FeeVoidException(FeeVoidFailure.financeAmbiguous, link.message);
+      case FeeIncomeLinkState.inconsistent:
+        throw FeeVoidException(FeeVoidFailure.financeInconsistent, link.message);
+      case FeeIncomeLinkState.missing || FeeIncomeLinkState.active || FeeIncomeLinkState.reversed:
+        break;
     }
-    final receipt = FeeReceiptModel.fromMap(snap.id, data);
+    if (expectedFinanceIncomeId != null) {
+      if (link.state == FeeIncomeLinkState.missing) {
+        throw FeeVoidException(
+          FeeVoidFailure.financeMissing,
+          'The Finance entry linked to this Fee Collection could not be found. Nothing was changed. '
+          'Refresh and try again, or void the collection from Fees -> Collections.',
+        );
+      }
+      if (link.incomeId != expectedFinanceIncomeId) {
+        throw FeeVoidException(
+          FeeVoidFailure.financeMismatch,
+          'This Fee Collection is linked to a different Finance entry. Nothing was changed. '
+          'Review the Finance entries for this collection before retrying.',
+        );
+      }
+    }
+
+    final writesFollow = !(receiptVoided && link.state != FeeIncomeLinkState.active);
+    if (writesFollow && link.state != FeeIncomeLinkState.missing) {
+      final incomeAmount = link.incomeAmount;
+      final ledgerAmount = link.ledgerAmount;
+      final mismatch = incomeAmount == null || !_sameAmount(incomeAmount, receiptAmount)
+          ? 'its Finance entry (${incomeAmount == null ? 'no amount' : _formatAmount(incomeAmount)})'
+          : ledgerAmount != null && !_sameAmount(ledgerAmount, incomeAmount)
+              ? 'its ledger entry (${_formatAmount(ledgerAmount)})'
+              : null;
+      if (mismatch != null) {
+        throw FeeVoidException(
+          FeeVoidFailure.amountMismatch,
+          'The Fee Collection amount (${_formatAmount(receiptAmount)}) does not match $mismatch, '
+          'so it cannot be voided safely. Nothing was changed. Correct the amounts first — '
+          'editing the collection in Fees -> Collections re-syncs its Finance entry — '
+          'or ask an administrator to review them, then try again.',
+        );
+      }
+    }
+
+    if (receiptVoided) {
+      if (link.state == FeeIncomeLinkState.active) {
+        await _financeService.reverseFeeIncomeByCollectionId(id);
+        return FeeVoidOutcome.financeReconciled;
+      }
+      throw FeeVoidException(FeeVoidFailure.alreadyVoided, 'This collection has already been voided.');
+    }
 
     // Finance reversal first, same fail-safe-first ordering collectFee
     // already uses for its own Finance call: if this throws, neither the
-    // assignment nor the receipt below has been touched yet, so a retry is
-    // always safe. Doing the assignment/receipt writes first and Finance
-    // last would risk exactly the partial-corruption this ordering avoids
-    // — the assignment balance already reversed while the receipt still
-    // reads as a valid, uncounted payment.
-    await _financeService.reverseFeeIncomeByCollectionId(receipt.id);
+    // assignment nor the receipt below has been touched yet. If the Fees
+    // step below fails instead, the receipt stays active with Finance
+    // reversed, and a retry skips straight to the Fees step.
+    if (link.state != FeeIncomeLinkState.reversed) {
+      await _financeService.reverseFeeIncomeByCollectionId(id);
+    }
 
-    // Assignment balance + receipt soft-delete land together in one
-    // atomic batch, so a mid-write failure can never leave one updated
-    // without the other.
-    final batch = _firestore.batch();
-    if (receipt.assignmentId.isNotEmpty) {
-      final assignmentRef = _assignments.doc(receipt.assignmentId);
-      final assignmentSnap = await assignmentRef.get();
-      if (assignmentSnap.exists && assignmentSnap.data() != null) {
-        final a = StudentFeeAssignmentModel.fromMap(assignmentSnap.id, assignmentSnap.data()!);
+    // Receipt soft-delete + assignment balance in one transaction: the
+    // receipt is re-read and re-checked first, so a concurrent void can't
+    // restore the assignment balance twice. Full merged maps are written
+    // rather than SetOptions(merge: true), as FinanceService does.
+    final receiptRef = _receipts.doc(id);
+    final uid = _auth.currentUser?.uid;
+    await _firestore.runTransaction((txn) async {
+      final receiptSnap = await txn.get(receiptRef);
+      final data = receiptSnap.data();
+      if (!receiptSnap.exists || data == null) {
+        throw FeeVoidException(FeeVoidFailure.collectionNotFound, 'Collection not found');
+      }
+      if (data['isDeleted'] == true) {
+        throw FeeVoidException(FeeVoidFailure.alreadyVoided, 'This collection has already been voided.');
+      }
+      final receipt = FeeReceiptModel.fromMap(receiptSnap.id, data);
+      if (!_sameAmount(receipt.amount, receiptAmount)) {
+        // Edited after the checks above: don't restore an unchecked amount.
+        throw FeeVoidException(
+          FeeVoidFailure.amountMismatch,
+          'The Fee Collection amount changed while it was being voided, so the collection was not '
+          'voided. Its Finance entry may already have been reversed. Review the collection and its '
+          'Finance entry before trying again.',
+        );
+      }
+      final assignmentRef = receipt.assignmentId.isEmpty ? null : _assignments.doc(receipt.assignmentId);
+      final assignmentSnap = assignmentRef == null ? null : await txn.get(assignmentRef);
+      final assignmentData = assignmentSnap?.data();
+
+      if (assignmentRef != null && assignmentData != null) {
+        final a = StudentFeeAssignmentModel.fromMap(assignmentSnap!.id, assignmentData);
         final paidAmount = (a.paidAmount - receipt.amount).clamp(0, double.infinity);
         final balanceAmount = (a.payableAmount - paidAmount).clamp(0, double.infinity);
         final status = balanceAmount == 0 ? 'paid' : paidAmount > 0 ? 'partial' : 'unpaid';
-        batch.set(assignmentRef, {
+        txn.set(assignmentRef, {
+          ...assignmentData,
           'paidAmount': paidAmount,
           'balanceAmount': balanceAmount,
           'status': status,
           'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+        });
       }
-    }
-    batch.set(_receipts.doc(id), {
-      'isDeleted': true,
-      'voidedAt': FieldValue.serverTimestamp(),
-      'voidedBy': _auth.currentUser?.uid,
-      // Kept for backward compatibility with anything still reading the
-      // original soft-delete field name (e.g. getReceipts()'s filter).
-      'deletedAt': FieldValue.serverTimestamp(),
-      'deletedBy': _auth.currentUser?.uid,
-    }, SetOptions(merge: true));
-    await batch.commit();
+      txn.set(receiptRef, {
+        ...data,
+        'isDeleted': true,
+        'voidedAt': FieldValue.serverTimestamp(),
+        'voidedBy': uid,
+        // Kept for backward compatibility with anything still reading the
+        // original soft-delete field name (e.g. getReceipts()'s filter).
+        'deletedAt': FieldValue.serverTimestamp(),
+        'deletedBy': uid,
+      });
+    });
+    return FeeVoidOutcome.voided;
   }
+
+  /// Amounts are stored as plain doubles (rupees); two amounts are the same
+  /// when they agree to the paisa.
+  static bool _sameAmount(double a, double b) => (a * 100).round() == (b * 100).round();
+
+  static String _formatAmount(double v) =>
+      '₹${v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2)}';
 
   Future<Map<String, int>> syncAssignmentsForFeeStructure({
     required String feeStructureId,
@@ -974,4 +1079,32 @@ class FeeService {
       await createFeeStructure(s);
     }
   }
+}
+
+/// Result of a successful [FeeService.voidReceipt].
+enum FeeVoidOutcome {
+  /// The collection and its Finance entry are now both voided.
+  voided,
+
+  /// The collection was already voided; its Finance entry, left active by
+  /// an earlier partial failure, has now been reversed to match.
+  financeReconciled,
+}
+
+enum FeeVoidFailure {
+  collectionNotFound,
+  alreadyVoided,
+  financeMissing,
+  financeMismatch,
+  financeAmbiguous,
+  financeInconsistent,
+  amountMismatch,
+}
+
+/// Why [FeeService.voidReceipt] refused, before writing anything. A
+/// [StateError], as before, so existing callers and messages still work.
+class FeeVoidException extends StateError {
+  FeeVoidException(this.failure, super.message);
+
+  final FeeVoidFailure failure;
 }

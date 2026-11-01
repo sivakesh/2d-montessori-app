@@ -4,6 +4,16 @@ import '../../admin/notifications/data/admin_notification_service.dart';
 import '../../admin/settings/models/academic_year_date_range.dart';
 import '../models/calendar_event_model.dart';
 
+/// A calendar event was refused (nothing was written).
+class CalendarEventValidationException implements Exception {
+  CalendarEventValidationException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class CalendarService {
   CalendarService({
     FirebaseFirestore? firestore,
@@ -20,6 +30,10 @@ class CalendarService {
   // one.
   AdminNotificationService get _notificationService =>
       _injectedNotificationService ?? AdminNotificationService();
+
+  /// The Firestore this service reads and writes, so the website
+  /// publisher (CalendarWebsitePublisher) uses the same one.
+  FirebaseFirestore get firestore => _firestore;
 
   CollectionReference<Map<String, dynamic>> get _events =>
       _firestore.collection('school_calendar_events');
@@ -67,7 +81,16 @@ class CalendarService {
     return items;
   }
 
+  /// Refuses data the calendar can't hold (never shortens it).
+  static void _validate(Map<String, dynamic> data) {
+    final description = data['description'];
+    if (description is String) {
+      if (CalendarEventModel.descriptionProblem(description) case final problem?) throw CalendarEventValidationException(problem);
+    }
+  }
+
   Future<String> createEvent(Map<String, dynamic> data) async {
+    _validate(data);
     final doc = _events.doc();
     await doc.set({
       ...data,
@@ -78,6 +101,7 @@ class CalendarService {
   }
 
   Future<void> updateEvent(String id, Map<String, dynamic> data) async {
+    _validate(data);
     await _events.doc(id).update({
       ...data,
       'updatedAt': FieldValue.serverTimestamp(),

@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../../admin/settings/models/academic_year_date_range.dart';
 import '../models/finance_account_model.dart';
 import '../models/finance_category_model.dart';
+import '../models/finance_cancelled_transactions_model.dart';
 import '../models/finance_dashboard_summary_model.dart';
 import '../models/finance_expense_model.dart';
 import '../models/finance_invoice_model.dart';
@@ -44,39 +45,302 @@ class FinanceService {
       _auth.currentUser?.uid ??
       'admin';
 
-  Stream<FinanceDashboardSummaryModel> watchDashboardSummary() {
-    return _ledger.snapshots().map((snap) {
+  /// Totals and per-account balances from non-cancelled ledger entries plus
+  /// each account's stored `openingBalance`.
+  ///
+  /// Each entry and each account's opening balance is assigned to Cash, Bank
+  /// or UPI exactly once, by the stored `type` of the account (for entries,
+  /// the account its `accountId` points to) — never by account name, which
+  /// could omit custom names ("HDFC Savings") or double-count misleading ones
+  /// ("Bank UPI"). An entry whose account is missing, or an account of any
+  /// other type (e.g. `wallet`, `other`), is not guessed into one of the
+  /// three; its amount is reported in [FinanceDashboardSummaryModel
+  /// .unclassifiedBalance] instead (opening part also in
+  /// `unclassifiedOpeningBalance`).
+  ///
+  /// Formulas (all non-cancelled entries; inactive accounts included, like
+  /// their entries):
+  /// - Net Movement = income − expenses dated within the period.
+  /// - Opening Balance (period) = stored opening balances + net movement of
+  ///   entries dated before [periodStart]. The stored `openingBalance` has
+  ///   no date of its own; it is the account's balance before its first
+  ///   recorded entry.
+  /// - Closing Balance = Opening Balance + Net Movement, so
+  ///   Cash + Bank + UPI + Unclassified = Closing Balance exactly.
+  ///
+  /// [periodStart]/[periodEnd] are inclusive calendar days (same day-only
+  /// comparison as AcademicYearDateRange.contains). With neither given (the
+  /// Dashboard and Ledger tabs), the period is all-time and the opening
+  /// balance is the stored one. Entries dated after [periodEnd] are
+  /// excluded. Entries without a transaction date can't be placed in a
+  /// period: they count in an all-time summary only.
+  Stream<FinanceDashboardSummaryModel> watchDashboardSummary({DateTime? periodStart, DateTime? periodEnd}) {
+    DateTime dayOf(DateTime d) => DateTime(d.year, d.month, d.day);
+    final start = periodStart == null ? null : dayOf(periodStart);
+    final end = periodEnd == null ? null : dayOf(periodEnd);
+    final bounded = start != null || end != null;
+    return _ledger.snapshots().asyncMap((snap) async {
+      final accounts = await _accounts.get();
+      final accountTypeById = <String, String>{
+        for (final doc in accounts.docs) doc.id: doc.data()['type']?.toString().trim().toLowerCase() ?? '',
+      };
+      final opening = <String, double>{'cash': 0, 'bank': 0, 'upi': 0, '': 0};
+      final movement = <String, double>{'cash': 0, 'bank': 0, 'upi': 0, '': 0};
+      String bucket(String? type) => const {'cash', 'bank', 'upi'}.contains(type) ? type! : '';
+      // Presence of unclassified balances/activity, tracked separately from
+      // the amounts so activity that nets to zero is still reported.
+      var hasUnclassifiedActivity = false;
+      for (final doc in accounts.docs) {
+        final value = doc.data()['openingBalance'];
+        final amount = value is num ? value.toDouble() : double.tryParse(value?.toString() ?? '') ?? 0.0;
+        final key = bucket(accountTypeById[doc.id]);
+        opening[key] = opening[key]! + amount;
+        if (key.isEmpty && amount != 0) hasUnclassifiedActivity = true;
+      }
       var totalIncome = 0.0;
       var totalExpenses = 0.0;
-      var cashBalance = 0.0;
-      var bankBalance = 0.0;
-      var upiBalance = 0.0;
       for (final doc in snap.docs) {
         final data = doc.data();
         if (data['status']?.toString() == 'cancelled') continue;
         final amount = (data['amount'] as num?)?.toDouble() ?? 0.0;
         final type = data['entryType']?.toString() ?? '';
+        final signed = type == 'income' ? amount : -amount;
+        final key = bucket(accountTypeById[data['accountId']?.toString() ?? '']);
+        if (bounded) {
+          final raw = data['transactionDate'];
+          final date = raw is Timestamp ? raw.toDate() : raw is DateTime ? raw : null;
+          if (date == null) continue;
+          final day = dayOf(date);
+          if (end != null && day.isAfter(end)) continue;
+          if (start != null && day.isBefore(start)) {
+            opening[key] = opening[key]! + signed;
+            if (key.isEmpty && amount != 0) hasUnclassifiedActivity = true;
+            continue;
+          }
+        }
+        if (key.isEmpty && amount != 0) hasUnclassifiedActivity = true;
         if (type == 'income') {
           totalIncome += amount;
         } else if (type == 'expense') {
           totalExpenses += amount;
         }
-        final account = data['accountName']?.toString().toLowerCase() ?? '';
-        if (account.contains('cash')) cashBalance += type == 'income' ? amount : -amount;
-        if (account.contains('bank')) bankBalance += type == 'income' ? amount : -amount;
-        if (account.contains('upi')) upiBalance += type == 'income' ? amount : -amount;
+        movement[key] = movement[key]! + signed;
       }
+      double closing(String key) => opening[key]! + movement[key]!;
+      final openingBalance = opening.values.fold<double>(0, (a, b) => a + b);
+      final netMovement = totalIncome - totalExpenses;
       return FinanceDashboardSummaryModel(
         totalIncome: totalIncome,
         totalExpenses: totalExpenses,
-        netBalance: totalIncome - totalExpenses,
-        cashBalance: cashBalance,
-        bankBalance: bankBalance,
-        upiBalance: upiBalance,
+        netBalance: netMovement,
+        cashBalance: closing('cash'),
+        bankBalance: closing('bank'),
+        upiBalance: closing('upi'),
         thisMonthIncome: totalIncome,
         thisMonthExpenses: totalExpenses,
+        unclassifiedBalance: closing(''),
+        openingBalance: openingBalance,
+        cashOpeningBalance: opening['cash']!,
+        bankOpeningBalance: opening['bank']!,
+        upiOpeningBalance: opening['upi']!,
+        unclassifiedOpeningBalance: opening['']!,
+        closingBalance: openingBalance + netMovement,
+        hasUnclassifiedActivity: hasUnclassifiedActivity,
       );
     });
+  }
+
+  /// Read-only summary of cancelled/voided transactions for the Dashboard.
+  /// Never feeds any total or balance, and writes nothing.
+  ///
+  /// The unit is the `finance_income` record — manual income, Fee
+  /// Collection income and expense/salary invoice payments are all stored
+  /// there — voided with `isDeleted: true` and keeping its original
+  /// `amount`. Its ledger entry is a mirror cancelled in the same
+  /// transaction, so it is never counted separately; a voided Fee
+  /// Collection is counted through its Finance entry only (one per
+  /// `sourceId`), not again for its fees receipt. A retried void changes
+  /// no record, so it can't add to the count.
+  ///
+  /// Records whose status or link is unclear are listed in
+  /// [FinanceCancelledTransactionsSummary.exclusions] instead of counted:
+  /// a voided entry whose ledger entry is still active (or the reverse),
+  /// several Finance entries linked to one Fee Collection, a voided entry
+  /// with no stored amount, and a cancelled ledger entry with no Finance
+  /// income record (direct expenses and salary payment records have no
+  /// void workflow of their own). Two reads per update (income stream +
+  /// one ledger read); nothing is fetched per record.
+  ///
+  /// For traceability each counted record also carries its linked fee
+  /// receipt (receipt number, status) or invoice (invoice number, status)
+  /// and ledger entry, looked up in batches by id (never one read per
+  /// record). A counted record whose linked receipt/invoice can't be found
+  /// stays counted — the voided Finance record is what Finance totals
+  /// used — but is marked with a review note.
+  Stream<FinanceCancelledTransactionsSummary> watchCancelledTransactions() {
+    return _income.snapshots().asyncMap((incomeSnap) async {
+      final ledgerSnap = await _ledger.get();
+      final income = {for (final d in incomeSnap.docs) d.id: d.data()};
+      final receiptIds = <String>{};
+      final invoiceIds = <String>{};
+      for (final d in income.values) {
+        if (d['isDeleted'] != true) continue;
+        final sourceId = d['sourceId']?.toString().trim() ?? '';
+        final invoiceId = d['invoiceId']?.toString().trim() ?? '';
+        if (d['sourceModule']?.toString() == 'fees' && sourceId.isNotEmpty) receiptIds.add(sourceId);
+        if (invoiceId.isNotEmpty) invoiceIds.add(invoiceId);
+      }
+      return _summarizeCancellations(
+        income,
+        {for (final d in ledgerSnap.docs) d.id: d.data()},
+        receipts: await _docsById(_firestore.collection('fee_receipts'), receiptIds),
+        invoices: await _docsById(_invoices, invoiceIds),
+      );
+    });
+  }
+
+  /// Documents of [collection] with the given ids, read 30 at a time.
+  static Future<Map<String, Map<String, dynamic>>> _docsById(
+    CollectionReference<Map<String, dynamic>> collection,
+    Set<String> ids,
+  ) async {
+    final list = ids.toList();
+    final out = <String, Map<String, dynamic>>{};
+    for (var i = 0; i < list.length; i += 30) {
+      final chunk = list.sublist(i, i + 30 > list.length ? list.length : i + 30);
+      final snap = await collection.where(FieldPath.documentId, whereIn: chunk).get();
+      for (final d in snap.docs) {
+        out[d.id] = d.data();
+      }
+    }
+    return out;
+  }
+
+  static FinanceCancelledTransactionsSummary _summarizeCancellations(
+    Map<String, Map<String, dynamic>> income,
+    Map<String, Map<String, dynamic>> ledger, {
+    Map<String, Map<String, dynamic>> receipts = const {},
+    Map<String, Map<String, dynamic>> invoices = const {},
+  }) {
+    DateTime? date(Object? v) => v is Timestamp ? v.toDate() : v is DateTime ? v : null;
+    String text(Object? v) => v?.toString().trim() ?? '';
+    String titleOf(Map<String, dynamic> d, String fallback) => text(d['title']).isEmpty ? fallback : text(d['title']);
+
+    final transactions = <FinanceCancelledTransaction>[];
+    final exclusions = <FinanceCancellationExclusion>[];
+    void exclude(String id, Map<String, dynamic> d, String reason) =>
+        exclusions.add(FinanceCancellationExclusion(id: id, title: titleOf(d, 'Finance entry'), reason: reason));
+
+    // Fee Collections linked from more than one Finance entry.
+    final feeLinks = <String, int>{};
+    for (final d in income.values) {
+      if (text(d['sourceModule']) == 'fees' && text(d['sourceId']).isNotEmpty) {
+        feeLinks.update(text(d['sourceId']), (n) => n + 1, ifAbsent: () => 1);
+      }
+    }
+    final linkedLedgerIds = <String>{};
+
+    for (final MapEntry(key: id, value: d) in income.entries) {
+      final ledgerId = text(d['ledgerEntryId']);
+      if (ledgerId.isNotEmpty) linkedLedgerIds.add(ledgerId);
+      final ledgerStatus = ledger[ledgerId]?['status']?.toString();
+      final voided = d['isDeleted'] == true;
+      if (!voided) {
+        if (ledgerStatus == 'cancelled') exclude(id, d, 'Active Finance entry, but its ledger entry is cancelled');
+        continue;
+      }
+      if (ledgerStatus != null && ledgerStatus != 'cancelled') {
+        exclude(id, d, 'Voided Finance entry, but its ledger entry is still active');
+        continue;
+      }
+      final source = text(d['sourceModule']);
+      final sourceId = text(d['sourceId']);
+      if (source == 'fees' && (feeLinks[sourceId] ?? 0) > 1) {
+        exclude(id, d, 'More than one Finance entry is linked to the same Fee Collection');
+        continue;
+      }
+      final amount = d['amount'];
+      if (amount is! num) {
+        exclude(id, d, 'Original amount not recorded');
+        continue;
+      }
+      final isInvoice = source == 'invoice' || text(d['programType']) == 'invoice';
+      final invoiceType = text(d['invoiceType']);
+      final isFee = source == 'fees';
+      final invoiceId = text(d['invoiceId']);
+      final linkedId = isFee ? sourceId : isInvoice ? invoiceId : '';
+      final linked = isFee ? receipts[sourceId] : isInvoice ? invoices[invoiceId] : null;
+      final linkedNumber = isFee
+          ? text(linked?['receiptNo'])
+          : isInvoice
+              ? (text(d['invoiceNo']).isNotEmpty ? text(d['invoiceNo']) : text(linked?['invoiceNo']))
+              : '';
+      final linkedLabel = isFee ? 'Receipt' : isInvoice ? 'Invoice' : '';
+      final reviewNote = !isFee && !isInvoice
+          ? ''
+          : linkedId.isEmpty
+              ? 'No linked ${isFee ? 'Fee Collection' : 'invoice'} id is stored on this Finance record'
+              : linked == null
+                  ? 'The linked ${isFee ? 'Fee Collection receipt' : 'invoice'} record was not found'
+                  : '';
+      transactions.add(FinanceCancelledTransaction(
+        id: id,
+        sourceLabel: isFee
+            ? 'Fees'
+            : isInvoice
+                ? (invoiceType == 'salary' ? 'Finance → Salary' : 'Finance → Expenses')
+                : source.isEmpty || source == 'finance'
+                    ? 'Finance → Income'
+                    : source,
+        typeLabel: isInvoice
+            ? (invoiceType == 'salary' ? 'Salary payment' : 'Expense payment')
+            : isFee
+                ? 'Fee collection'
+                : source.isEmpty || source == 'finance'
+                    ? 'Manual income'
+                    : 'Other ($source)',
+        title: titleOf(d, isInvoice ? 'Invoice payment' : 'Income'),
+        reference: text(d['referenceNo']),
+        originalDate: date(d['incomeDate']),
+        cancelledAt: date(d['reversedAt']) ?? date(d['deletedAt']),
+        amount: amount.toDouble(),
+        reason: text(d['reversalReason']),
+        statusLabel: isInvoice ? 'Reversed' : 'Voided',
+        linkedDocumentLabel: linkedLabel,
+        linkedDocumentId: linkedId,
+        linkedDocumentNumber: linkedNumber,
+        linkedDocumentFound: linked != null,
+        linkedDocumentStatus: linked == null
+            ? ''
+            : isFee
+                ? (linked['isDeleted'] == true ? 'Voided' : 'Active')
+                : text(linked['status']),
+        ledgerId: ledgerId,
+        ledgerStatus: ledgerStatus ?? '',
+        reviewNote: reviewNote,
+      ));
+    }
+
+    // Cancelled ledger lines that mirror no Finance income record.
+    for (final MapEntry(key: id, value: d) in ledger.entries) {
+      if (d['status']?.toString() != 'cancelled' || linkedLedgerIds.contains(id)) continue;
+      exclusions.add(FinanceCancellationExclusion(
+        id: id,
+        title: titleOf(d, 'Ledger entry'),
+        reason: 'Cancelled ledger entry with no linked Finance income record',
+        collection: 'finance_ledger',
+      ));
+    }
+
+    transactions.sort((a, b) {
+      final x = a.cancelledAt;
+      final y = b.cancelledAt;
+      if (x == null && y == null) return 0;
+      if (x == null) return 1;
+      if (y == null) return -1;
+      return y.compareTo(x);
+    });
+    return FinanceCancelledTransactionsSummary(transactions: transactions, exclusions: exclusions);
   }
 
   Stream<List<FinanceLedgerEntryModel>> watchLedger() {
@@ -242,10 +506,243 @@ class FinanceService {
     return doc.id;
   }
 
+  /// Which kinds of Finance record refer to [category], as plain labels
+  /// (empty when it is unused). Transactions store the category both by id
+  /// (`categoryId`: income, direct expenses, ledger) and by name
+  /// (`categoryName`; expense invoices store only the name, and their edit
+  /// dialog re-selects the category by that name), so both are checked —
+  /// voided/cancelled records included, as they are kept for audit. One
+  /// `limit(1)` query per check; nothing is changed.
+  Future<List<String>> categoryReferences(FinanceCategoryModel category) async {
+    final name = category.name.trim();
+    Future<bool> used(CollectionReference<Map<String, dynamic>> c, {bool byId = true}) async {
+      if (byId && (await c.where('categoryId', isEqualTo: category.id).limit(1).get()).docs.isNotEmpty) return true;
+      if (name.isEmpty) return false;
+      return (await c.where('categoryName', isEqualTo: name).limit(1).get()).docs.isNotEmpty;
+    }
+
+    return [
+      if (await used(_income)) 'income entries',
+      if (await used(_expenses)) 'expense records',
+      if (await used(_invoices, byId: false)) 'expense invoices',
+      if (await used(_ledger)) 'ledger entries',
+    ];
+  }
+
+  /// Updates a non-default category's name, type and active flag.
+  /// - Name is required (trimmed); no other category of the same type may
+  ///   have the same name (case-insensitive).
+  /// - A category in use keeps its name and type (renaming would detach
+  ///   invoices that refer to it by name; a type change would reclassify
+  ///   history); it can still be deactivated, which hides it from new
+  ///   entries while existing records keep it.
+  /// - Default (`isSystem`) categories can't be changed.
+  /// Transactions are never modified.
+  Future<void> updateCategory({
+    required String id,
+    required String name,
+    required String type,
+    required bool isActive,
+  }) async {
+    final ref = _categories.doc(id);
+    final snap = await ref.get();
+    final data = snap.data();
+    if (!snap.exists || data == null) throw StateError('Category not found.');
+    final current = FinanceCategoryModel.fromMap(snap.id, data);
+    if (current.isSystem) throw StateError('Default categories can\'t be changed.');
+    final newName = name.trim();
+    if (newName.isEmpty) throw StateError('Category name is required.');
+    if (type != 'income' && type != 'expense') throw StateError('Category type must be income or expense.');
+    final all = await _categories.get();
+    final duplicate = all.docs.any((d) =>
+        d.id != id &&
+        (d.data()['name']?.toString().trim().toLowerCase() ?? '') == newName.toLowerCase() &&
+        (d.data()['type']?.toString() ?? 'income') == type);
+    if (duplicate) throw StateError('Another $type category is already named "$newName".');
+    if (newName != current.name.trim() || type != current.type) {
+      final refs = await categoryReferences(current);
+      if (refs.isNotEmpty) {
+        throw StateError(
+          '"${current.name}" is used by ${refs.join(', ')}, so its name and type can\'t be changed. '
+          'You can deactivate it instead.',
+        );
+      }
+    }
+    await ref.set({
+      'name': newName,
+      'type': type,
+      'isActive': isActive,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  /// Deletes a category only when nothing refers to it (see
+  /// [categoryReferences]) and it isn't a default category, so no
+  /// transaction is left pointing at a missing category. A category in use
+  /// should be deactivated instead ([updateCategory] with `isActive: false`).
+  /// There is a brief window between the check and the delete in which a new
+  /// transaction could pick the category; such a record still keeps its own
+  /// copy of the category name.
+  Future<void> deleteCategory(String id) async {
+    final ref = _categories.doc(id);
+    final snap = await ref.get();
+    final data = snap.data();
+    if (!snap.exists || data == null) throw StateError('Category not found.');
+    final category = FinanceCategoryModel.fromMap(snap.id, data);
+    if (category.isSystem) throw StateError('Default categories can\'t be deleted.');
+    final refs = await categoryReferences(category);
+    if (refs.isNotEmpty) {
+      throw StateError(
+        '"${category.name}" is used by ${refs.join(', ')}, so it can\'t be deleted without leaving '
+        'those records pointing at a missing category. Deactivate it instead to hide it from new entries.',
+      );
+    }
+    await ref.delete();
+  }
+
   Future<String> createAccount(FinanceAccountModel account) async {
     final doc = _accounts.doc();
     await doc.set(account.toMap());
     return doc.id;
+  }
+
+  /// Account types offered by the Add/Edit Account form.
+  static const accountTypes = ['cash', 'bank', 'upi', 'wallet', 'other'];
+
+  /// The payment types (cash / bank / upi, see [_accountTypeForPaymentMode])
+  /// whose payments are routed to an active account of that type by
+  /// [_matchAccountForPaymentMode].
+  static const _paymentTypes = ['cash', 'bank', 'upi'];
+
+  static bool _servesPaymentType(String accountType, String paymentType) =>
+      accountType.toLowerCase().contains(paymentType);
+
+  /// What depends on [account] (read-only; one `limit(1)` query per record
+  /// collection):
+  /// - Finance records that store its `accountId` — ledger entries, income
+  ///   (manual, fee collection and invoice payments), direct expenses and
+  ///   salary payments — voided/cancelled ones included, as they are kept
+  ///   for audit and still point at the account;
+  /// - the payment types it is the only active account for, and whether it
+  ///   is the last active account (new payments are routed to an active
+  ///   account by type, falling back to any active one).
+  Future<FinanceAccountUsage> accountUsage(FinanceAccountModel account) async {
+    Future<bool> used(CollectionReference<Map<String, dynamic>> c) async =>
+        (await c.where('accountId', isEqualTo: account.id).limit(1).get()).docs.isNotEmpty;
+    final references = [
+      if (await used(_ledger)) 'ledger entries',
+      if (await used(_income)) 'income and payment records',
+      if (await used(_expenses)) 'expense records',
+      if (await used(_salary)) 'salary payment records',
+    ];
+    final others = (await _accounts.where('isActive', isEqualTo: true).get())
+        .docs
+        .where((d) => d.id != account.id)
+        .map((d) => d.data()['type']?.toString() ?? '')
+        .toList();
+    return FinanceAccountUsage(
+      references: references,
+      onlyActiveFor: account.isActive
+          ? [
+              for (final t in _paymentTypes)
+                if (_servesPaymentType(account.type, t) && !others.any((o) => _servesPaymentType(o, t))) t,
+            ]
+          : const [],
+      isLastActive: account.isActive && others.isEmpty,
+      openingBalance: account.openingBalance,
+      currentBalance: account.currentBalance,
+    );
+  }
+
+  /// Edits an account in place (same document id; transactions are never
+  /// touched — they keep their own `accountId` and saved `accountName`).
+  /// - Name is required (trimmed) and unique across accounts
+  ///   (case-insensitive). Balances are worked out by id and type, never by
+  ///   name, so a rename is safe; existing records keep the name they were
+  ///   saved with.
+  /// - Type and opening balance can change only while no Finance record
+  ///   uses the account (a type change would move its history between
+  ///   Cash/Bank/UPI; an opening-balance change would rewrite its closing
+  ///   balance). A new opening balance moves the current balance by the same
+  ///   difference.
+  /// - It can't stop being the only active account for a payment type (by
+  ///   type change or deactivation), nor can the last active account be
+  ///   deactivated, since new payments would then go to another account
+  ///   type or fail.
+  Future<void> updateAccount({
+    required String id,
+    required String name,
+    required String type,
+    required double openingBalance,
+    required bool isActive,
+  }) async {
+    final ref = _accounts.doc(id);
+    final snap = await ref.get();
+    final data = snap.data();
+    if (!snap.exists || data == null) throw StateError('Account not found.');
+    final current = FinanceAccountModel.fromMap(snap.id, data);
+    final newName = name.trim();
+    if (newName.isEmpty) throw StateError('Account name is required.');
+    if (type != current.type && !accountTypes.contains(type)) throw StateError('Choose a valid account type.');
+    if (!openingBalance.isFinite) throw StateError('Opening balance must be a number.');
+    final all = await _accounts.get();
+    final duplicate = all.docs.any((d) => d.id != id && (d.data()['name']?.toString().trim().toLowerCase() ?? '') == newName.toLowerCase());
+    if (duplicate) throw StateError('Another account is already named "$newName".');
+
+    final typeChanged = type != current.type;
+    final openingChanged = openingBalance != current.openingBalance;
+    final usage = await accountUsage(current);
+    if ((typeChanged || openingChanged) && usage.references.isNotEmpty) {
+      throw StateError(
+        '"${current.name}" is used by ${usage.references.join(', ')}, so its type and opening balance can\'t be '
+        'changed without changing past balances. You can still rename or deactivate it.',
+      );
+    }
+    final lost = [for (final t in usage.onlyActiveFor) if (!isActive || !_servesPaymentType(type, t)) t];
+    if (lost.isNotEmpty) {
+      throw StateError(
+        '"${current.name}" is the only active ${lost.join('/')} account, so new ${lost.join('/')} payments '
+        'would go to a different account. Add or activate another ${lost.join('/')} account first.',
+      );
+    }
+    if (!isActive && usage.isLastActive) {
+      throw StateError('"${current.name}" is the last active account; new payments need at least one.');
+    }
+
+    await _firestore.runTransaction((txn) async {
+      final live = await txn.get(ref);
+      final liveData = live.data();
+      if (!live.exists || liveData == null) throw StateError('Account not found.');
+      double numVal(dynamic v) => v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0;
+      txn.set(ref, {
+        ...liveData,
+        'name': newName,
+        'type': type,
+        'openingBalance': openingBalance,
+        if (openingChanged) 'currentBalance': numVal(liveData['currentBalance']) + (openingBalance - numVal(liveData['openingBalance'])),
+        'isActive': isActive,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  /// Deletes an account only when nothing depends on it (see
+  /// [FinanceAccountUsage.deleteBlockedReason]): no Finance record (voided
+  /// ones included) points at it, its opening and current balances are
+  /// zero (so no total changes), and it isn't required for routing new
+  /// payments. Otherwise it should be deactivated instead, where allowed.
+  /// There is a brief window between the check and the delete in which a new
+  /// payment could pick the account; such a record keeps its own copy of the
+  /// account name.
+  Future<void> deleteAccount(String id) async {
+    final ref = _accounts.doc(id);
+    final snap = await ref.get();
+    final data = snap.data();
+    if (!snap.exists || data == null) throw StateError('Account not found.');
+    final usage = await accountUsage(FinanceAccountModel.fromMap(snap.id, data));
+    final reason = usage.deleteBlockedReason(data['name']?.toString() ?? 'This account');
+    if (reason != null) throw StateError(reason);
+    await ref.delete();
   }
 
   Future<String> createVendor(VendorModel vendor) async {
@@ -306,17 +803,143 @@ class FinanceService {
     List<QueryDocumentSnapshot<Map<String, dynamic>>> accounts,
     String paymentMode,
   ) {
-    final mode = paymentMode.toLowerCase();
-    final targetType = mode.contains('cash')
-        ? 'cash'
-        : mode.contains('upi')
-            ? 'upi'
-            : 'bank';
+    final targetType = _accountTypeForPaymentMode(paymentMode);
     for (final doc in accounts) {
       final type = doc.data()['type']?.toString().toLowerCase() ?? '';
       if (type.contains(targetType)) return doc;
     }
     return accounts.first;
+  }
+
+  /// The account type a payment mode maps to — the mapping
+  /// [_matchAccountForPaymentMode] has always used.
+  static String _accountTypeForPaymentMode(String paymentMode) {
+    final mode = paymentMode.toLowerCase();
+    return mode.contains('cash')
+        ? 'cash'
+        : mode.contains('upi')
+            ? 'upi'
+            : 'bank';
+  }
+
+  /// When an edit changes an income entry's payment mode, the account the
+  /// money belongs to must follow it. Returns null when no move is needed
+  /// (mode unchanged, or the current account already has the matching
+  /// type); otherwise the single active account of the matching type. Unlike
+  /// [_matchAccountForPaymentMode] it never falls back to an arbitrary
+  /// account: zero or several candidates reject the edit, since the right
+  /// account can't be determined. Expense/salary invoice payments (also in
+  /// finance_income, but money out) can't have their mode changed here.
+  Future<DocumentReference<Map<String, dynamic>>?> _destinationAccountForModeChange({
+    required Map<String, dynamic> current,
+    required String newPaymentMode,
+  }) async {
+    final oldMode = (current['paymentMode']?.toString() ?? '').trim().toLowerCase();
+    final newMode = newPaymentMode.trim().toLowerCase();
+    if (oldMode == newMode) return null;
+    if (current['sourceModule']?.toString() == 'invoice') {
+      throw StateError('The payment mode of an invoice payment cannot be changed here.');
+    }
+    final targetType = _accountTypeForPaymentMode(newMode);
+    bool matches(Map<String, dynamic>? account) =>
+        (account?['type']?.toString().toLowerCase() ?? '').contains(targetType);
+    final accountId = current['accountId']?.toString() ?? '';
+    if (accountId.isNotEmpty) {
+      final currentAccount = await _accounts.doc(accountId).get();
+      if (currentAccount.exists && matches(currentAccount.data())) return null;
+    }
+    final active = await _accounts.where('isActive', isEqualTo: true).get();
+    final candidates = active.docs.where((d) => matches(d.data())).toList();
+    if (candidates.length != 1) {
+      throw StateError(
+        'Cannot change the payment mode to "$newPaymentMode": '
+        '${candidates.isEmpty ? 'there is no active' : 'there is more than one active'} '
+        '$targetType account, so the account this payment belongs to cannot be '
+        'determined. Save without changing the payment mode, or adjust the accounts first.',
+      );
+    }
+    return candidates.single.reference;
+  }
+
+  /// Applies an income edit (and its ledger mirror and account balances) in
+  /// one Firestore transaction: all reads first, then all writes, re-reading
+  /// the income entry so a concurrent void is never overwritten. If the
+  /// payment mode change requires a different account (see
+  /// [_destinationAccountForModeChange]), the old amount leaves the original
+  /// account, the new amount lands in the destination account, and both the
+  /// income and ledger entries point at the destination; otherwise the
+  /// original account is adjusted by the amount delta, as before. Full
+  /// merged maps are written rather than `SetOptions(merge: true)` — see
+  /// [updateIncome].
+  Future<void> _commitIncomeEdit({
+    required DocumentReference<Map<String, dynamic>> incomeRef,
+    required Map<String, dynamic> preRead,
+    required String paymentMode,
+    required double amount,
+    required Map<String, dynamic> incomeFields,
+    required Map<String, dynamic> ledgerFields,
+    required bool throwIfVoided,
+  }) async {
+    final destinationRef = await _destinationAccountForModeChange(current: preRead, newPaymentMode: paymentMode);
+    final accountId = preRead['accountId']?.toString() ?? '';
+    final ledgerId = preRead['ledgerEntryId']?.toString() ?? '';
+    final ledgerRef = ledgerId.isNotEmpty ? _ledger.doc(ledgerId) : null;
+    final accountRef = accountId.isNotEmpty ? _accounts.doc(accountId) : null;
+
+    await _firestore.runTransaction((txn) async {
+      final incomeSnap = await txn.get(incomeRef);
+      final ledgerSnap = ledgerRef != null ? await txn.get(ledgerRef) : null;
+      final accountSnap = accountRef != null ? await txn.get(accountRef) : null;
+      final destinationSnap = destinationRef != null ? await txn.get(destinationRef) : null;
+
+      final live = incomeSnap.data();
+      if (!incomeSnap.exists || live == null) throw StateError('Income entry not found');
+      if (live['isDeleted'] == true) {
+        if (throwIfVoided) {
+          throw StateError('This income entry has been voided and can no longer be edited.');
+        }
+        return;
+      }
+      if ((live['accountId']?.toString() ?? '') != accountId ||
+          (live['ledgerEntryId']?.toString() ?? '') != ledgerId) {
+        throw StateError('This entry was changed while being edited. Please try again.');
+      }
+      final destinationData = destinationSnap?.data();
+      if (destinationRef != null && (destinationData == null || destinationData['isActive'] != true)) {
+        throw StateError('The account for the new payment mode is no longer available.');
+      }
+
+      final oldAmount = (live['amount'] as num?)?.toDouble() ?? 0.0;
+      final accountFields = destinationRef != null
+          ? {'accountId': destinationRef.id, 'accountName': destinationData!['name']?.toString() ?? ''}
+          : const <String, dynamic>{};
+
+      txn.set(incomeRef, {
+        ...live,
+        ...incomeFields,
+        ...accountFields,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      final ledgerData = ledgerSnap?.data();
+      if (ledgerRef != null && ledgerData != null) {
+        txn.set(ledgerRef, {
+          ...ledgerData,
+          ...ledgerFields,
+          ...accountFields,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      final accountData = accountSnap?.data();
+      double balanceOf(Map<String, dynamic> data) => (data['currentBalance'] as num?)?.toDouble() ?? 0.0;
+      if (destinationRef != null) {
+        if (accountRef != null && accountData != null) {
+          txn.set(accountRef, {...accountData, 'currentBalance': balanceOf(accountData) - oldAmount});
+        }
+        txn.set(destinationRef, {...destinationData!, 'currentBalance': balanceOf(destinationData) + amount});
+      } else if (accountRef != null && accountData != null) {
+        txn.set(accountRef, {...accountData, 'currentBalance': balanceOf(accountData) + (amount - oldAmount)});
+      }
+    });
   }
 
   Future<FinanceInvoiceModel?> getInvoiceById(String id) async {
@@ -432,11 +1055,16 @@ class FinanceService {
   /// exceeding the invoice. Raising/editing an invoice never moves money,
   /// so no ledger or account balance changes here.
   ///
+  /// [partyId] is the selected vendor's id (`vendors` doc id); when null the
+  /// invoice's stored `partyId` is left exactly as it is, so legacy invoices
+  /// that only carry a vendor name keep it.
+  ///
   /// Writes a full merged map inside a transaction rather than
   /// `SetOptions(merge: true)`, for the same fake_cloud_firestore reason
   /// documented on [updateIncome].
   Future<void> updateExpenseInvoice({
     required String id,
+    String? partyId,
     required String partyName,
     required String categoryName,
     required DateTime invoiceDate,
@@ -472,6 +1100,7 @@ class FinanceService {
       final status = balanceAmount == 0 ? 'paid' : paidAmount > 0 ? 'partial' : 'unpaid';
       txn.set(invoiceRef, {
         ...current,
+        'partyId': ?partyId,
         'partyName': partyName,
         'categoryName': categoryName,
         'invoiceDate': invoiceDate,
@@ -703,7 +1332,20 @@ class FinanceService {
     return expenseRef.id;
   }
 
+  /// Not called anywhere in the app (salary is paid through salary
+  /// invoices and [payInvoice]). Its ledger entry records `netPayable`
+  /// while the account is debited `paidAmount`, so a payment where the two
+  /// differ would leave the ledger and the account balance disagreeing.
+  /// Which amount is right is not defined, so such a payment is refused
+  /// rather than guessed; when they agree the behaviour is unchanged.
   Future<String> createSalaryPayment(StaffSalaryPaymentModel payment) async {
+    if ((payment.paidAmount * 100).round() != (payment.netPayable * 100).round()) {
+      throw StateError(
+        'Salary payment not recorded: the paid amount (${payment.paidAmount}) differs from the net '
+        'payable (${payment.netPayable}), so the ledger and account balance would disagree. '
+        'Record salary through a salary invoice instead.',
+      );
+    }
     final paymentRef = _salary.doc();
     final ledgerRef = _ledger.doc();
     await _firestore.runTransaction((txn) async {
@@ -738,10 +1380,30 @@ class FinanceService {
     return paymentRef.id;
   }
 
+  /// Not called anywhere in the app. Cancelling a ledger entry on its own
+  /// removes it from the summary totals but leaves its source record
+  /// (income, expense payment, fee collection) active and its account's
+  /// running balance unchanged, so Finance would disagree with itself. It
+  /// is therefore refused for any entry linked to a source record or an
+  /// account — use that record's own void/reverse action, which cancels
+  /// the ledger entry with it. An unlinked entry can still be cancelled;
+  /// the reason is stored as `cancellationReason` and the original
+  /// description is kept for audit.
   Future<void> cancelLedgerEntry(String id, {String? reason}) async {
-    await _ledger.doc(id).set({
+    final ref = _ledger.doc(id);
+    final snap = await ref.get();
+    final data = snap.data();
+    if (!snap.exists || data == null) throw StateError('Ledger entry not found');
+    bool has(String key) => (data[key]?.toString() ?? '').trim().isNotEmpty;
+    if (has('sourceModule') || has('sourceId') || has('accountId')) {
+      throw StateError(
+        'This ledger entry belongs to a transaction and an account balance, so it cannot be '
+        'cancelled on its own. Void or reverse the original transaction instead.',
+      );
+    }
+    await ref.set({
       'status': 'cancelled',
-      'description': reason ?? '',
+      'cancellationReason': reason ?? '',
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
@@ -881,43 +1543,162 @@ class FinanceService {
   /// mirror (the same `status: 'cancelled'` flag [cancelLedgerEntry]
   /// already uses and [watchDashboardSummary] already filters on), and
   /// reverses the amount out of the linked account's running balance.
-  Future<void> _voidIncomeDoc(
+  ///
+  /// All three documents change in one Firestore transaction: every read
+  /// (income, ledger, account) happens first, then every write, so Firestore
+  /// commits all of them or none, and retries the whole handler on a
+  /// concurrent modification. The voided state is re-checked inside the
+  /// transaction from its own fresh read; returns `false` (writing nothing)
+  /// if the entry was already voided by the time it ran, so a repeated or
+  /// concurrent void never reverses the account balance twice. A missing
+  /// linked ledger entry or account is skipped rather than recreated as a
+  /// stub. Full merged maps are written rather than
+  /// `SetOptions(merge: true)` — see [updateIncome].
+  ///
+  /// With [refuseCancelledLedger] (the Fee Collection path), an active
+  /// income entry whose ledger entry is already cancelled is refused with a
+  /// [StateError], writing nothing: its account balance may already have
+  /// been reversed, so reversing it again could double-count.
+  Future<bool> _voidIncomeDoc(
     DocumentReference<Map<String, dynamic>> ref,
-    Map<String, dynamic> data,
-  ) async {
-    final amount = (data['amount'] as num?)?.toDouble() ?? 0.0;
-    final accountId = data['accountId']?.toString() ?? '';
-    await ref.set({
-      'isDeleted': true,
-      'deletedAt': FieldValue.serverTimestamp(),
-      'deletedBy': _createdBy,
-    }, SetOptions(merge: true));
+    Map<String, dynamic> data, {
+    bool refuseCancelledLedger = false,
+  }) async {
     final ledgerId = data['ledgerEntryId']?.toString() ?? '';
-    if (ledgerId.isNotEmpty) {
-      await _ledger.doc(ledgerId).set({
-        'status': 'cancelled',
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-    }
-    if (accountId.isNotEmpty && amount > 0) {
-      final accountRef = _accounts.doc(accountId);
-      final accountSnap = await accountRef.get();
-      final current = (accountSnap.data()?['currentBalance'] as num?)?.toDouble() ?? 0.0;
-      await accountRef.set({'currentBalance': current - amount}, SetOptions(merge: true));
-    }
+    final accountId = data['accountId']?.toString() ?? '';
+    final ledgerRef = ledgerId.isNotEmpty ? _ledger.doc(ledgerId) : null;
+    final accountRef = accountId.isNotEmpty ? _accounts.doc(accountId) : null;
+    final actor = _createdBy;
+    return _firestore.runTransaction<bool>((txn) async {
+      final incomeSnap = await txn.get(ref);
+      final ledgerSnap = ledgerRef != null ? await txn.get(ledgerRef) : null;
+      final accountSnap = accountRef != null ? await txn.get(accountRef) : null;
+
+      final current = incomeSnap.data();
+      if (!incomeSnap.exists || current == null) {
+        throw StateError('Income entry not found');
+      }
+      if (current['isDeleted'] == true) return false;
+      if (refuseCancelledLedger && ledgerSnap?.data()?['status']?.toString() == 'cancelled') {
+        throw StateError(_activeIncomeCancelledLedgerMessage);
+      }
+      final amount = (current['amount'] as num?)?.toDouble() ?? 0.0;
+
+      txn.set(ref, {
+        ...current,
+        'isDeleted': true,
+        'deletedAt': FieldValue.serverTimestamp(),
+        'deletedBy': actor,
+      });
+      final ledgerData = ledgerSnap?.data();
+      if (ledgerRef != null && ledgerData != null) {
+        txn.set(ledgerRef, {
+          ...ledgerData,
+          'status': 'cancelled',
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      final accountData = accountSnap?.data();
+      if (accountRef != null && accountData != null && amount > 0) {
+        final balance = (accountData['currentBalance'] as num?)?.toDouble() ?? 0.0;
+        txn.set(accountRef, {...accountData, 'currentBalance': balance - amount});
+      }
+      return true;
+    });
   }
 
+  /// Reverses the Finance income entry generated from Fee Collection
+  /// [feeCollectionId]. Idempotent: a missing or already-voided entry is a
+  /// no-op, and [_voidIncomeDoc] re-checks inside its transaction, so a
+  /// retry or a concurrent call never reverses the account twice. Refuses
+  /// (writing nothing) when more than one entry is linked to the collection,
+  /// or when the entry is active but its ledger entry is already cancelled.
   Future<void> reverseFeeIncomeByCollectionId(String feeCollectionId) async {
-    final existing = await _income
-        .where('sourceModule', isEqualTo: 'fees')
-        .where('sourceId', isEqualTo: feeCollectionId)
-        .limit(1)
-        .get();
-    if (existing.docs.isEmpty) return;
-    final doc = existing.docs.first;
+    final existing = await _feeIncomeDocs(feeCollectionId);
+    if (existing.isEmpty) return;
+    if (existing.length > 1) throw StateError(_ambiguousFeeIncomeMessage(existing.length));
+    final doc = existing.single;
     final data = doc.data();
     if (data['isDeleted'] == true) return;
-    await _voidIncomeDoc(doc.reference, data);
+    await _voidIncomeDoc(doc.reference, data, refuseCancelledLedger: true);
+  }
+
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _feeIncomeDocs(String feeCollectionId) async =>
+      (await _income
+              .where('sourceModule', isEqualTo: 'fees')
+              .where('sourceId', isEqualTo: feeCollectionId)
+              .get())
+          .docs;
+
+  static String _ambiguousFeeIncomeMessage(int count) =>
+      '$count Finance income entries are linked to this Fee Collection, so it cannot be '
+      'voided safely. Nothing was changed. Review the duplicate Finance entries before retrying.';
+
+  static const _activeIncomeCancelledLedgerMessage =
+      'The linked Finance entry is active but its ledger entry is already cancelled, so the '
+      'account balance may already have been reversed. Nothing was changed. Review the Finance '
+      'ledger for this collection before retrying.';
+
+  /// Read-only check of the Finance side of Fee Collection
+  /// [feeCollectionId], used by FeeService.voidReceipt before it writes
+  /// anything. Writes nothing.
+  Future<FeeIncomeLink> inspectFeeIncomeLink(String feeCollectionId) async {
+    final docs = await _feeIncomeDocs(feeCollectionId);
+    if (docs.isEmpty) return const FeeIncomeLink(FeeIncomeLinkState.missing);
+    if (docs.length > 1) {
+      return FeeIncomeLink(FeeIncomeLinkState.ambiguous, message: _ambiguousFeeIncomeMessage(docs.length));
+    }
+    final doc = docs.single;
+    final data = doc.data();
+    final voided = data['isDeleted'] == true;
+    final ledgerId = data['ledgerEntryId']?.toString() ?? '';
+    // Null when there is no linked ledger entry (skipped on void, as before).
+    final ledgerData = ledgerId.isEmpty ? null : (await _ledger.doc(ledgerId).get()).data();
+    final ledgerStatus = ledgerData?['status']?.toString();
+    double? amountOf(Map<String, dynamic>? d) => (d?['amount'] as num?)?.toDouble();
+    if (!voided && ledgerStatus == 'cancelled') {
+      return FeeIncomeLink(FeeIncomeLinkState.inconsistent, incomeId: doc.id, message: _activeIncomeCancelledLedgerMessage);
+    }
+    if (voided && ledgerStatus != null && ledgerStatus != 'cancelled') {
+      return FeeIncomeLink(
+        FeeIncomeLinkState.inconsistent,
+        incomeId: doc.id,
+        message: 'The linked Finance entry is voided but its ledger entry is still active, so the '
+            'Finance records disagree. Nothing was changed. Review the Finance ledger for this '
+            'collection before retrying.',
+      );
+    }
+    return FeeIncomeLink(
+      voided ? FeeIncomeLinkState.reversed : FeeIncomeLinkState.active,
+      incomeId: doc.id,
+      incomeAmount: amountOf(data),
+      ledgerAmount: amountOf(ledgerData),
+    );
+  }
+
+  /// [voidIncome] and [updateIncome] apply income-side accounting (a void
+  /// takes the amount back out of the account; an edit adds the delta) and
+  /// never touch an invoice. That is only right for manual income
+  /// (`sourceModule` 'finance', or none on older entries). An expense or
+  /// salary invoice payment is also stored in finance_income but is money
+  /// out: voiding it here would debit the account a second time and leave
+  /// the invoice's paid amount unchanged. The Income tab already hides
+  /// those records; this refuses them (and any other source) at the
+  /// service too.
+  static void _refuseUnlessManualIncome(Map<String, dynamic> data, {required String action}) {
+    final source = data['sourceModule']?.toString() ?? '';
+    final isInvoicePayment = source == 'invoice' ||
+        data['programType']?.toString() == 'invoice' ||
+        (data['invoiceId']?.toString() ?? '').isNotEmpty;
+    if (isInvoicePayment) {
+      throw StateError(
+        'This is an invoice payment, so it cannot be $action here. Use Reverse on the payment in '
+        'the invoice details instead, which also updates the invoice balance.',
+      );
+    }
+    if (source.isNotEmpty && source != 'finance') {
+      throw StateError('This entry was created by "$source", so it cannot be $action here.');
+    }
   }
 
   /// Voids a Finance income entry directly — the Finance UI's own Void
@@ -952,23 +1733,33 @@ class FinanceService {
         'entry automatically.',
       );
     }
+    _refuseUnlessManualIncome(data, action: 'voided');
     if (data['isDeleted'] == true) {
       throw StateError('This income entry has already been voided.');
     }
-    await _voidIncomeDoc(snap.reference, data);
+    final voided = await _voidIncomeDoc(snap.reference, data);
+    if (!voided) {
+      throw StateError('This income entry has already been voided.');
+    }
   }
 
   /// Edits an existing, non-Fee-sourced income entry's fields in place.
-  /// The account is intentionally left un-editable here — changing which
-  /// account the money landed in retroactively would need its own
-  /// reversal-then-reapply logic beyond what this method does, so the
-  /// account stays fixed from creation. Refuses to edit a
+  /// The account can't be picked directly, but it follows a payment-mode
+  /// change (see [_commitIncomeEdit]) so the entry's mode and account never
+  /// disagree. Refuses to edit a
   /// Fee-Collection-sourced entry for the same reason [voidIncome]
   /// refuses to void one.
   ///
-  /// Updates the income doc, its linked ledger mirror, and the account's
-  /// running balance by the amount delta, all inside one Firestore
-  /// transaction — the same atomic pattern [createIncome] already uses.
+  /// Updates the income doc, its linked ledger mirror, and the account
+  /// running balance(s), all inside one Firestore transaction — the same
+  /// atomic pattern [createIncome] already uses.
+  ///
+  /// Transactions here write complete merged maps (spread + overrides)
+  /// rather than `Transaction.set(..., SetOptions(merge: true))`:
+  /// fake_cloud_firestore's transaction mock does not honor that merge
+  /// option (it silently drops every field not in the payload), so this
+  /// avoids depending on it at all — and is equally correct against real
+  /// Firestore.
   Future<void> updateIncome({
     required String id,
     required String title,
@@ -993,34 +1784,19 @@ class FinanceService {
         'entry automatically.',
       );
     }
+    _refuseUnlessManualIncome(current, action: 'edited');
     if (current['isDeleted'] == true) {
       throw StateError('This income entry has been voided and can no longer be edited.');
     }
     if (amount <= 0) {
       throw StateError('Amount must be greater than 0');
     }
-    final oldAmount = (current['amount'] as num?)?.toDouble() ?? 0.0;
-    final accountId = current['accountId']?.toString() ?? '';
-    final ledgerId = current['ledgerEntryId']?.toString() ?? '';
-
-    final ledgerRef = ledgerId.isNotEmpty ? _ledger.doc(ledgerId) : null;
-    final accountRef = accountId.isNotEmpty ? _accounts.doc(accountId) : null;
-
-    // Reads its own full current data for every doc it touches and writes
-    // a complete merged map back (spread + overrides) rather than relying
-    // on Transaction.set(..., SetOptions(merge: true)) — that merge option
-    // is not honored correctly by fake_cloud_firestore's transaction mock
-    // (it silently drops every field not in the payload instead of
-    // merging), so this avoids depending on it at all. Strictly more
-    // robust against real Firestore too, since it never depends on merge
-    // semantics succeeding.
-    await _firestore.runTransaction((txn) async {
-      final ledgerSnap = ledgerRef != null ? await txn.get(ledgerRef) : null;
-      final accountSnap = accountRef != null ? await txn.get(accountRef) : null;
-      final currentBalance = (accountSnap?.data()?['currentBalance'] as num?)?.toDouble() ?? 0.0;
-
-      txn.set(incomeRef, {
-        ...current,
+    await _commitIncomeEdit(
+      incomeRef: incomeRef,
+      preRead: current,
+      paymentMode: paymentMode,
+      amount: amount,
+      incomeFields: {
         'title': title,
         'categoryId': categoryId,
         'categoryName': categoryName,
@@ -1029,29 +1805,19 @@ class FinanceService {
         'paymentMode': paymentMode,
         'referenceNo': referenceNo,
         'remarks': remarks,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      if (ledgerRef != null && ledgerSnap != null && ledgerSnap.data() != null) {
-        txn.set(ledgerRef, {
-          ...ledgerSnap.data()!,
-          'title': title,
-          'categoryId': categoryId,
-          'categoryName': categoryName,
-          'amount': amount,
-          'transactionDate': date,
-          'paymentMode': paymentMode,
-          'referenceNo': referenceNo,
-          'description': remarks,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      }
-      if (accountRef != null && accountSnap != null && accountSnap.data() != null) {
-        txn.set(accountRef, {
-          ...accountSnap.data()!,
-          'currentBalance': currentBalance + (amount - oldAmount),
-        });
-      }
-    });
+      },
+      ledgerFields: {
+        'title': title,
+        'categoryId': categoryId,
+        'categoryName': categoryName,
+        'amount': amount,
+        'transactionDate': date,
+        'paymentMode': paymentMode,
+        'referenceNo': referenceNo,
+        'description': remarks,
+      },
+      throwIfVoided: true,
+    );
   }
 
   /// Pushes a Fee Collection's corrected amount/date/paymentMode/
@@ -1095,50 +1861,26 @@ class FinanceService {
     final doc = existing.docs.first;
     final data = doc.data();
     if (data['isDeleted'] == true) return;
-    final oldAmount = (data['amount'] as num?)?.toDouble() ?? 0.0;
-    final accountId = data['accountId']?.toString() ?? '';
-    final ledgerId = data['ledgerEntryId']?.toString() ?? '';
-    final incomeRef = _income.doc(doc.id);
-    final ledgerRef = ledgerId.isNotEmpty ? _ledger.doc(ledgerId) : null;
-    final accountRef = accountId.isNotEmpty ? _accounts.doc(accountId) : null;
-
-    // Reads full current data for every doc and writes a complete merged
-    // map back (spread + overrides) instead of relying on
-    // Transaction.set(..., SetOptions(merge: true)) — see updateIncome's
-    // doc comment for why: fake_cloud_firestore's transaction mock does
-    // not honor that merge option (it silently drops every field not in
-    // the payload), so this avoids depending on it at all.
-    await _firestore.runTransaction((txn) async {
-      final ledgerSnap = ledgerRef != null ? await txn.get(ledgerRef) : null;
-      final accountSnap = accountRef != null ? await txn.get(accountRef) : null;
-      final currentBalance = (accountSnap?.data()?['currentBalance'] as num?)?.toDouble() ?? 0.0;
-
-      txn.set(incomeRef, {
-        ...data,
+    await _commitIncomeEdit(
+      incomeRef: _income.doc(doc.id),
+      preRead: data,
+      paymentMode: paymentMode,
+      amount: amount,
+      incomeFields: {
         'amount': amount,
         'incomeDate': date,
         'paymentMode': paymentMode,
         'referenceNo': referenceNo,
         'remarks': remarks,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      if (ledgerRef != null && ledgerSnap != null && ledgerSnap.data() != null) {
-        txn.set(ledgerRef, {
-          ...ledgerSnap.data()!,
-          'amount': amount,
-          'transactionDate': date,
-          'paymentMode': paymentMode,
-          'referenceNo': referenceNo,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      }
-      if (accountRef != null && accountSnap != null && accountSnap.data() != null) {
-        txn.set(accountRef, {
-          ...accountSnap.data()!,
-          'currentBalance': currentBalance + (amount - oldAmount),
-        });
-      }
-    });
+      },
+      ledgerFields: {
+        'amount': amount,
+        'transactionDate': date,
+        'paymentMode': paymentMode,
+        'referenceNo': referenceNo,
+      },
+      throwIfVoided: false,
+    );
   }
 
   Future<void> ensureDefaults() async {
@@ -1166,5 +1908,90 @@ class FinanceService {
         await createAccount(account);
       }
     }
+  }
+}
+
+/// Finance-side state of a Fee Collection's income entry, as reported by
+/// [FinanceService.inspectFeeIncomeLink].
+enum FeeIncomeLinkState {
+  /// No Finance income entry is linked to the collection.
+  missing,
+
+  /// One entry, not voided, ledger entry not cancelled.
+  active,
+
+  /// One entry, already voided (ledger entry cancelled or absent).
+  reversed,
+
+  /// More than one entry is linked to the collection.
+  ambiguous,
+
+  /// The income entry and its ledger entry disagree.
+  inconsistent,
+}
+
+class FeeIncomeLink {
+  const FeeIncomeLink(this.state, {this.incomeId = '', this.message = '', this.incomeAmount, this.ledgerAmount});
+
+  final FeeIncomeLinkState state;
+
+  /// The linked finance_income doc id, when there is exactly one.
+  final String incomeId;
+
+  /// Actionable explanation for [FeeIncomeLinkState.ambiguous] and
+  /// [FeeIncomeLinkState.inconsistent].
+  final String message;
+
+  /// For [FeeIncomeLinkState.active]/[FeeIncomeLinkState.reversed]: the
+  /// income entry's stored amount, and its ledger entry's (null when there
+  /// is no ledger entry or no stored amount).
+  final double? incomeAmount;
+  final double? ledgerAmount;
+}
+
+/// See [FinanceService.accountUsage].
+class FinanceAccountUsage {
+  const FinanceAccountUsage({
+    required this.references,
+    required this.onlyActiveFor,
+    required this.isLastActive,
+    required this.openingBalance,
+    required this.currentBalance,
+  });
+
+  /// Kinds of Finance record that point at the account (empty when none).
+  final List<String> references;
+
+  /// Payment types (cash/bank/upi) it is the only active account for.
+  final List<String> onlyActiveFor;
+  final bool isLastActive;
+  final double openingBalance;
+  final double currentBalance;
+
+  /// True when it must stay active (and can't be deleted).
+  bool get isRequired => onlyActiveFor.isNotEmpty || isLastActive;
+
+  /// Why it can't be deactivated, or null.
+  String? deactivateBlockedReason(String name) {
+    if (onlyActiveFor.isNotEmpty) {
+      final types = onlyActiveFor.join('/');
+      return '"$name" is the only active $types account, so new $types payments would go to a different '
+          'account. Add or activate another $types account first.';
+    }
+    if (isLastActive) return '"$name" is the last active account; new payments need at least one.';
+    return null;
+  }
+
+  /// Why it can't be deleted, or null when deleting is safe.
+  String? deleteBlockedReason(String name) {
+    if (references.isNotEmpty) {
+      return '"$name" is used by ${references.join(', ')}, so deleting it would leave those records '
+          'pointing at a missing account and change the balances they count towards.';
+    }
+    if (openingBalance != 0 || currentBalance != 0) {
+      return '"$name" has an opening balance of ₹${openingBalance.toStringAsFixed(0)} and a current balance of '
+          '₹${currentBalance.toStringAsFixed(0)}, so deleting it would change the Closing Balance.';
+    }
+    return deactivateBlockedReason(name);
   }
 }

@@ -7,9 +7,12 @@ import '../../models/finance_income_model.dart';
 import '../../services/finance_service.dart';
 
 class AddIncomeDialog extends StatefulWidget {
-  const AddIncomeDialog({super.key, this.initial});
+  const AddIncomeDialog({super.key, this.initial, this.service});
 
   final FinanceIncomeModel? initial;
+
+  /// Optional injection seam (tests); defaults to `FinanceService()` as before.
+  final FinanceService? service;
 
   @override
   State<AddIncomeDialog> createState() => _AddIncomeDialogState();
@@ -21,7 +24,7 @@ class _AddIncomeDialogState extends State<AddIncomeDialog> {
   final _amount = TextEditingController();
   final _reference = TextEditingController();
   final _remarks = TextEditingController();
-  final _service = FinanceService();
+  late final _service = widget.service ?? FinanceService();
   String? _categoryId;
   String _programType = 'tuition';
   String? _accountId;
@@ -51,6 +54,20 @@ class _AddIncomeDialogState extends State<AddIncomeDialog> {
       _paymentMode = initial.paymentMode.isEmpty ? 'cash' : initial.paymentMode;
       _date = initial.incomeDate ?? DateTime.now();
     }
+  }
+
+  /// [items] plus, when [value] is set but not one of them, a single item
+  /// showing it as stored — e.g. categoryId/programType 'fees' on entries
+  /// generated from a Fee Collection, or an inactive category/account. This
+  /// keeps DropdownButton's "exactly one item per value" invariant without
+  /// converting the stored value.
+  List<DropdownMenuItem<String>> _withStoredValue(
+    List<DropdownMenuItem<String>> items,
+    String? value,
+    String label,
+  ) {
+    if (value == null || items.any((item) => item.value == value)) return items;
+    return [...items, DropdownMenuItem(value: value, child: Text(label.isEmpty ? value : label))];
   }
 
   Future<void> _pickDate() async {
@@ -174,7 +191,11 @@ class _AddIncomeDialogState extends State<AddIncomeDialog> {
                     return DropdownButtonFormField<String>(
                       initialValue: _categoryId,
                       decoration: const InputDecoration(labelText: 'Category'),
-                      items: items.map((e) => DropdownMenuItem(value: e.id, child: Text(e.name))).toList(),
+                      items: _withStoredValue(
+                        items.map((e) => DropdownMenuItem(value: e.id, child: Text(e.name))).toList(),
+                        _categoryId,
+                        widget.initial?.categoryName ?? '',
+                      ),
                       onChanged: locked ? null : (v) => setState(() => _categoryId = v),
                       validator: (v) => v == null ? 'Required' : null,
                     );
@@ -184,9 +205,13 @@ class _AddIncomeDialogState extends State<AddIncomeDialog> {
                 DropdownButtonFormField<String>(
                   initialValue: _programType,
                   decoration: const InputDecoration(labelText: 'Program Type'),
-                  items: const ['tuition', 'after_school', 'day_care', 'training', 'phonics', 'material', 'uniform', 'transport', 'other']
-                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-                      .toList(),
+                  items: _withStoredValue(
+                    const ['tuition', 'after_school', 'day_care', 'training', 'phonics', 'material', 'uniform', 'transport', 'other']
+                        .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                        .toList(),
+                    _programType,
+                    _programType,
+                  ),
                   // Not part of updateIncome — informational only once
                   // editing (kept from creation, not user-editable here).
                   onChanged: (locked || _isEdit) ? null : (v) => setState(() => _programType = v ?? 'tuition'),
@@ -212,9 +237,13 @@ class _AddIncomeDialogState extends State<AddIncomeDialog> {
                 DropdownButtonFormField<String>(
                   initialValue: _paymentMode,
                   decoration: const InputDecoration(labelText: 'Payment Mode'),
-                  items: const ['cash', 'upi', 'bank_transfer', 'cheque', 'other']
-                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-                      .toList(),
+                  items: _withStoredValue(
+                    const ['cash', 'upi', 'bank_transfer', 'cheque', 'other']
+                        .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                        .toList(),
+                    _paymentMode,
+                    _paymentMode,
+                  ),
                   onChanged: locked ? null : (v) => setState(() => _paymentMode = v ?? _paymentMode),
                 ),
                 const SizedBox(height: 12),
@@ -226,9 +255,14 @@ class _AddIncomeDialogState extends State<AddIncomeDialog> {
                       initialValue: _accountId,
                       decoration: InputDecoration(
                         labelText: 'Account',
-                        helperText: _isEdit ? 'Account cannot be changed once created' : null,
+                        helperText: _isEdit ? 'Payment account is based on the payment mode. Changing the payment mode may move this transaction between Cash, Bank, or UPI accounts.' : null,
+                        helperMaxLines: 3,
                       ),
-                      items: items.map((e) => DropdownMenuItem(value: e.id, child: Text(e.name))).toList(),
+                      items: _withStoredValue(
+                        items.map((e) => DropdownMenuItem(value: e.id, child: Text(e.name))).toList(),
+                        _accountId,
+                        widget.initial?.accountName ?? '',
+                      ),
                       // Account is intentionally not editable — see
                       // FinanceService.updateIncome's doc comment.
                       onChanged: (locked || _isEdit) ? null : (v) => setState(() => _accountId = v),

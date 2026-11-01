@@ -1,0 +1,72 @@
+{
+  "//": "Answer validation cases run by both the app (test/form_answer_parity_test.dart, validateFormAnswers) and the submission endpoint (functions/test/answers.test.js). Both must give exactly these values and errors. Synthetic data only.",
+  "forms": {
+    "standard": [
+      {"id": "f_name0001", "type": "short_text", "label": {"en": "Name"}, "required": true, "minLength": 2, "maxLength": 50},
+      {"id": "f_email001", "type": "email", "label": {"en": "Email"}, "required": true},
+      {"id": "f_phone001", "type": "phone", "label": {"en": "Phone"}, "required": false},
+      {"id": "f_drop0001", "type": "dropdown", "label": {"en": "Programme"}, "required": true, "options": [{"id": "o_aaaaaaa1", "label": {"en": "Toddler"}}, {"id": "o_aaaaaaa2", "label": {"en": "Primary"}}]},
+      {"id": "f_radio001", "type": "radio", "label": {"en": "Visit"}, "required": false, "options": [{"id": "o_bbbbbbb1", "label": {"en": "Morning"}}, {"id": "o_bbbbbbb2", "label": {"en": "Afternoon"}}]},
+      {"id": "f_cons0001", "type": "checkbox", "label": {"en": "I agree"}, "required": true},
+      {"id": "f_news0001", "type": "checkbox", "label": {"en": "Newsletter"}, "required": false},
+      {"id": "f_long0001", "type": "long_text", "label": {"en": "Message"}, "required": false},
+      {"id": "f_date0001", "type": "date", "label": {"en": "Start date"}, "required": false, "minDate": "2020-01-01", "maxDate": "2030-12-31"},
+      {"id": "f_numb0001", "type": "number", "label": {"en": "Age"}, "required": false, "min": 1, "max": 10},
+      {"id": "f_file0001", "type": "attachment", "label": {"en": "Certificate"}, "required": false, "allowedFileTypes": ["pdf"], "maxFileSizeMb": 5, "maxFiles": 1}
+    ],
+    "unknownType": [
+      {"id": "f_sign0001", "type": "signature", "label": {"en": "Signature"}, "required": false}
+    ]
+  },
+  "cases": [
+    {
+      "name": "a complete, valid response: trimmed, optional checkbox false, empty optional left out",
+      "form": "standard",
+      "answers": {"f_name0001": "  Asha  ", "f_email001": "asha@example.com", "f_phone001": "+91 (98765) 43210", "f_drop0001": "o_aaaaaaa2", "f_cons0001": true, "f_long0001": "", "f_date0001": "2024-02-29", "f_numb0001": "7.5"},
+      "values": {"f_name0001": "Asha", "f_email001": "asha@example.com", "f_phone001": "+91 (98765) 43210", "f_drop0001": "o_aaaaaaa2", "f_cons0001": true, "f_news0001": false, "f_date0001": "2024-02-29", "f_numb0001": "7.5"},
+      "errors": {}
+    },
+    {
+      "name": "nothing answered: every required question, including consent",
+      "form": "standard",
+      "answers": {},
+      "values": {"f_news0001": false},
+      "errors": {"f_name0001": "required", "f_email001": "required", "f_drop0001": "required", "f_cons0001": "required"}
+    },
+    {
+      "name": "formats: too short, email, phone, option, non-boolean consent, impossible date, out of range",
+      "form": "standard",
+      "answers": {"f_name0001": "A", "f_email001": "asha@", "f_phone001": "12345", "f_drop0001": "o_zzzzzzzz", "f_radio001": "o_bbbbbbb1", "f_cons0001": "yes", "f_news0001": true, "f_date0001": "2023-02-29", "f_numb0001": "11"},
+      "values": {"f_radio001": "o_bbbbbbb1", "f_news0001": true},
+      "errors": {"f_name0001": "tooShort", "f_email001": "email", "f_phone001": "phone", "f_drop0001": "option", "f_cons0001": "invalid", "f_date0001": "date", "f_numb0001": "outOfRange"}
+    },
+    {
+      "name": "lengths and types: too long, a number for text, too many digits, early date, not a number, an attachment answer",
+      "form": "standard",
+      "answers": {"f_name0001": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "f_email001": 123, "f_phone001": "+1 234 567 890 123 456", "f_drop0001": "o_aaaaaaa1", "f_cons0001": true, "f_date0001": "2019-12-31", "f_numb0001": "1e3", "f_file0001": "x"},
+      "values": {"f_drop0001": "o_aaaaaaa1", "f_cons0001": true, "f_news0001": false},
+      "errors": {"f_name0001": "tooLong", "f_email001": "invalid", "f_phone001": "phone", "f_date0001": "outOfRange", "f_numb0001": "number", "f_file0001": "invalid"}
+    },
+    {
+      "name": "an answer to a question the form doesn't have",
+      "form": "standard",
+      "answers": {"f_name0001": "Asha", "f_email001": "a@b.co", "f_drop0001": "o_aaaaaaa1", "f_cons0001": true, "f_extra001": "x"},
+      "values": {"f_name0001": "Asha", "f_email001": "a@b.co", "f_drop0001": "o_aaaaaaa1", "f_cons0001": true, "f_news0001": false},
+      "errors": {"_form": "invalid"}
+    },
+    {
+      "name": "blank answers: required is required, optional is left out; boundaries",
+      "form": "standard",
+      "answers": {"f_name0001": "   ", "f_email001": "a@b.co", "f_phone001": "98765 43210", "f_drop0001": "o_aaaaaaa1", "f_cons0001": true, "f_long0001": "   ", "f_date0001": "2030-12-31", "f_numb0001": "-1"},
+      "values": {"f_email001": "a@b.co", "f_phone001": "98765 43210", "f_drop0001": "o_aaaaaaa1", "f_cons0001": true, "f_news0001": false, "f_date0001": "2030-12-31"},
+      "errors": {"f_name0001": "required", "f_numb0001": "outOfRange"}
+    },
+    {
+      "name": "a question of an unknown type is never accepted",
+      "form": "unknownType",
+      "answers": {},
+      "values": {},
+      "errors": {"f_sign0001": "invalid"}
+    }
+  ]
+}

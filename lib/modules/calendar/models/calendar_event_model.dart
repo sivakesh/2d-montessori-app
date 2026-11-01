@@ -36,6 +36,25 @@ class CalendarEventStatus {
 }
 
 class CalendarEventModel {
+  /// The longest description an event can have, in characters as Dart and
+  /// Firestore count them (UTF-16 code units, after trimming): the same
+  /// limit, and the same count, as the public website's copy
+  /// (`WebsitePublicItem.maxBodyLength`), so an event that can be saved can
+  /// always be shown on the website. Emoji and some other symbols count as
+  /// two.
+  static const maxDescriptionLength = 2000;
+
+  /// The description's length as the limit counts it.
+  static int descriptionLength(String description) => description.trim().length;
+
+  /// Why [description] can't be saved, or null.
+  static String? descriptionProblem(String description) {
+    final length = descriptionLength(description);
+    return length > maxDescriptionLength
+        ? 'The description is $length characters; it can be at most $maxDescriptionLength. Shorten it by ${length - maxDescriptionLength}.'
+        : null;
+  }
+
   CalendarEventModel({
     required this.id,
     required this.title,

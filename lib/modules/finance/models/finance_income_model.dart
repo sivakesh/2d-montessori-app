@@ -24,6 +24,7 @@ class FinanceIncomeModel {
     required this.updatedAt,
     required this.createdBy,
     this.sourceModule = '',
+    this.sourceId = '',
     this.isDeleted = false,
   });
   final String id, title, categoryId, categoryName, programType, studentId, studentName, classId, className, paymentMode, accountId, accountName, referenceNo, remarks, ledgerEntryId, createdBy;
@@ -36,6 +37,10 @@ class FinanceIncomeModel {
   /// editing/voiding of a Fee-Collection-generated entry (see
   /// FinanceService.updateIncome/voidIncome's doc comments for why).
   final String sourceModule;
+  /// Raw Firestore field: for a Fee-Collection-generated entry
+  /// (`sourceModule == 'fees'`), the linked fee_receipts document id
+  /// (FinanceService.createFeeIncomeEntry). Read-only here; '' when absent.
+  final String sourceId;
   /// Raw Firestore field already written by FinanceService's void/reversal
   /// paths (_voidIncomeDoc). Not present on an active entry.
   final bool isDeleted;
@@ -65,6 +70,7 @@ class FinanceIncomeModel {
       updatedAt: p(data['updatedAt']),
       createdBy: data['createdBy']?.toString() ?? '',
       sourceModule: data['sourceModule']?.toString() ?? '',
+      sourceId: data['sourceId']?.toString() ?? '',
       isDeleted: data['isDeleted'] == true,
     );
   }

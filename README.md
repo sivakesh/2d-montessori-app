@@ -117,20 +117,57 @@ flutter pub get
 flutter run -d chrome
 ```
 
+In this mode, website forms are written straight to the DEV project's Firestore, and only while **Settings → Public form submissions** is on. To send forms without touching DEV, use the emulator (below). See `docs/website_forms.md`.
+
 ---
 
-### 3️⃣ Build for production
+### 2️⃣b Local form submissions (emulators, development only)
+
+To try sending website forms without touching DEV, run the app against the local Firestore emulator. **Everything** the app reads and writes then goes to the emulator on this machine, never to the DEV or production project. Submissions are written directly to Firestore, as in DEV.
 
 ```bash
-flutter build web
+# Terminal 1: the emulators (needs JDK 21), with the proposed forms rules,
+# under the app's own project id (so the seed and the app share local data)
+PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH" firebase emulators:start \
+  --config test/firebase_rules/forms.firebase.json \
+  --project montessori-app-95988 --only firestore,auth
+
+# Terminal 2: synthetic data — an active "General Enquiry" form on /pages/privacy,
+# and public submissions switched on for the synthetic school
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8086 python3 -I test/emulator/seed_local_forms_dev.py seed
+
+# Terminal 3: the app, connected to the emulator
+flutter run -d chrome --dart-define=APP_ENV=dev --dart-define=DEPLOY_TARGET=dev \
+  --dart-define=FIRESTORE_EMULATOR_HOST=127.0.0.1:8086
+```
+
+- **Try it:** open `/pages/privacy`, fill in the form and send it. You get a reference (`WF-…`).
+- **See what was saved:** `python3 -I test/emulator/seed_local_forms_dev.py list`.
+- **Where data goes:** the emulator keeps it under the app's project ID, locally. Stopping it discards it.
+- **Public submissions setting:** visitors can send forms only while **Settings → Public form submissions** is on (off by default; the seed turns it on). See `docs/website_forms.md`.
+- **Safety:** `FIRESTORE_EMULATOR_HOST` must be `localhost` or `127.0.0.1`. The app won't start with it and `DEPLOY_TARGET=prod`.
+- **Admin screens:** in this mode, admin sign-in still uses the DEV project's Auth. To use the Submissions Inbox locally, the admin's token needs the `role: admin` claim that the proposed rules expect; otherwise use `list` above.
+
+---
+
+### 3️⃣ Build
+
+```bash
+# DEV (montessori-app-95988)
+flutter build web --release --dart-define=DEPLOY_TARGET=dev --dart-define=APP_ENV=prod
+# Production (twod-montessori-prod): only with approval
+flutter build web --release --dart-define=DEPLOY_TARGET=prod --dart-define=APP_ENV=prod
 ```
 
 ---
 
 ### 4️⃣ Deploy to Firebase
 
+Always name the project: the Firebase CLI's active project may be production.
+
 ```bash
-firebase deploy
+# The website (Hosting only)
+firebase deploy --only hosting --project montessori-app-95988
 ```
 
 ---
