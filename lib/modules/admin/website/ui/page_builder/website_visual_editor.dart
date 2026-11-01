@@ -180,8 +180,17 @@ class _WebsiteVisualEditorState extends State<WebsiteVisualEditor> {
 
   void _add(BlockDefinition definition, {BlockPath? at}) {
     final to = at ?? (_selected == null ? BlockPath(_blocks.length) : BlockPath(_selected!.index + 1));
-    _apply(BlockListOps.insert(_blocks, to, BlockRegistry.create(definition)), to, edit: true);
+    final block = BlockRegistry.create(definition);
+    if (!BlockListOps.canInsert(_blocks, block)) return _noRoom();
+    _apply(BlockListOps.insert(_blocks, to, block), to, edit: true);
   }
+
+  /// Why nothing was added: the page's block limit.
+  void _noRoom() => ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(_limitMessage)));
+
+  static final _limitMessage =
+      'This page has room for ${BlockLimits.defaults.maxBlocks} blocks (each section, columns block and block inside them counts). '
+      'Remove or combine blocks, or move content to another page, to add more.';
 
   void _selectChrome(String part) => setState(() {
         _selected = null;
@@ -194,7 +203,10 @@ class _WebsiteVisualEditorState extends State<WebsiteVisualEditor> {
   /// block, or at the end).
   void _addSection(SectionPreset preset, {BlockPath? at}) {
     final to = at ?? (_selected == null ? BlockPath(_blocks.length) : BlockPath(_selected!.index + 1));
-    _apply(BlockListOps.insert(_blocks, to, preset.create()), to, edit: true);
+    final section = preset.create();
+    // Never a section that couldn't hold a block.
+    if (!BlockListOps.canInsert(_blocks, section)) return _noRoom();
+    _apply(BlockListOps.insert(_blocks, to, section), to, edit: true);
   }
 
   void _addToColumn(int index, int column, BlockDefinition definition) {
@@ -551,8 +563,10 @@ class _WebsiteVisualEditorState extends State<WebsiteVisualEditor> {
                 for (final (i, b) in blocks.indexed) ...[
                   _InsertPoint(
                     index: i,
-                    height: WebsiteBlocksView.spaceAbove(b, mobile: mobile),
+                    height: WebsiteBlocksView.spaceAbove(b, mobile: mobile, screen: WebsiteBlocksView.screenOf(MediaQuery.sizeOf(context).width)),
                     canAdd: canAdd,
+                    fitsBlock: (d) => BlockListOps.canAdd(blocks, d),
+                    fitsSection: (p) => BlockListOps.canInsert(blocks, p.create()),
                     onAdd: (d) => _add(d, at: BlockPath(i)),
                     onAddSection: (p) => _addSection(p, at: BlockPath(i)),
                   ),
@@ -563,6 +577,8 @@ class _WebsiteVisualEditorState extends State<WebsiteVisualEditor> {
                     index: blocks.length,
                     height: 48,
                     canAdd: canAdd,
+                    fitsBlock: (d) => BlockListOps.canAdd(blocks, d),
+                    fitsSection: (p) => BlockListOps.canInsert(blocks, p.create()),
                     onAdd: (d) => _add(d, at: BlockPath(blocks.length)),
                     onAddSection: (p) => _addSection(p, at: BlockPath(blocks.length)),
                   ),
@@ -617,22 +633,38 @@ class _WebsiteVisualEditorState extends State<WebsiteVisualEditor> {
           Wrap(
             spacing: 4,
             children: [
-              _SectionMenu(menuKey: 'website-sections-add', label: 'Add section', enabled: canAdd, onSelected: _addSection),
+              _SectionMenu(
+                menuKey: 'website-sections-add',
+                label: 'Add section',
+                enabled: canAdd,
+                fits: (p) => BlockListOps.canInsert(blocks, p.create()),
+                onSelected: _addSection,
+              ),
               _AddMenu(
                 menuKey: 'website-blocks-add',
                 label: 'Add block',
                 enabled: canAdd,
                 disabledTooltip: 'This page has reached its block limit',
                 types: BlockRegistry.all,
+                fits: (d) => BlockListOps.canAdd(blocks, d),
                 onSelected: _add,
               ),
             ],
           ),
           Text(
-            '$count of ${BlockLimits.defaults.maxBlocks} blocks used. Select a block to edit it; new blocks go after the selected one.',
+            '$count of ${BlockLimits.defaults.maxBlocks} blocks used (sections and the blocks inside them each count). Select a block to edit it; new blocks go after the selected one.',
             key: const Key('website-custom-uses-blocks'),
             style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
           ),
+          if (count >= BlockLimits.defaults.maxBlocks - 2)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                count >= BlockLimits.defaults.maxBlocks ? _limitMessage : 'Nearly full: a new section needs room for itself and a block inside it.',
+                key: const Key('website-custom-blocks-limit'),
+                style: const TextStyle(color: Color(0xFF8A6A33), fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ),
           const SizedBox(height: 8),
           if (blocks.isEmpty) const Text('No blocks yet. Add one here or on the page.', style: TextStyle(color: AppColors.textSecondary)),
           ...rows,
@@ -777,7 +809,10 @@ class _WebsiteVisualEditorState extends State<WebsiteVisualEditor> {
 
 /// The "Add" menu of every block type in [types].
 class _AddMenu extends StatelessWidget {
-  const _AddMenu({required this.menuKey, required this.label, required this.enabled, required this.disabledTooltip, required this.types, required this.onSelected});
+  const _AddMenu({required this.menuKey, required this.label, required this.enabled, required this.disabledTooltip, required this.types, required this.onSelected, this.fits});
+
+  /// Whether a type fits on the page (one that doesn't is disabled, with the reason).
+  final bool Function(BlockDefinition)? fits;
 
   final String menuKey;
   final String label;
@@ -799,12 +834,13 @@ class _AddMenu extends StatelessWidget {
           PopupMenuItem(
             key: Key('$menuKey-${d.type}'),
             value: d,
+            enabled: fits?.call(d) ?? true,
             child: ListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
               leading: Icon(blockIcon(StructuredBlock(definition: d, id: '')), size: 20),
               title: Text(d.label),
-              subtitle: Text(d.description),
+              subtitle: Text((fits?.call(d) ?? true) ? d.description : 'No room on this page: it needs space for a block inside it'),
             ),
           ),
       ],
@@ -822,7 +858,11 @@ class _AddMenu extends StatelessWidget {
 
 /// "Add section": the ready-made section layouts ([SectionPreset]).
 class _SectionMenu extends StatelessWidget {
-  const _SectionMenu({required this.menuKey, required this.label, required this.enabled, required this.onSelected});
+  const _SectionMenu({required this.menuKey, required this.label, required this.enabled, required this.onSelected, this.fits});
+
+  /// Whether a section fits on the page with its blocks and room for one
+  /// more (one that doesn't is disabled, with the reason).
+  final bool Function(SectionPreset)? fits;
 
   final String menuKey;
   final String label;
@@ -842,7 +882,14 @@ class _SectionMenu extends StatelessWidget {
           PopupMenuItem(
             key: Key('$menuKey-${p.id}'),
             value: p,
-            child: ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: const Icon(Icons.view_agenda_outlined, size: 20), title: Text(p.label), subtitle: Text(p.description)),
+            enabled: fits?.call(p) ?? true,
+            child: ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.view_agenda_outlined, size: 20),
+              title: Text(p.label),
+              subtitle: Text((fits?.call(p) ?? true) ? p.description : 'No room on this page for this section and a block in it'),
+            ),
           ),
       ],
       child: Padding(
@@ -861,7 +908,12 @@ class _SectionMenu extends StatelessWidget {
 /// a ready-made layout) or a block at [index]. As tall as the space
 /// visitors see above the block that follows.
 class _InsertPoint extends StatelessWidget {
-  const _InsertPoint({required this.index, required this.height, required this.canAdd, required this.onAdd, required this.onAddSection});
+  const _InsertPoint({required this.index, required this.height, required this.canAdd, required this.onAdd, required this.onAddSection, this.fitsBlock, this.fitsSection});
+
+  /// Whether each choice fits on the page (one that doesn't is shown
+  /// disabled, with the reason).
+  final bool Function(BlockDefinition)? fitsBlock;
+  final bool Function(SectionPreset)? fitsSection;
 
   final int index;
   final double height;
@@ -885,11 +937,20 @@ class _InsertPoint extends StatelessWidget {
             onSelected: (choice) => choice is SectionPreset ? onAddSection(choice) : onAdd(choice as BlockDefinition),
             itemBuilder: (context) => [
               const PopupMenuItem<Object>(enabled: false, height: 32, child: Text('ADD A SECTION', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1))),
-              for (final p in SectionPreset.all) PopupMenuItem<Object>(key: Key('$k-section-${p.id}'), value: p, child: Text(p.label)),
+              for (final p in SectionPreset.all)
+                if (fitsSection?.call(p) ?? true)
+                  PopupMenuItem<Object>(key: Key('$k-section-${p.id}'), value: p, child: Text(p.label))
+                else
+                  PopupMenuItem<Object>(key: Key('$k-section-${p.id}'), enabled: false, child: Text('${p.label} (no room on this page)')),
               const PopupMenuDivider(),
               const PopupMenuItem<Object>(enabled: false, height: 32, child: Text('ADD A BLOCK', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1))),
               for (final d in BlockRegistry.all)
-                PopupMenuItem<Object>(key: Key('$k-${d.type}'), value: d, child: Tooltip(message: d.description, child: Text(d.label))),
+                PopupMenuItem<Object>(
+                  key: Key('$k-${d.type}'),
+                  value: d,
+                  enabled: fitsBlock?.call(d) ?? true,
+                  child: Tooltip(message: d.description, child: Text((fitsBlock?.call(d) ?? true) ? d.label : '${d.label} (no room on this page)')),
+                ),
             ],
             child: Container(
               width: 28,
@@ -1031,9 +1092,11 @@ class _CanvasBlock extends StatelessWidget {
             borderRadius: BorderRadius.circular(10),
             hoverColor: AppColors.primary.withValues(alpha: 0.04),
             focusColor: AppColors.primary.withValues(alpha: 0.08),
+            // The outline is drawn over the block, taking no space: the canvas
+            // lays blocks out exactly as the website does, and selecting one
+            // moves nothing.
             child: Container(
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(border: Border.all(color: outline, width: selected ? 2 : 1), borderRadius: BorderRadius.circular(10)),
+              foregroundDecoration: BoxDecoration(border: Border.all(color: outline, width: selected ? 2 : 1), borderRadius: BorderRadius.circular(10)),
               child: Stack(
                 children: [
                   if (absorb) AbsorbPointer(child: content) else content,

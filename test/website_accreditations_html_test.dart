@@ -31,6 +31,7 @@ import 'package:montessori_app/modules/public_website/content/blocks/website_blo
 import 'package:montessori_app/modules/public_website/content/website_content_models.dart';
 import 'package:montessori_app/modules/public_website/content/website_content_repository.dart';
 import 'package:montessori_app/modules/public_website/content/website_design.dart';
+import 'package:montessori_app/modules/public_website/widgets/blocks/public_accreditations.dart';
 import 'package:montessori_app/modules/public_website/public_strings.dart';
 import 'package:montessori_app/modules/public_website/widgets/blocks/public_custom_html.dart';
 import 'package:montessori_app/modules/public_website/widgets/blocks/website_blocks_view.dart';
@@ -525,7 +526,7 @@ void main() {
       expect(BlockRegistry.referencedMedia([block]), ['m_logo1', 'm_cert1', 'm_logo2'], reason: 'the library knows the images are used');
       final created = BlockRegistry.create(d);
       expect(created.items('items'), hasLength(1));
-      expect(BlockRegistry.blockProblems(created).single, contains('organisation or accrediting body'));
+      expect(BlockRegistry.blockProblems(created).single, contains('add an organisation, a credential or an image'), reason: 'the organisation is optional, an empty card is not');
     });
 
     test('dates: three forms, real days only, expiry not before issue', () {
@@ -570,12 +571,19 @@ void main() {
       expect((card(2).top, card(3).left), (card(1).top, card(1).left), reason: 'cards per row set to 2');
     });
 
-    testWidgets('only what was entered: dates as entered, no verified mark; images with descriptions; no image is fine', (tester) async {
+    testWidgets('only what was entered: dates as entered (in the details), no verified mark; images with descriptions; no image is fine', (tester) async {
       await pumpBlocks(tester, [_parse(_accreditations())]);
-      expect(find.text('Issued March 2024 · Expires March 2027'), findsOneWidget);
       expect(find.textContaining(RegExp('verified|valid|expired', caseSensitive: false)), findsNothing);
+      // The card shows its image only: the certificate (the logo is in the details).
       final images = tester.widgetList<PublicWebsiteImage>(find.byType(PublicWebsiteImage)).toList();
-      expect([for (final i in images) i.semanticLabel], ['Certificate on the school wall', 'Synthetic Montessori Council logo', 'Synthetic Teacher Training Board logo']);
+      expect([for (final i in images) i.semanticLabel], ['Certificate on the school wall', 'Synthetic Teacher Training Board logo']);
+      await tester.tap(key('public-accreditation-i_accred0001-open'));
+      await tester.pumpAndSettle();
+      expect(find.text('Issued March 2024'), findsOneWidget);
+      expect(find.text('Expires March 2027'), findsOneWidget);
+      expect(find.textContaining(RegExp('verified|valid|expired', caseSensitive: false)), findsNothing, reason: 'Verify is a link, not a status');
+      await tester.tap(key('public-accreditation-details-close'));
+      await tester.pumpAndSettle();
       expect(find.descendant(of: key('public-accreditation-i_accred0003'), matching: find.byType(PublicWebsiteImage)), findsNothing);
       expect(find.descendant(of: key('public-accreditation-i_accred0003'), matching: find.byIcon(Icons.workspace_premium_outlined)), findsOneWidget);
 
@@ -585,16 +593,22 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('the link: labelled for screen readers, opens only on the website', (tester) async {
+    testWidgets('the Verify link: in the details only, labelled for screen readers; nothing opens in the editor', (tester) async {
       final semantics = tester.ensureSemantics();
       await pumpBlocks(tester, [_parse(_accreditations())]);
-      final link = key('public-accreditation-i_accred0001-link');
-      expect(tester.widget<TextButton>(link).onPressed, isNotNull);
-      expect(find.bySemanticsLabel('More information about Synthetic Montessori Council'), findsOneWidget);
+      expect(key('public-accreditation-i_accred0001-link'), findsNothing, reason: 'not on the card');
+      await tester.tap(key('public-accreditation-i_accred0001-open'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<OutlinedButton>(key('public-accreditation-details-link')).onPressed, isNotNull);
+      expect(find.bySemanticsLabel('Verify Synthetic Montessori Council (opens in a new tab)'), findsOneWidget);
+      await tester.tap(key('public-accreditation-details-close'));
+      await tester.pumpAndSettle();
+      await tester.tap(key('public-accreditation-i_accred0002-open'));
+      await tester.pumpAndSettle();
+      expect(key('public-accreditation-details-link'), findsNothing, reason: 'no link entered');
       semantics.dispose();
-      expect(key('public-accreditation-i_accred0002-link'), findsNothing, reason: 'no link entered');
       await pumpBlocks(tester, [_parse(_accreditations())], interactive: false);
-      expect(tester.widget<TextButton>(link).onPressed, isNull);
+      expect(key('public-accreditation-i_accred0001-open'), findsNothing);
     });
 
     testWidgets('logo strip: wraps at every width; names under logos; Tamil text and dates', (tester) async {
@@ -608,10 +622,19 @@ void main() {
         }
       }
       expect(find.text('Synthetic Early Years Forum'), findsOneWidget);
+      expect(find.text('உறுப்பினர் பள்ளி'), findsNothing, reason: 'English page');
       await pumpBlocks(tester, [_parse(_accreditations())], language: PublicLanguage.tamil);
       expect(find.text('அங்கீகாரங்கள்'), findsOneWidget);
+      await tester.tap(key('public-accreditation-i_accred0001-open'));
+      await tester.pumpAndSettle();
       expect(find.text('உறுப்பினர் பள்ளி'), findsOneWidget);
-      expect(find.text('வழங்கப்பட்டது: மார்ச் 2024 · காலாவதி: மார்ச் 2027'), findsOneWidget);
+      expect(find.text('வழங்கப்பட்டது: மார்ச் 2024'), findsOneWidget);
+      expect(find.text('காலாவதி: மார்ச் 2027'), findsOneWidget);
+      expect(find.text('சரிபார்க்க'), findsOneWidget, reason: 'Verify in Tamil');
+      await tester.tap(key('public-accreditation-details-close'));
+      await tester.pumpAndSettle();
+      await tester.tap(key('public-accreditation-i_accred0002-open'));
+      await tester.pumpAndSettle();
       expect(find.text('Synthetic Teacher Training Board'), findsOneWidget, reason: 'no Tamil: the English');
     });
   });
@@ -650,6 +673,7 @@ void main() {
     }
 
     List<WebsiteBlock> blocks(WidgetTester tester) => tester.widget<WebsiteVisualEditor>(key('website-custom-blocks')).blocks;
+    StructuredBlock current(WidgetTester tester) => blocks(tester).single as StructuredBlock;
 
     testWidgets('Add block offers both; Custom HTML: source, warning, what is removed, a preview; saved and reopened exactly', (tester) async {
       final id = await page([]);
@@ -703,6 +727,110 @@ void main() {
       await tap(tester, key('website-block-$blockId-select'));
       await tap(tester, key('$prefix-item-$second-remove'));
       expect([for (final i in current().items('items')) i.id], [first]);
+    });
+
+    testWidgets('layout of each accreditation: six visible controls in the block’s panel; the canvas follows; an empty organisation saves; reopened as saved', (tester) async {
+      final raw = _accreditations(items: [
+        _item('i_accred0001', extra: {'title': {'en': 'Member school', 'ta': 'உறுப்பினர் பள்ளி'}, 'logoMediaId': 'm_logo1', 'target': 'https://example.test/registry/123'}),
+        _item('i_accred0002', name: '', extra: {'title': {'en': 'Quality mark', 'ta': ''}}),
+      ]);
+      final id = await page([raw]);
+      await open(tester, id);
+      await tap(tester, key('website-block-b_accred0001-select'));
+      const prefix = 'website-block-b_accred0001';
+      final panel = find.descendant(of: key('website-editor-properties'), matching: find.byType(Scrollable)).first;
+      Future<void> reveal(String k) => tester.scrollUntilVisible(key(k), 120, scrollable: panel);
+      await reveal('$prefix-layout-heading');
+      expect(find.text('Layout of each accreditation'), findsOneWidget);
+      for (final f in ['imageAlign', 'textAlign', 'verticalAlign', 'imageSize', 'imageSpacing', 'cardPadding']) {
+        await reveal('$prefix-$f');
+        expect(key('$prefix-$f'), findsOneWidget, reason: f);
+      }
+      expect(BlockRegistry.blockProblems(current(tester)), isEmpty, reason: 'the second accreditation has no organisation');
+
+      Future<void> choose(String field, String value) async {
+        await reveal('$prefix-$field');
+        await tap(tester, key('$prefix-$field'));
+        await tester.tap(key('$prefix-$field-$value').last);
+        await tester.pumpAndSettle();
+      }
+
+      await choose('imageAlign', 'center');
+      await choose('textAlign', 'center');
+      await choose('cardPadding', '32');
+      // The canvas shows it at once: the image is centred on the card.
+      final area = tester.getRect(key('public-accreditation-i_accred0001-visual'));
+      // (The picture, or the plain badge while the image isn't published.)
+      final image = tester.getRect(find.descendant(of: key('public-accreditation-i_accred0001-visual'), matching: find.byWidgetPredicate((w) => w is PublicWebsiteImage || w is Icon)).first);
+      expect(image.center.dx, closeTo(area.center.dx, 0.5));
+
+      // Clear the first organisation too: still valid (it has a credential).
+      await tester.scrollUntilVisible(field('$prefix-items-item-i_accred0001-name-en'), 120, scrollable: panel);
+      await type(tester, '$prefix-items-item-i_accred0001-name-en', '');
+      expect(BlockRegistry.blockProblems(current(tester)), isEmpty);
+
+      await tap(tester, key('website-custom-save-draft'));
+      final stored = ((await firestore.collection(WebsiteCollections.pageDrafts).doc(id).get()).data()!['blocks'] as List).single as Map;
+      expect([stored['imageAlign'], stored['textAlign'], stored['cardPadding']], ['center', 'center', '32']);
+      expect(stored.containsKey('verticalAlign'), isFalse, reason: 'unchanged settings are not stored');
+      expect((stored['items'] as List).first['name'], {'en': '', 'ta': ''});
+      expect((stored['items'] as List).first['title'], {'en': 'Member school', 'ta': 'உறுப்பினர் பள்ளி'}, reason: 'Tamil kept');
+
+      await open(tester, id);
+      final reopened = current(tester);
+      expect([reopened.option('imageAlign'), reopened.option('textAlign'), reopened.option('cardPadding'), reopened.option('verticalAlign')], ['center', 'center', '32', 'top']);
+    });
+
+    testWidgets('card background: in each accreditation’s panel; the canvas follows; one card at a time; kept after saving; no details popup while editing', (tester) async {
+      final raw = _accreditations(items: [
+        _item('i_accred0001', extra: {'title': {'en': 'Member school', 'ta': 'உறுப்பினர் பள்ளி'}, 'logoMediaId': 'm_logo1'}),
+        _item('i_accred0002', name: 'Synthetic Forum'),
+        _item('i_accred0003', name: 'Synthetic Board', extra: {'background': 'transparent'}),
+      ]);
+      final id = await page([raw]);
+      await open(tester, id);
+      await tap(tester, key('website-block-b_accred0001-select'));
+      final panel = find.descendant(of: key('website-editor-properties'), matching: find.byType(Scrollable)).first;
+      const item1 = 'website-block-b_accred0001-items-item-i_accred0001-background';
+      const item2 = 'website-block-b_accred0001-items-item-i_accred0002-background';
+      await tester.scrollUntilVisible(key(item1), 120, scrollable: panel);
+      expect(find.descendant(of: key(item1), matching: find.text('Card background')), findsOneWidget);
+      expect(find.descendant(of: key(item1), matching: find.textContaining('Automatic')), findsOneWidget);
+      Color? canvas(String item) => tester.widget<Material>(find.byKey(Key('public-accreditation-$item')).first).color;
+      expect(canvas('i_accred0001'), Colors.white, reason: 'automatic');
+      expect(canvas('i_accred0003'), Colors.transparent);
+
+      Future<void> pick(String field, String option) async {
+        await tester.scrollUntilVisible(key(field), 120, scrollable: panel);
+        await tap(tester, key('$field-choose'));
+        await tap(tester, key('$field-$option'));
+      }
+
+      await pick(item1, 'legacy-token:goldLight');
+      expect(canvas('i_accred0001'), SiteDesign.defaults.colorOf('goldLight'), reason: 'shown at once');
+      expect(find.descendant(of: key(item1), matching: find.text('Warm beige')), findsOneWidget);
+      await pick(item2, 'legacy-#EEF5EA');
+      expect(canvas('i_accred0002'), const Color(0xFFEEF5EA));
+      expect(canvas('i_accred0001'), SiteDesign.defaults.colorOf('goldLight'), reason: 'the other card is unchanged');
+
+      // Clicking a card on the canvas edits; it never opens the visitors' details.
+      await tester.tapAt(tester.getCenter(find.byKey(const Key('public-accreditation-i_accred0001')).first));
+      await tester.pumpAndSettle();
+      expect(find.byType(PublicAccreditationDetails), findsNothing);
+
+      await tap(tester, key('website-custom-save-draft'));
+      final stored = ((await firestore.collection(WebsiteCollections.pageDrafts).doc(id).get()).data()!['blocks'] as List).single as Map;
+      expect([for (final i in stored['items'] as List) (i as Map)['background']], ['token:goldLight', '#EEF5EA', 'transparent']);
+      expect(((stored['items'] as List).first as Map)['title'], {'en': 'Member school', 'ta': 'உறுப்பினர் பள்ளி'}, reason: 'Tamil kept');
+      expect(((stored['items'] as List).first as Map)['logoMediaId'], 'm_logo1');
+
+      await open(tester, id);
+      expect([for (final i in current(tester).items('items')) i.string('background')], ['token:goldLight', '#EEF5EA', 'transparent']);
+      // Back to automatic: not stored again.
+      await tap(tester, key('website-block-b_accred0001-select'));
+      await tester.scrollUntilVisible(key(item1), 120, scrollable: panel);
+      await tap(tester, key('$item1-reset'));
+      expect(((current(tester).toMap()['items'] as List).first as Map).containsKey('background'), isFalse);
     });
   });
 

@@ -278,8 +278,10 @@ void main() {
       expect(key('website-canvas-toolbar-b_sect000001'), findsOneWidget);
       await tap(tester, key('website-block-b_sect000001-style-background-choose'));
       await tap(tester, key('website-block-b_sect000001-style-background-token-sageLight'));
-      await tap(tester, key('website-block-b_sect000001-style-padding'));
-      await tester.tap(find.byKey(const Key('website-block-b_sect000001-style-padding-72')).last);
+      // Section padding: top and bottom linked, on desktop (the earlier
+      // single dropdown is now this control).
+      await tap(tester, key('website-block-b_sect000001-style-section-padding-link'));
+      await tester.enterText(find.byKey(const Key('website-block-b_sect000001-style-section-padding-top')), '72');
       await tester.pumpAndSettle();
 
       // Add a block inside a column from the canvas.
@@ -288,7 +290,12 @@ void main() {
 
       await tap(tester, key('website-custom-save-draft'));
       final section = ((await doc(WebsiteCollections.pageDrafts, id))!['blocks'] as List).single as Map;
-      expect(section['style'], {'background': 'token:sageLight', 'padding': '72'});
+      expect(section['style'], {
+        'background': 'token:sageLight',
+        'blockPadding': {
+          'desktop': {'top': 72, 'bottom': 72},
+        },
+      });
       final right = (((section['columns'] as List)[1] as Map)['blocks'] as List).single as Map;
       expect(right['heading'], {'en': 'Right side', 'ta': ''});
     });

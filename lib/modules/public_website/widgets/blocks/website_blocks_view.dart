@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../content/blocks/block_registry.dart';
+import '../../content/blocks/block_spacing.dart';
 import '../../content/blocks/embed_providers.dart';
 import '../../content/blocks/field_spec.dart';
 import '../../content/blocks/website_block.dart';
@@ -16,9 +17,12 @@ import '../public_website_image.dart';
 import '../../../forms/ui/public_website_form.dart';
 import 'public_accreditations.dart';
 import 'public_announcements_feed.dart';
+import 'block_spacing_box.dart';
+import 'public_asymmetric_gallery.dart';
 import 'public_custom_html.dart';
 import 'public_embed_block.dart';
 import 'public_map_block.dart';
+import 'public_testimonials.dart';
 import 'public_events_feed.dart';
 import 'public_item_cards.dart';
 import 'public_feature_widgets.dart';
@@ -26,13 +30,14 @@ import 'public_feature_widgets.dart';
 /// Follows a block's button link: a public page in place, an allowed
 /// external link in a new tab. Checked again first; an unsafe link does
 /// nothing.
-Future<void> followBlockLink(BuildContext context, String target) async {
+Future<void> followBlockLink(BuildContext context, String target, {bool newTab = true}) async {
   if (SafeLinkTarget.validate(target) != null) return;
   if (SafeLinkTarget.isInternal(target)) {
     PublicRoutes.open(context, target);
     return;
   }
-  await launchUrl(Uri.parse(target), mode: LaunchMode.externalApplication);
+  // [newTab] false: another site in this tab (on the web).
+  await launchUrl(Uri.parse(target), mode: newTab ? LaunchMode.externalApplication : LaunchMode.platformDefault, webOnlyWindowName: newTab ? null : '_self');
 }
 
 /// The icon a stored icon name stands for ([blockIconNames]).
@@ -117,14 +122,31 @@ class WebsiteBlocksView extends StatelessWidget {
   static bool rendersVisibly(WebsiteBlock block, Map<String, WebsiteMedia> media, PublicLanguage language) =>
       _BlockWidget.maybe(block, WebsiteBlocksView(blocks: const [], media: media, language: language)) != null;
 
-  /// The space above [block] on the page.
-  static double spaceAbove(WebsiteBlock block, {required bool mobile}) {
+  /// The screen size [width] is, as block spacing names it.
+  static String screenOf(double width) => switch (PublicLayout.of(width)) {
+        PublicLayout.mobile => 'mobile',
+        PublicLayout.tablet => 'tablet',
+        PublicLayout.desktop => 'desktop',
+      };
+
+  /// Whether [block] sets its own top margin on [screen]: it then is the
+  /// space above the block, in place of [spaceAbove] or [spaceInside]
+  /// (never added to them).
+  static bool ownsSpaceAbove(WebsiteBlock block, String? screen) =>
+      screen != null && block is StructuredBlock && BlockSpacing.resolve(block.style[BlockSpacing.margin], screen, 'top') != null;
+
+  /// The space above [block] on the page (none when its own top margin on
+  /// [screen] takes its place).
+  static double spaceAbove(WebsiteBlock block, {required bool mobile, String? screen}) {
+    if (ownsSpaceAbove(block, screen)) return 0;
     final spacing = block is StructuredBlock ? block.spacing : 'normal';
     return switch (spacing) { 'none' => 0.0, 'compact' => 24.0, 'spacious' => 80.0, _ => 56.0 } * (mobile ? 0.7 : 1);
   }
 
-  /// The space above [block] inside a section (smaller than on the page).
-  static double spaceInside(WebsiteBlock block, {required bool mobile}) {
+  /// The space above [block] inside a section (smaller than on the page;
+  /// none when its own top margin on [screen] takes its place).
+  static double spaceInside(WebsiteBlock block, {required bool mobile, String? screen}) {
+    if (ownsSpaceAbove(block, screen)) return 0;
     final spacing = block is StructuredBlock ? block.spacing : 'normal';
     return switch (spacing) { 'none' => 0.0, 'compact' => 16.0, 'spacious' => 56.0, _ => 32.0 } * (mobile ? 0.75 : 1);
   }
@@ -137,7 +159,7 @@ class WebsiteBlocksView extends StatelessWidget {
       'content' => 960.0,
       'wide' => 1160.0,
       _ => switch (block.type) {
-          'hero' || 'cards' || 'features' || 'gallery_feed' || 'accreditations' => 1160.0,
+          'hero' || 'cards' || 'features' || 'gallery_feed' || 'accreditations' || 'asymmetric_gallery' || 'testimonials' => 1160.0,
           'page_header' || 'notice' => 760.0,
           _ => contentMaxWidth,
         },
@@ -158,7 +180,7 @@ class WebsiteBlocksView extends StatelessWidget {
     for (final block in blocks) {
       final widget = _BlockWidget.maybe(block, this);
       if (widget == null) continue;
-      if (spaced) children.add(SizedBox(height: spaceAbove(block, mobile: layout.isMobile)));
+      if (spaced) children.add(SizedBox(height: spaceAbove(block, mobile: layout.isMobile, screen: _BlockWidget.screenOf(layout))));
       children.add(KeyedSubtree(key: Key('public-block-${block.id}'), child: fullBleed ? place(block, widget) : widget));
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
@@ -250,6 +272,8 @@ class _BlockWidget extends StatelessWidget {
     // An image or grid with nothing to show (no published image) is left out.
     if (b.type == 'image' && view.media[b.string('mediaId')] == null) return null;
     if (b.type == 'gallery' && b.text('heading').resolve(view.language).isEmpty && !b.items('images').any((i) => view.media[i.string('mediaId')] != null)) return null;
+    if (b.type == 'asymmetric_gallery' && !PublicAsymmetricGallery.hasContent(b, view.media, view.language)) return null;
+    if (b.type == 'testimonials' && !PublicTestimonials.hasContent(b, view.language)) return null;
     // A section or columns block with nothing to show (no visible block,
     // and for a section no heading text either) is left out.
     if (containerTypes.contains(b.type) &&
@@ -305,7 +329,9 @@ class _BlockWidget extends StatelessWidget {
         ],
       );
 
-  /// The block's safe buttons with a label, as visitors see them.
+  /// The block's safe buttons with a label, as visitors see them. A label
+  /// is never shortened: one too long for the space wraps onto more lines
+  /// (centred in a filled or outlined button) and the button grows.
   Widget? _buttons(List<BlockItem> items, _Look look, {WrapAlignment? align}) {
     final shown = [
       for (final item in items)
@@ -323,8 +349,10 @@ class _BlockWidget extends StatelessWidget {
             final onPressed = view.interactive ? () => followBlockLink(context, target) : null;
             final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(10));
             const padding = EdgeInsets.symmetric(horizontal: 24, vertical: 16);
-            final label = Text(item.text('label').resolve(language), style: look.buttonLabelStyle);
+            final text = item.text('label').resolve(language);
             final key = Key('public-block-button-${item.id}');
+            final link = item.string('variant') == 'link' || item.string('variant') == 'back';
+            final label = Text(text, key: Key('public-block-button-${item.id}-label'), style: look.buttonLabelStyle, textAlign: link ? TextAlign.start : TextAlign.center);
             return switch (item.string('variant')) {
               'secondary' => OutlinedButton(
                   key: key,
@@ -359,10 +387,46 @@ class _BlockWidget extends StatelessWidget {
 
   static double? _aspect(String value) => switch (value) { '16:9' => 16 / 9, '4:3' => 4 / 3, '1:1' => 1.0, '3:4' => 3 / 4, _ => null };
 
+  /// The screen size [layout] is, as spacing names it.
+  static String screenOf(PublicLayout layout) => switch (layout) { PublicLayout.mobile => 'mobile', PublicLayout.tablet => 'tablet', PublicLayout.desktop => 'desktop' };
+
+  /// The block's own padding and margin on [layout] ([BlockSpacing]; sides
+  /// not set are Automatic).
+  SpacingSides _spacing(String kind, PublicLayout layout) => BlockSpacing.sidesOn(block.style[kind], screenOf(layout));
+
+  /// A block surface (its background and border) with [automatic] padding
+  /// inside: exactly as before unless the block sets its own padding,
+  /// whose sides then replace those of [automatic].
+  Widget _surface(PublicLayout layout, {Key? key, double? width, required Decoration? decoration, required EdgeInsets automatic, required Widget child}) {
+    final own = _spacing(BlockSpacing.padding, layout);
+    if (own.isAutomatic) return Container(key: key, width: width, padding: automatic, decoration: decoration, child: child);
+    final p = own.over(top: automatic.top, right: automatic.right, bottom: automatic.bottom, left: automatic.left);
+    return Container(key: key, width: width, decoration: decoration, child: FitPadding(padding: EdgeInsets.fromLTRB(p.left, p.top, p.right, p.bottom), child: child));
+  }
+
   @override
   Widget build(BuildContext context) {
-    final strings = PublicStrings.of(language);
     final layout = PublicLayout.of(MediaQuery.sizeOf(context).width);
+    final drawn = _build(context, layout);
+    // The margin, outside the block's surface; Automatic: none (the space
+    // between blocks is the page's or the section's, as before).
+    final margin = _spacing(BlockSpacing.margin, layout);
+    final padding = _spacing(BlockSpacing.padding, layout);
+    // With its own side spacing a block spans the width it is given (on a
+    // full-width page, the content width), so its sides are measured from
+    // those edges; otherwise a narrow block is centred there and a side
+    // would move it by only half (as before when nothing is set).
+    final sides = margin.left != null || margin.right != null || padding.left != null || padding.right != null;
+    Widget out = drawn;
+    if (!margin.isAutomatic) {
+      final m = margin.over();
+      out = FitPadding(key: Key('public-block-${block.id}-margin'), padding: EdgeInsets.fromLTRB(m.left, m.top, m.right, m.bottom), child: out);
+    }
+    return sides ? SizedBox(width: double.infinity, child: out) : out;
+  }
+
+  Widget _build(BuildContext context, PublicLayout layout) {
+    final strings = PublicStrings.of(language);
     final look = _Look(context, block);
     if (block.type == 'section') return _section(context, layout, look);
     final content = switch (block.type) {
@@ -375,8 +439,21 @@ class _BlockWidget extends StatelessWidget {
         ),
       'image' => _image(strings, look),
       'gallery' => _gallery(context, strings, layout, look),
-      'cta' => Container(
-          padding: EdgeInsets.all(layout.isMobile ? 24 : 36),
+      'asymmetric_gallery' => PublicAsymmetricGallery(
+          block: block,
+          media: view.media,
+          language: language,
+          interactive: view.interactive,
+          headingStyle: look.headingStyle,
+          bodyStyle: look.bodyStyle,
+          captionColor: look.caption,
+          background: backgroundOf(block, look.design),
+          border: _border(look.design),
+          ownPadding: _spacing(BlockSpacing.padding, layout),
+        ),
+      'cta' => _surface(
+          layout,
+          automatic: EdgeInsets.all(layout.isMobile ? 24 : 36),
           decoration: BoxDecoration(
             color: (block.style['background'] is String && SiteDesign.isColorValue(block.style['background']) ? look.design.resolve(block.style['background']) : null) ??
                 look.design.colorOf('sageLight'),
@@ -399,11 +476,20 @@ class _BlockWidget extends StatelessWidget {
         ),
       'hero' => _hero(strings, layout, look),
       'cards' => _cards(layout, look),
+      'testimonials' => PublicTestimonials(
+          block: block,
+          media: view.media,
+          language: language,
+          headingStyle: look.headingStyle,
+          bodyStyle: look.bodyStyle,
+          headingColor: look.heading,
+        ),
       'features' => _features(layout, look),
       'page_header' => _pageHeader(strings, layout, look),
-      'notice' => Container(
+      'notice' => _surface(
+          layout,
           width: double.infinity,
-          padding: const EdgeInsets.all(24),
+          automatic: const EdgeInsets.all(24),
           decoration: BoxDecoration(color: backgroundOf(block, look.design) ?? look.design.colorOf('goldLight'), borderRadius: BorderRadius.circular(16), border: _border(look.design)),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -515,12 +601,21 @@ class _BlockWidget extends StatelessWidget {
         ),
       _ => const SizedBox.shrink(),
     };
-    // A notice draws its own box; a call to action its own background.
-    final background = block.type == 'cta' || block.type == 'notice' ? null : backgroundOf(block, look.design);
-    final border = block.type == 'cta' || block.type == 'notice' ? null : _border(look.design);
-    if (background == null && border == null) return content;
-    return Container(
-      padding: EdgeInsets.all(layout.isMobile ? 20 : 32),
+    // A notice draws its own box; a call to action and an asymmetric
+    // gallery their own background.
+    final own = block.type == 'cta' || block.type == 'notice' || block.type == 'asymmetric_gallery';
+    final background = own ? null : backgroundOf(block, look.design);
+    final border = own ? null : _border(look.design);
+    if (background == null && border == null) {
+      // No surface: the block's own padding (if any) around its content.
+      final padding = own ? const SpacingSides() : _spacing(BlockSpacing.padding, layout);
+      if (padding.isAutomatic) return content;
+      final p = padding.over();
+      return FitPadding(key: Key('public-block-${block.id}-padding'), padding: EdgeInsets.fromLTRB(p.left, p.top, p.right, p.bottom), child: content);
+    }
+    return _surface(
+      layout,
+      automatic: EdgeInsets.all(layout.isMobile ? 20 : 32),
       decoration: BoxDecoration(color: background, borderRadius: BorderRadius.circular(20), border: border),
       child: content,
     );
@@ -753,7 +848,7 @@ class _BlockWidget extends StatelessWidget {
         Column(
           key: Key('public-block-column-${c.id}'),
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: _columnChildren(context, c, i, (child) => WebsiteBlocksView.spaceInside(child, mobile: mobile)),
+          children: _columnChildren(context, c, i, (child) => WebsiteBlocksView.spaceInside(child, mobile: mobile, screen: screenOf(layout))),
         ),
     ];
     final padding = paddingOf(block, 'padding', mobile: mobile, fallback: 48);
@@ -777,22 +872,25 @@ class _BlockWidget extends StatelessWidget {
     );
     if (view.fullBleed) {
       final side = borderColor == null || borderWidth <= 0 ? BorderSide.none : BorderSide(color: borderColor, width: borderWidth);
-      return Container(
+      return _surface(
+        layout,
         key: Key('public-section-${block.id}'),
         width: double.infinity,
         decoration: BoxDecoration(color: background, border: Border(top: side, bottom: side)),
-        padding: EdgeInsets.only(top: top, bottom: bottom),
+        automatic: EdgeInsets.only(top: top, bottom: bottom),
         child: PublicContentWidth(maxWidth: view.contentWidthOf(block), child: inner),
       );
     }
-    return Container(
+    final across = background == null && borderColor == null ? 0.0 : (mobile ? 20.0 : 32.0);
+    return _surface(
+      layout,
       key: Key('public-section-${block.id}'),
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(20),
         border: borderColor == null || borderWidth <= 0 ? null : Border.all(color: borderColor, width: borderWidth),
       ),
-      padding: EdgeInsets.fromLTRB(background == null && borderColor == null ? 0 : (mobile ? 20 : 32), top, background == null && borderColor == null ? 0 : (mobile ? 20 : 32), bottom),
+      automatic: EdgeInsets.fromLTRB(across, top, across, bottom),
       child: inner,
     );
   }
@@ -880,10 +978,31 @@ class _BlockWidget extends StatelessWidget {
         Builder(builder: (context) {
           final target = item.string('target').trim();
           final safe = target.isNotEmpty && SafeLinkTarget.validate(target) == null;
+          final title = item.text('title').resolve(language);
+          // Only a published image: a banner across the top of the card,
+          // half as tall as it is wide, covered (centred on its focal
+          // point; never stretched). Its alt text is read; without one it is
+          // decorative (the title is read once, from the card).
+          final image = view.media[item.string('imageMediaId')];
+          final alt = image?.alt.resolve(language) ?? '';
           return PublicPathwayCard(
             key: Key('public-card-${item.id}'),
-            icon: blockIconData(item.string('icon')),
-            title: item.text('title').resolve(language),
+            image: image == null
+                ? null
+                : ExcludeSemantics(
+                    excluding: alt.isEmpty,
+                    child: PublicWebsiteImage(
+                      key: Key('public-card-${item.id}-image'),
+                      media: image,
+                      aspectRatio: 2,
+                      fit: BoxFit.cover,
+                      borderRadius: 0,
+                      semanticLabel: alt,
+                      errorLabel: PublicStrings.of(language).imageUnavailable,
+                    ),
+                  ),
+            icon: item.string('icon') == 'none' ? null : blockIconData(item.string('icon')),
+            title: title,
             body: item.text('body').resolve(language),
             cta: safe ? item.text('linkLabel').resolve(language) : '',
             route: '',
@@ -927,7 +1046,17 @@ class _BlockWidget extends StatelessWidget {
       line: look.design.colorOf('line'),
       badge: look.design.colorOf('sageLight'),
     );
-    final items = [for (final item in block.items('items')) AccreditationView.of(item, view.media, language)];
+    final items = [for (final item in block.items('items')) AccreditationView.of(item, view.media, language, design: look.design)];
+    // The details are on a neutral surface, whatever the section's colours.
+    final details = AccreditationStyle(
+      title: PublicText.body.copyWith(color: look.design.colorOf('forestDark'), fontSize: 18, fontWeight: FontWeight.w700),
+      body: PublicText.body.copyWith(color: look.design.colorOf('ink')),
+      muted: PublicText.body.copyWith(color: look.design.colorOf('muted'), fontSize: 13),
+      accent: look.design.colorOf('forest'),
+      line: look.design.colorOf('line'),
+      badge: look.design.colorOf('sageLight'),
+    );
+    final accreditationLayout = AccreditationLayout.of(block);
     void open(String target) => followBlockLink(context, target);
     final Widget body;
     if (block.option('display') == 'logos') {
@@ -936,17 +1065,20 @@ class _BlockWidget extends StatelessWidget {
         alignment: look.wrap,
         spacing: layout.isMobile ? 16 : 32,
         runSpacing: 24,
-        children: [for (final i in items) PublicAccreditationLogo(item: i, style: style, language: language, interactive: view.interactive, onOpen: open)],
+        crossAxisAlignment: accreditationLayout.centred ? WrapCrossAlignment.center : WrapCrossAlignment.start,
+        children: [for (final i in items) PublicAccreditationLogo(item: i, style: style, language: language, interactive: view.interactive, onOpen: open, layout: accreditationLayout, detailsStyle: details)],
       );
     } else {
       final perRow = _perRow(layout) ?? switch (layout) { PublicLayout.mobile => 1, PublicLayout.tablet => 2, PublicLayout.desktop => 3 };
       body = KeyedSubtree(
         key: Key('public-accreditations-${block.id}-cards'),
         child: perRowGrid(
-          [for (final i in items) PublicAccreditationCard(item: i, style: style, language: language, interactive: view.interactive, onOpen: open)],
+          [for (final i in items) PublicAccreditationCard(item: i, style: style, language: language, interactive: view.interactive, onOpen: open, layout: accreditationLayout, detailsStyle: details)],
           perRow,
           gap: 24,
           rowGap: layout.isMobile ? 16 : 24,
+          // Centred content: the cards in a row share its height.
+          stretch: accreditationLayout.centred,
         ),
       );
     }

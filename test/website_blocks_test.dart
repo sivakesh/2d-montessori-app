@@ -241,7 +241,7 @@ void main() {
         {'id': 'b_f', 'type': 'columns', 'v': 1, 'layout': '1:1:1', 'columns': [{'id': 'c_1', 'blocks': [{'id': 'b_g', 'type': 'columns', 'v': 1, 'columns': [{'id': 'c_9', 'blocks': [{'id': 'b_z', 'type': 'divider', 'v': 1}]}]}]}]},
         {'id': 'b_a', 'type': 'divider', 'v': 1},
         {'id': 'bad id', 'type': 'divider', 'v': 1, 'style': {'background': 'neon'}},
-        {'id': 'b_h', 'type': 'buttons', 'v': 1, 'buttons': [{'id': 'i_3', 'label': {'others': ''}, 'target': '/admissions'}, {'id': 'i_3', 'label': {'en': 'B', 'ta': 'ப', 'hi': 'x' * 41}, 'target': '/'}]},
+        {'id': 'b_h', 'type': 'buttons', 'v': 1, 'buttons': [{'id': 'i_3', 'label': {'others': ''}, 'target': '/admissions'}, {'id': 'i_3', 'label': {'en': 'B', 'ta': 'ப', 'hi': 'x' * 121}, 'target': '/'}]},
       ]);
       final errors = BlockRegistry.validate(blocks).join('\n');
       expect(errors, contains('Block 1 (Text): add a heading or some text.'));
@@ -259,10 +259,10 @@ void main() {
       expect(errors, contains('“neon” is not a background option'));
       expect(errors, contains('Button 1: enter button label in English.'));
       expect(errors, contains('the id “i_3” is used more than once'));
-      expect(errors, contains('Button 2: Button label must be 40 characters or fewer.'), reason: 'every language is limited');
+      expect(errors, contains('Button 2: Button label must be 120 characters or fewer.'), reason: 'every language is limited');
 
-      final many = [for (var i = 0; i < 41; i++) BlockRegistry.create(BlockRegistry.divider)];
-      expect(BlockRegistry.validate(many), contains('A page can have at most 40 blocks.'));
+      final many = [for (var i = 0; i <= BlockLimits.pageMaxBlocks; i++) BlockRegistry.create(BlockRegistry.divider)];
+      expect(BlockRegistry.validate(many), contains('A page can have at most ${BlockLimits.pageMaxBlocks} blocks.'));
       final big = [BlockRegistry.create(BlockRegistry.text).withValue('body', LocalizedText(en: 'x' * 2000))];
       expect(BlockRegistry.validate(big, limits: const BlockLimits(maxDocumentBytes: 1024)).last, contains('too large'));
     });

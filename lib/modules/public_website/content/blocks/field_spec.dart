@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../website_content_models.dart';
+import '../website_design.dart';
 
 /// One field of a block type (or of an item inside a block). A block type
 /// declares its fields once; parsing, saving, validation, the images a page
@@ -10,7 +11,7 @@ import '../website_content_models.dart';
 /// so a new block type needs no bespoke code for any of them.
 @immutable
 sealed class FieldSpec {
-  const FieldSpec(this.key, this.label, {this.required = false, this.omitDefault = false});
+  const FieldSpec(this.key, this.label, {this.required = false, this.omitDefault = false, this.group, this.shownWhen});
 
   /// The key in the stored block map.
   final String key;
@@ -24,8 +25,22 @@ sealed class FieldSpec {
   /// is written back exactly as it was stored.
   final bool omitDefault;
 
+  /// The editor's collapsible group (its title) this field is shown in,
+  /// with the fields around it in the same group; null: shown on its own.
+  final String? group;
+
+  /// Whether the editor shows this field, from the values of its item (or
+  /// block) and of the block ([values] is [block] for a block's own
+  /// fields): a setting of a feature that is turned off is left out. Null:
+  /// always shown. Its value is kept either way.
+  final bool Function(Map<String, Object?> values, Map<String, Object?> block)? shownWhen;
+
   /// The value when the field is absent.
   Object? get defaultValue;
+
+  /// The value a newly added block or item starts with (usually the
+  /// [defaultValue]).
+  Object? get newValue => defaultValue;
 
   /// Whether [raw] (present in the stored map) has this field's shape.
   bool accepts(Object? raw);
@@ -45,6 +60,7 @@ final class TextFieldSpec extends FieldSpec {
     required this.maxLength,
     super.required,
     super.omitDefault,
+    super.group, super.shownWhen,
     this.multiline = false,
     this.translatable = true,
     this.translationRequired = false,
@@ -80,7 +96,11 @@ final class TextFieldSpec extends FieldSpec {
 
 /// A media-library image, by id ('' = none).
 final class MediaFieldSpec extends FieldSpec {
-  const MediaFieldSpec(super.key, super.label, {super.required});
+  const MediaFieldSpec(super.key, super.label, {super.required, super.omitDefault, super.group, super.shownWhen, this.removable = false});
+
+  /// The editor shows the field's label and a Remove button (an optional
+  /// image that can be taken off again).
+  final bool removable;
 
   @override
   Object? get defaultValue => '';
@@ -97,7 +117,7 @@ final class MediaFieldSpec extends FieldSpec {
 
 /// Where a button leads (checked with `SafeLinkTarget`).
 final class LinkFieldSpec extends FieldSpec {
-  const LinkFieldSpec(super.key, super.label, {super.required, super.omitDefault});
+  const LinkFieldSpec(super.key, super.label, {super.required, super.omitDefault, super.group, super.shownWhen});
 
   @override
   Object? get defaultValue => '';
@@ -136,16 +156,25 @@ final class FormRefFieldSpec extends FieldSpec {
 /// One of a fixed set of options. An unknown option is kept as stored (so a
 /// newer app's option survives) and reported by validation.
 final class ChoiceFieldSpec extends FieldSpec {
-  const ChoiceFieldSpec(super.key, super.label, {required this.options, required this.initial, this.optionLabels = const {}, super.omitDefault});
+  const ChoiceFieldSpec(super.key, super.label, {required this.options, required this.initial, this.initialForNew, this.optionLabels = const {}, super.omitDefault, super.group, super.shownWhen});
 
   final List<String> options;
+
+  /// The value when absent.
   final String initial;
+
+  /// What a newly added block or item starts with, when it differs from
+  /// [initial] (which stays the value of those saved without the field).
+  final String? initialForNew;
 
   /// How the editor names an option (the stored value when not listed).
   final Map<String, String> optionLabels;
 
   @override
   Object? get defaultValue => initial;
+
+  @override
+  Object? get newValue => initialForNew ?? initial;
 
   @override
   bool accepts(Object? raw) => raw is String;
@@ -157,11 +186,43 @@ final class ChoiceFieldSpec extends FieldSpec {
   Object? serialize(Object? value) => value as String? ?? initial;
 }
 
+/// A whole number from [min] to [max] (in [unit]), or Automatic: not set
+/// (null, never stored), so the block's own default applies, which the
+/// editor names with [automaticLabel].
+final class NumberFieldSpec extends FieldSpec {
+  const NumberFieldSpec(super.key, super.label, {required this.min, required this.max, this.unit = '', this.automaticLabel = 'Automatic', super.group, super.shownWhen}) : super(omitDefault: true);
+
+  final int min;
+  final int max;
+  final String unit;
+  final String automaticLabel;
+
+  /// [n] within range.
+  bool allows(int n) => n >= min && n <= max;
+
+  @override
+  Object? get defaultValue => null;
+
+  /// Whole numbers only (a stored 200.0 is 200).
+  @override
+  bool accepts(Object? raw) => raw is int || (raw is double && raw.isFinite && raw == raw.roundToDouble());
+
+  @override
+  Object? parse(Object? raw) => (raw as num).toInt();
+
+  @override
+  Object? serialize(Object? value) => value as int?;
+}
+
 /// On or off.
 final class ToggleFieldSpec extends FieldSpec {
-  const ToggleFieldSpec(super.key, super.label, {this.initial = false, super.omitDefault});
+  const ToggleFieldSpec(super.key, super.label, {this.initial = false, this.exclusive = false, super.omitDefault, super.group, super.shownWhen});
 
   final bool initial;
+
+  /// In a list's items: turning it on in one item turns it off in the
+  /// others (one feature image).
+  final bool exclusive;
 
   @override
   Object? get defaultValue => initial;
@@ -176,10 +237,47 @@ final class ToggleFieldSpec extends FieldSpec {
   Object? serialize(Object? value) => value as bool? ?? initial;
 }
 
+/// A colour chosen for one thing (an accreditation's card): [automatic]
+/// (the block's own look; not stored when [omitDefault]), [transparent]
+/// (whatever is behind it shows), a palette colour (`token:<id>`, which
+/// follows the site design) or a custom `#RRGGBB`. [presets] are offered
+/// first in the editor, by value, with their names.
+final class ColorFieldSpec extends FieldSpec {
+  const ColorFieldSpec(super.key, super.label, {this.presets = const {}, this.automaticLabel = 'the block: Automatic (white card)', super.omitDefault, super.group, super.shownWhen});
+
+  /// What Automatic means here, for the editor.
+  final String automaticLabel;
+
+  static const automatic = 'auto';
+  static const transparent = 'transparent';
+
+  /// Suggested values (palette references or `#RRGGBB`) and their names.
+  final Map<String, String> presets;
+
+  /// Whether [value] is one this field can hold.
+  static bool isValid(Object? value) => value == automatic || value == transparent || SiteDesign.isColorValue(value);
+
+  @override
+  Object? get defaultValue => automatic;
+
+  @override
+  bool accepts(Object? raw) => raw is String;
+
+  @override
+  Object? parse(Object? raw) => raw as String;
+
+  @override
+  Object? serialize(Object? value) => value as String? ?? automatic;
+}
+
 /// A list of items (buttons, gallery images, cards …), each with a stable
 /// id and its own [itemFields].
 final class ItemsFieldSpec extends FieldSpec {
-  const ItemsFieldSpec(super.key, super.label, {required this.itemLabel, required this.itemFields, this.minItems = 0, required this.maxItems});
+  const ItemsFieldSpec(super.key, super.label, {required this.itemLabel, required this.itemFields, this.minItems = 0, required this.maxItems, this.badge});
+
+  /// A short mark the editor shows beside item [index] of [items] (its
+  /// role, e.g. "Feature image"), if any.
+  final String? Function(List<BlockItem> items, int index)? badge;
 
   final String itemLabel;
   final List<FieldSpec> itemFields;

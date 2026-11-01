@@ -135,6 +135,20 @@ class BlockListOps {
   static bool pageHasRoom(List<WebsiteBlock> blocks, {BlockLimits limits = BlockLimits.defaults}) =>
       BlockRegistry.flatten(blocks).length < limits.maxBlocks;
 
+  /// Whether [block] (new: a section or block with everything inside it)
+  /// fits on the page. A section or columns block with an empty column
+  /// also needs room for one block in it, so it is never added when it
+  /// couldn't be filled.
+  static bool canInsert(List<WebsiteBlock> blocks, WebsiteBlock block, {BlockLimits limits = BlockLimits.defaults}) {
+    final added = BlockRegistry.flatten([block]).length;
+    final fill = columnsOf(block).any((c) => c.blocks.isEmpty) ? 1 : 0;
+    return BlockRegistry.flatten(blocks).length + added + fill <= limits.maxBlocks;
+  }
+
+  /// Whether a new block of [definition] fits on the page ([canInsert]).
+  static bool canAdd(List<WebsiteBlock> blocks, BlockDefinition definition, {BlockLimits limits = BlockLimits.defaults}) =>
+      canInsert(blocks, BlockRegistry.create(definition), limits: limits);
+
   /// Whether a block of [definition] can be added to column [column] of
   /// the top-level block [index]: never columns in columns, and only
   /// while the column and the page have room.
