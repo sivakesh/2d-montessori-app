@@ -121,9 +121,10 @@ class WebsiteFormsService {
     await _forms.doc(form.id).update({...form.toContentMap(), ..._stamp(actor)});
   }
 
-  /// A new draft copy of [formId] ("Copy of …"): the same questions and
-  /// content with new ids throughout (form, fields, options, content),
-  /// never active, version 0. Its submissions stay with the original.
+  /// A new draft copy of [formId] ("Copy of …"): the same questions,
+  /// content and settings (and any keys this version doesn't read) with
+  /// new ids throughout (form, fields, options, content), never active,
+  /// version 0. Its submissions stay with the original.
   Future<WebsiteForm> duplicate({required String requesterRole, required AppUser actor, required String formId}) async {
     _requireAdmin(requesterRole);
     final source = await _requireOwnForm(formId);
@@ -139,9 +140,14 @@ class WebsiteFormsService {
       items: [for (final i in source.items) i.withFreshIds()],
       successMessage: source.successMessage,
       template: source.template,
+      multiStep: source.multiStep,
+      reviewStep: source.reviewStep,
+      completionTitle: source.completionTitle,
+      extra: source.extra,
     );
     _requireStorable(copy);
     await ref.set({
+      ...copy.extra,
       ...copy.toContentMap(),
       'schoolId': schoolId,
       'status': WebsiteFormStatus.draft.id,

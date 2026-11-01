@@ -145,6 +145,38 @@ Every item keeps its ID when it is moved or edited. Submissions snapshot only th
 
 Contradictory settings are refused (a minimum above the maximum, a date not written `YYYY-MM-DD`, a constraint on a type that has none). Errors are shown with each field and announced to screen readers.
 
+### Builder upgrade (long text, layout, steps)
+
+**Stored data is kept.** Questions, their options and content items keep every stored key this version doesn't read (`extra`), and write it back unchanged: in the draft, the visitor copy and submission snapshots. A placeholder stored on a dropdown or radio question (which shows none, say after a type change) is kept as stored too. The form itself keeps top-level keys it doesn't read (`WebsiteForm.extra`): saving updates only the keys it writes, and a duplicate carries them, with the form's step and completion settings. They stay on the draft and never reach the visitor copy or its version records, which hold only what visitors see. Ids, Tamil text and forms stored before content items (questions only) are unchanged by editing and saving (`test/website_forms_compat_test.dart`).
+
+**New settings** (each stored only when set, so earlier questions are written back exactly as they were):
+
+| Setting | On | Stored as | Default |
+|---|---|---|---|
+| Visible rows (2–12) | Long text | `rows` | 4 |
+| Height: grows with the answer, or fixed at its rows (scrolls) | Long text | `resize` (`fixed`) | grows, up to 10 rows (as before), or to its rows if more |
+| Character counter: automatic, show, hide | Short and long text | `counter` | shown for long text and with a most-characters limit |
+| Width on wider screens: full, half, one third | Every question | `width` | automatic: two short questions to a row, as before |
+| Default answer (typed, or an option) | All but checkbox and attachment | `defaultValue` | none; never for a checkbox, so consent is never given in advance |
+| Show to visitors | Questions and content | `hidden: true` | shown |
+| Show the form in steps; review before sending | Form | `multiStep`, `reviewStep` | one page |
+| Completion heading | Form | `completionTitle` | none |
+
+A new content item, **Page break** (`page_break`, with an optional step title), starts a step of a multi-step form; on a single-page form it shows nothing.
+
+**Answer validation is unchanged.** Every new setting is about display. A hidden question or content item is left out of the version visitors see (`toPublic`), so it is never asked and never required, and the browser's checks and the submission service's (and the inactive endpoint's) see the same questions. A default answer must be one the question accepts (checked when saving). Each step is checked with the same `validateFormAnswers` before Next, and the whole form again before sending. The visitor copy gains `multiStep`, `reviewStep` and `completionTitle` only when set (`PublicWebsiteForm.optionalStoredFields`); a single-page form's copy has exactly the keys it had. Builds from before this change don't know `page_break`: they treat a form with one as unusable and show nothing, so deploy this build before activating such a form.
+
+**Builder.** Settings are in collapsible groups (Basic information, Placeholder and help text, Validation, open at first; Display and layout, Advanced), showing only what applies to the question's type. The structure lists each item with its type icon, `*` for required and an eye for hidden; removing asks first. The add menu has icons, **Long text (multiline)** and a **Consent checkbox (required)** preset. Hidden items show dimmed on the canvas, marked "Hidden from visitors"; page breaks show where each step starts. Form settings has **Steps** and the completion heading.
+
+**Visitors.**
+- A note says "Fields marked * are required".
+- When answers aren't accepted (on Send or Next), a summary lists each one, as a link to the question, and the first is focused.
+- Long text shows its counter ("120 / 500", read as "120 of 500 characters"), which stays beside an error message; what was typed is kept.
+- Multi-step forms show "Step 2 of 4 · About your child" with a progress bar, Previous and Next (Next checks only that step), keep every answer when moving between steps, and, with review on, list every answer with **Change** before Send.
+- After sending: the completion heading, the success message and the reference.
+
+**Not built yet (needs approval):** URL and Yes/No questions and conditional logic (they change answer validation, so `functions/` must change with them); document uploads (secure upload path and Storage rules); per-field CSS (widths and the design system instead).
+
 ### Document attachment fields
 
 An admin can configure:

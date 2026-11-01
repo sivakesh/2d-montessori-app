@@ -131,24 +131,53 @@ class FormIds {
   static String submissionKey() => _suffix(32);
 }
 
+/// The entries of stored [raw] this version doesn't read ([known] are the
+/// keys it does): kept as they are and written back unchanged, so saving a
+/// form never loses what a newer version stored.
+Map<String, Object?> formExtraKeys(Map<dynamic, dynamic> raw, Set<String> known) => {
+      for (final e in raw.entries)
+        if (e.key is String && !known.contains(e.key)) e.key as String: e.value,
+    };
+
+/// Whether two stored values are the same (maps and lists by content).
+bool formDeepEquals(Object? a, Object? b) {
+  if (a is Map && b is Map) {
+    return a.length == b.length && a.entries.every((e) => b.containsKey(e.key) && formDeepEquals(e.value, b[e.key]));
+  }
+  if (a is List && b is List) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!formDeepEquals(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  return a == b;
+}
+
 @immutable
 class FormFieldOption {
-  const FormFieldOption({required this.id, required this.label});
+  const FormFieldOption({required this.id, required this.label, this.extra = const {}});
 
   factory FormFieldOption.create(String label) => FormFieldOption(id: FormIds.option(), label: LocalizedText(en: label));
+
+  /// The keys an option has; any other stored key is kept in [extra].
+  static const knownKeys = {'id', 'label'};
 
   final String id;
   final LocalizedText label;
 
-  Map<String, dynamic> toMap() => {'id': id, 'label': label.toMap()};
+  /// Stored keys this version doesn't read, written back unchanged.
+  final Map<String, Object?> extra;
 
-  FormFieldOption copyWith({LocalizedText? label}) => FormFieldOption(id: id, label: label ?? this.label);
+  Map<String, dynamic> toMap() => {...extra, 'id': id, 'label': label.toMap()};
+
+  FormFieldOption copyWith({LocalizedText? label}) => FormFieldOption(id: id, label: label ?? this.label, extra: extra);
 
   @override
-  bool operator ==(Object other) => other is FormFieldOption && other.id == id && other.label == label;
+  bool operator ==(Object other) => other is FormFieldOption && other.id == id && other.label == label && formDeepEquals(other.extra, extra);
 
   @override
-  int get hashCode => Object.hash(id, label);
+  int get hashCode => Object.hash(id, label, extra.length);
 }
 
 /// One item of a form, in the order visitors see it: a question
@@ -207,8 +236,41 @@ class WebsiteFormField extends FormItem {
     this.allowedFileTypes = FormAttachments.defaultTypes,
     this.maxFileSizeMb = FormAttachments.defaultMaxSizeMb,
     this.maxFiles = 1,
+    this.rows,
+    this.counter,
+    this.resize,
+    this.width,
+    this.defaultValue,
+    this.hidden = false,
     this.malformed = const [],
+    this.extra = const {},
   });
+
+  /// The keys a question has; any other stored key is kept in [extra].
+  static const knownKeys = {
+    'id', 'type', 'label', 'required', 'placeholder', 'options', 'helpText', 'errorMessage', 'minLength', 'maxLength', 'min', 'max', 'minDate', 'maxDate', //
+    'allowedFileTypes', 'maxFileSizeMb', 'maxFiles', 'rows', 'counter', 'resize', 'width', 'defaultValue', 'hidden',
+  };
+
+  /// Long text: the rows shown at first (and the fewest), 2 to 12; 4
+  /// unless set.
+  static const minRows = 2;
+  static const maxRows = 12;
+  static const defaultRows = 4;
+
+  /// The character counter: `auto` (unset; long text, and text with a
+  /// most-characters limit, show it), `show` or `hide`.
+  static const counters = ['auto', 'show', 'hide'];
+
+  /// Long text's height: `grow` (unset; from its rows up as the answer
+  /// grows, to [maxRows] or more) or `fixed` (its rows; longer answers
+  /// scroll inside).
+  static const resizes = ['grow', 'fixed'];
+
+  /// How much of a row a question takes on wider screens (`full`, `half`,
+  /// `third`); unset, short questions pair up two to a row as before. On
+  /// phones every question takes the whole row.
+  static const widths = ['full', 'half', 'third'];
 
   factory WebsiteFormField.create(FormFieldType type, String label, {bool required = false, List<String> options = const [], String placeholder = ''}) =>
       WebsiteFormField(
@@ -231,7 +293,7 @@ class WebsiteFormField extends FormItem {
     if (rawOptions is List) {
       for (final o in rawOptions) {
         if (o is Map && o['id'] is String) {
-          options.add(FormFieldOption(id: o['id'] as String, label: LocalizedText.fromMap(o['label'])));
+          options.add(FormFieldOption(id: o['id'] as String, label: LocalizedText.fromMap(o['label']), extra: formExtraKeys(o, FormFieldOption.knownKeys)));
         } else {
           problems.add('an option can’t be read');
         }
@@ -262,6 +324,17 @@ class WebsiteFormField extends FormItem {
       return null;
     }
 
+    String? choice(String key) {
+      final v = map[key];
+      if (v == null) return null;
+      if (v is String) return v;
+      problems.add('its $key can’t be read');
+      return null;
+    }
+
+    final defaultValue = map['defaultValue'];
+    if (defaultValue != null && defaultValue is! String) problems.add('its default answer can’t be read');
+    if (map['hidden'] != null && map['hidden'] is! bool) problems.add('its visibility can’t be read');
     final types = map['allowedFileTypes'];
     if (types != null && (types is! List || types.any((t) => t is! String))) problems.add('its file types can’t be read');
     return WebsiteFormField(
@@ -283,7 +356,19 @@ class WebsiteFormField extends FormItem {
       allowedFileTypes: types is List && types.every((t) => t is String) ? [for (final t in types) t as String] : FormAttachments.defaultTypes,
       maxFileSizeMb: whole('maxFileSizeMb') ?? FormAttachments.defaultMaxSizeMb,
       maxFiles: whole('maxFiles') ?? 1,
+      rows: whole('rows'),
+      counter: choice('counter'),
+      resize: choice('resize'),
+      width: choice('width'),
+      defaultValue: defaultValue is String ? defaultValue : null,
+      hidden: map['hidden'] == true,
       malformed: problems,
+      extra: {
+        ...formExtraKeys(map, knownKeys),
+        // A placeholder on a type that shows none (say, a dropdown that was
+        // short text): kept as stored, so changing the type back finds it.
+        if (map.containsKey('placeholder') && !(FormFieldType.parse(map['type'])?.isText ?? false)) 'placeholder': map['placeholder'],
+      },
     );
   }
 
@@ -324,11 +409,52 @@ class WebsiteFormField extends FormItem {
   final int maxFileSizeMb;
   final int maxFiles;
 
+  /// Long text's first (and fewest) rows ([defaultRows] unless set).
+  final int? rows;
+
+  /// The character counter ([counters]; null is `auto`).
+  final String? counter;
+
+  /// Long text's height ([resizes]; null is `grow`).
+  final String? resize;
+
+  /// Its share of a row on wider screens ([widths]; null is automatic).
+  final String? width;
+
+  /// The answer filled in at first, as an answer is written (text, a
+  /// number, `YYYY-MM-DD`, or an option's id). Never for a checkbox, so
+  /// consent is never given in advance.
+  final String? defaultValue;
+
+  /// Hidden from visitors: kept in the form (and its settings), but left
+  /// out of the version visitors see, so it is never asked nor required.
+  final bool hidden;
+
   /// What couldn't be read when it was loaded.
   final List<String> malformed;
 
+  /// Stored keys this version doesn't read, written back unchanged (in
+  /// the draft, the visitor copy and submission snapshots alike).
+  final Map<String, Object?> extra;
+
   /// The longest answer accepted.
   int get maxAnswerLength => maxLength ?? _typeMaxLength;
+
+  /// Long text's rows at first.
+  int get visibleRows => (rows ?? defaultRows).clamp(minRows, maxRows);
+
+  /// Whether the character counter is shown.
+  bool get showsCounter => switch (counter) {
+        'show' => true,
+        'hide' => false,
+        _ => type == FormFieldType.longText || maxLength != null,
+      };
+
+  /// Its share of a row on wider screens, or null (automatic).
+  double? get widthFraction => switch (width) { 'full' => 1.0, 'half' => 0.5, 'third' => 1 / 3, _ => null };
+
+  /// Whether this type can have a default answer.
+  bool get takesDefault => type != null && type != FormFieldType.checkbox && type != FormFieldType.attachment;
 
   int get _typeMaxLength => switch (type) {
         FormFieldType.longText => FormLimits.maxLongText,
@@ -343,11 +469,12 @@ class WebsiteFormField extends FormItem {
 
   @override
   Map<String, dynamic> toMap() => {
+        ...extra,
         'id': id,
         'type': type?.id ?? rawType,
         'label': label.toMap(),
         'required': required,
-        if (type?.isText ?? false) 'placeholder': placeholder.toMap(),
+        if ((type?.isText ?? false) || (!extra.containsKey('placeholder') && !placeholder.isEmpty)) 'placeholder': placeholder.toMap(),
         if (type?.hasOptions ?? false) 'options': [for (final o in options) o.toMap()],
         if (!helpText.isEmpty) 'helpText': helpText.toMap(),
         if (!errorMessage.isEmpty) 'errorMessage': errorMessage.toMap(),
@@ -362,6 +489,12 @@ class WebsiteFormField extends FormItem {
           'maxFileSizeMb': maxFileSizeMb,
           'maxFiles': maxFiles,
         },
+        'rows': ?rows,
+        'counter': ?counter,
+        'resize': ?resize,
+        'width': ?width,
+        'defaultValue': ?defaultValue,
+        if (hidden) 'hidden': true,
       };
 
   WebsiteFormField copyWith({
@@ -381,6 +514,12 @@ class WebsiteFormField extends FormItem {
     List<String>? allowedFileTypes,
     int? maxFileSizeMb,
     int? maxFiles,
+    int? Function()? rows,
+    String? Function()? counter,
+    String? Function()? resize,
+    String? Function()? width,
+    String? Function()? defaultValue,
+    bool? hidden,
   }) =>
       WebsiteFormField(
         id: id,
@@ -401,17 +540,28 @@ class WebsiteFormField extends FormItem {
         allowedFileTypes: allowedFileTypes ?? this.allowedFileTypes,
         maxFileSizeMb: maxFileSizeMb ?? this.maxFileSizeMb,
         maxFiles: maxFiles ?? this.maxFiles,
+        rows: rows != null ? rows() : this.rows,
+        counter: counter != null ? counter() : this.counter,
+        resize: resize != null ? resize() : this.resize,
+        width: width != null ? width() : this.width,
+        defaultValue: defaultValue != null ? defaultValue() : this.defaultValue,
+        hidden: hidden ?? this.hidden,
+        extra: extra,
       );
 
+  /// The same question with new ids (its own and its options'; a default
+  /// option follows its option).
   @override
-  WebsiteFormField withFreshIds() => WebsiteFormField(
+  WebsiteFormField withFreshIds() {
+    final fresh = {for (final o in options) o.id: FormIds.option()};
+    return WebsiteFormField(
         id: FormIds.field(),
         type: type,
         rawType: rawType,
         label: label,
         required: required,
         placeholder: placeholder,
-        options: [for (final o in options) FormFieldOption(id: FormIds.option(), label: o.label)],
+        options: [for (final o in options) FormFieldOption(id: fresh[o.id]!, label: o.label, extra: o.extra)],
         helpText: helpText,
         errorMessage: errorMessage,
         minLength: minLength,
@@ -423,7 +573,15 @@ class WebsiteFormField extends FormItem {
         allowedFileTypes: allowedFileTypes,
         maxFileSizeMb: maxFileSizeMb,
         maxFiles: maxFiles,
+        rows: rows,
+        counter: counter,
+        resize: resize,
+        width: width,
+        defaultValue: type?.hasOptions ?? false ? (fresh[defaultValue] ?? defaultValue) : defaultValue,
+        hidden: hidden,
+        extra: extra,
       );
+  }
 
   String optionLabel(String optionId) {
     for (final o in options) {
@@ -472,6 +630,16 @@ class WebsiteFormField extends FormItem {
       if (minDate != null && from == null) 'the earliest date must be written YYYY-MM-DD',
       if (maxDate != null && to == null) 'the latest date must be written YYYY-MM-DD',
       if (from != null && to != null && from.isAfter(to)) 'the earliest date is after the latest',
+      if (rows != null && type != FormFieldType.longText) 'only long text has rows',
+      if (rows != null && (rows! < minRows || rows! > maxRows)) 'show $minRows to $maxRows rows',
+      if (counter != null && !counters.contains(counter)) 'its counter setting “$counter” isn’t supported',
+      if (counter != null && !textual) 'only short and long text have a character counter',
+      if (resize != null && !resizes.contains(resize)) 'its height setting “$resize” isn’t supported',
+      if (resize != null && type != FormFieldType.longText) 'only long text has a height setting',
+      if (width != null && !widths.contains(width)) 'its width “$width” isn’t supported',
+      if (defaultValue != null && type != null && !takesDefault) 'a ${type.label.toLowerCase()} has no default answer',
+      if (defaultValue != null && takesDefault && defaultValue!.trim().isNotEmpty && validateFormAnswers([copyWith(required: false)], {id: defaultValue}).errors.isNotEmpty)
+        'its default answer isn’t one it accepts',
       if (type == FormFieldType.attachment) ...[
         if (allowedFileTypes.isEmpty) 'choose at least one file type',
         if (allowedFileTypes.any((t) => !FormAttachments.types.containsKey(t))) 'a file type isn’t supported',
@@ -499,11 +667,18 @@ class WebsiteFormField extends FormItem {
       other.max == max &&
       other.minDate == minDate &&
       other.maxDate == maxDate &&
+      formDeepEquals(other.extra, extra) &&
+      other.rows == rows &&
+      other.counter == counter &&
+      other.resize == resize &&
+      other.width == width &&
+      other.defaultValue == defaultValue &&
+      other.hidden == hidden &&
       (type != FormFieldType.attachment ||
           (listEquals(other.allowedFileTypes, allowedFileTypes) && other.maxFileSizeMb == maxFileSizeMb && other.maxFiles == maxFiles));
 
   @override
-  int get hashCode => Object.hash(id, type?.id ?? rawType, label, required, placeholder, Object.hashAll(options), helpText, errorMessage, minLength, maxLength, min, max, minDate, maxDate);
+  int get hashCode => Object.hash(id, type?.id ?? rawType, label, required, placeholder, Object.hashAll(options), helpText, errorMessage, minLength, maxLength, min, max, minDate, maxDate, Object.hash(rows, counter, resize, width, defaultValue, hidden, extra.length));
 }
 
 /// Document attachments: the file types a field may allow and the limits.
@@ -538,7 +713,11 @@ enum FormBlockType {
   heading('heading', 'Section heading'),
   text('text', 'Text or instructions'),
   image('image', 'Image'),
-  divider('divider', 'Divider');
+  divider('divider', 'Divider'),
+
+  /// Starts a new step of a multi-step form ([WebsiteForm.multiStep]); its
+  /// title names the step. On a single-page form it shows nothing.
+  pageBreak('page_break', 'Page break');
 
   const FormBlockType(this.id, this.label);
 
@@ -559,7 +738,20 @@ enum FormBlockType {
 /// consent come from the library), or a divider.
 @immutable
 class FormContentBlock extends FormItem {
-  const FormContentBlock({required this.id, required this.type, this.rawType, this.title = const LocalizedText(), this.body = const LocalizedText(), this.mediaId = '', this.malformed = const []});
+  const FormContentBlock({
+    required this.id,
+    required this.type,
+    this.rawType,
+    this.title = const LocalizedText(),
+    this.body = const LocalizedText(),
+    this.mediaId = '',
+    this.hidden = false,
+    this.malformed = const [],
+    this.extra = const {},
+  });
+
+  /// The keys a content item has; any other stored key is kept in [extra].
+  static const knownKeys = {'kind', 'id', 'type', 'title', 'body', 'mediaId', 'hidden'};
 
   factory FormContentBlock.create(FormBlockType type) => FormContentBlock(id: FormIds.block(), type: type);
 
@@ -572,7 +764,12 @@ class FormContentBlock extends FormItem {
       title: LocalizedText.fromMap(map['title']),
       body: LocalizedText.fromMap(map['body']),
       mediaId: media is String ? media : '',
-      malformed: [if (media != null && media is! String) 'its image can’t be read'],
+      hidden: map['hidden'] == true,
+      malformed: [
+        if (media != null && media is! String) 'its image can’t be read',
+        if (map['hidden'] != null && map['hidden'] is! bool) 'its visibility can’t be read',
+      ],
+      extra: formExtraKeys(map, knownKeys),
     );
   }
 
@@ -592,29 +789,46 @@ class FormContentBlock extends FormItem {
 
   /// An image block's website image.
   final String mediaId;
+
+  /// Hidden from visitors (kept in the form, left out of the version
+  /// visitors see).
+  final bool hidden;
   final List<String> malformed;
+
+  /// Stored keys this version doesn't read, written back unchanged.
+  final Map<String, Object?> extra;
 
   @override
   String get displayLabel {
-    final text = (type == FormBlockType.heading ? title : body).en.trim();
+    final text = (type == FormBlockType.heading || type == FormBlockType.pageBreak ? title : body).en.trim();
     return '${type?.label ?? 'Unsupported content'}${text.isEmpty ? '' : ': ${text.length > 40 ? '${text.substring(0, 40)}…' : text}'}';
   }
 
   @override
   Map<String, dynamic> toMap() => {
+        ...extra,
         'kind': kind,
         'id': id,
         'type': type?.id ?? rawType,
-        if (type == FormBlockType.heading) 'title': title.toMap(),
+        if (type == FormBlockType.heading || type == FormBlockType.pageBreak) 'title': title.toMap(),
         if (type == FormBlockType.heading || type == FormBlockType.text || type == FormBlockType.image) 'body': body.toMap(),
         if (type == FormBlockType.image) 'mediaId': mediaId.trim(),
+        if (hidden) 'hidden': true,
       };
 
-  FormContentBlock copyWith({LocalizedText? title, LocalizedText? body, String? mediaId}) =>
-      FormContentBlock(id: id, type: type, rawType: rawType, title: title ?? this.title, body: body ?? this.body, mediaId: mediaId ?? this.mediaId);
+  FormContentBlock copyWith({LocalizedText? title, LocalizedText? body, String? mediaId, bool? hidden}) => FormContentBlock(
+        id: id,
+        type: type,
+        rawType: rawType,
+        title: title ?? this.title,
+        body: body ?? this.body,
+        mediaId: mediaId ?? this.mediaId,
+        hidden: hidden ?? this.hidden,
+        extra: extra,
+      );
 
   @override
-  FormContentBlock withFreshIds() => FormContentBlock(id: FormIds.block(), type: type, rawType: rawType, title: title, body: body, mediaId: mediaId);
+  FormContentBlock withFreshIds() => FormContentBlock(id: FormIds.block(), type: type, rawType: rawType, title: title, body: body, mediaId: mediaId, hidden: hidden, extra: extra);
 
   @override
   List<String> problems({required bool complete}) => [
@@ -631,10 +845,17 @@ class FormContentBlock extends FormItem {
 
   @override
   bool operator ==(Object other) =>
-      other is FormContentBlock && other.id == id && (other.type?.id ?? other.rawType) == (type?.id ?? rawType) && other.title == title && other.body == body && other.mediaId == mediaId;
+      other is FormContentBlock &&
+      other.id == id &&
+      (other.type?.id ?? other.rawType) == (type?.id ?? rawType) &&
+      other.title == title &&
+      other.body == body &&
+      other.mediaId == mediaId &&
+      other.hidden == hidden &&
+      formDeepEquals(other.extra, extra);
 
   @override
-  int get hashCode => Object.hash(id, type?.id ?? rawType, title, body, mediaId);
+  int get hashCode => Object.hash(id, type?.id ?? rawType, title, body, mediaId, hidden, extra.length);
 }
 
 /// A form's schema problems, each prefixed with where it is.
@@ -653,6 +874,7 @@ List<String> formSchemaProblems({
   LocalizedText description = const LocalizedText(),
   String? coverMediaId,
   String internalDescription = '',
+  LocalizedText completionTitle = const LocalizedText(),
   required bool complete,
   bool requireMetadata = false,
 }) {
@@ -674,6 +896,8 @@ List<String> formSchemaProblems({
     if (questions.length > FormLimits.maxFields) 'A form can have at most ${FormLimits.maxFields} fields.',
     if (content.length > FormLimits.maxContentBlocks) 'A form can have at most ${FormLimits.maxContentBlocks} headings, texts, images and dividers.',
     if (complete && questions.isEmpty) 'Add at least one field.',
+    if (complete && questions.isNotEmpty && questions.every((q) => q.hidden)) 'Every field is hidden: show at least one to visitors.',
+    ...completionTitle.problems(FormLimits.maxTitle, 'The completion heading'),
     for (final (i, f) in questions.indexed) ...[
       if (!ids.add(f.id)) 'Field ${i + 1}: its id is used by another field.',
       for (final p in f.problems(complete: complete)) 'Field ${i + 1}${f.label.en.trim().isEmpty ? '' : ' (${f.label.en.trim()})'}: ${p.endsWith('.') ? p : '$p.'}',
@@ -772,7 +996,18 @@ class WebsiteForm {
     this.updatedAt,
     this.activatedAt,
     this.activatedSchema,
+    this.multiStep = false,
+    this.reviewStep = false,
+    this.completionTitle = const LocalizedText(),
+    this.extra = const {},
   }) : items = List.unmodifiable(items ?? fields);
+
+  /// Every key this version writes on a form's document.
+  static const knownKeys = {
+    'title', 'description', 'coverMediaId', 'internalDescription', 'items', 'fields', 'mediaIds', 'successMessage', 'multiStep', 'reviewStep', //
+    'completionTitle', 'schoolId', 'status', 'version', 'template', 'createdAt', 'updatedAt', 'updatedById', 'updatedByName', 'activatedAt',
+    'activatedSchema', 'deactivatedAt', 'duplicatedFrom',
+  };
 
   factory WebsiteForm.fromMap(String id, Map<String, dynamic> map) => WebsiteForm(
         id: id,
@@ -790,11 +1025,30 @@ class WebsiteForm {
         updatedAt: _date(map['updatedAt']),
         activatedAt: _date(map['activatedAt']),
         activatedSchema: PublicWebsiteForm.tryParse(map['activatedSchema'] is Map ? Map<String, dynamic>.from(map['activatedSchema'] as Map) : null),
+        multiStep: map['multiStep'] == true,
+        reviewStep: map['reviewStep'] == true,
+        completionTitle: LocalizedText.fromMap(map['completionTitle']),
+        extra: formExtraKeys(map, knownKeys),
       );
 
   final String id;
   final String schoolId;
   final LocalizedText title;
+
+  /// Shown in steps, one per [FormBlockType.pageBreak] (single page, the
+  /// default, unless set).
+  final bool multiStep;
+
+  /// A multi-step form's last step: every answer to check before sending.
+  final bool reviewStep;
+
+  /// Shown above the success message after sending (optional).
+  final LocalizedText completionTitle;
+
+  /// Stored keys this version doesn't read. Saving leaves them in place
+  /// (only what it writes changes) and a duplicate carries them; the
+  /// visitor copy never has them, as it holds only what visitors see.
+  final Map<String, Object?> extra;
 
   /// Shown to visitors under the title.
   final LocalizedText description;
@@ -839,6 +1093,9 @@ class WebsiteForm {
         'fields': [for (final f in fields) f.toMap()],
         'mediaIds': mediaIds,
         'successMessage': successMessage.toMap(),
+        'multiStep': multiStep,
+        'reviewStep': reviewStep,
+        'completionTitle': completionTitle.toMap(),
       };
 
   /// [fields] replaces the questions (content stays where it is); [items]
@@ -851,6 +1108,9 @@ class WebsiteForm {
     List<FormItem>? items,
     List<WebsiteFormField>? fields,
     LocalizedText? successMessage,
+    bool? multiStep,
+    bool? reviewStep,
+    LocalizedText? completionTitle,
   }) =>
       WebsiteForm(
         id: id,
@@ -868,6 +1128,10 @@ class WebsiteForm {
         updatedAt: updatedAt,
         activatedAt: activatedAt,
         activatedSchema: activatedSchema,
+        multiStep: multiStep ?? this.multiStep,
+        reviewStep: reviewStep ?? this.reviewStep,
+        completionTitle: completionTitle ?? this.completionTitle,
+        extra: extra,
       );
 
   /// [complete]: everything activation needs, the description and cover
@@ -879,20 +1143,29 @@ class WebsiteForm {
         description: description,
         coverMediaId: coverMediaId,
         internalDescription: internalDescription,
+        completionTitle: completionTitle,
         complete: complete,
         requireMetadata: complete,
       );
 
-  /// What visitors would see of this definition, as version [version].
-  PublicWebsiteForm toPublic(int version) => PublicWebsiteForm(
+  /// What visitors would see of this definition, as version [version]:
+  /// without its hidden questions and content ([includeHidden]: with
+  /// them, for the builder's canvas only).
+  PublicWebsiteForm toPublic(int version, {bool includeHidden = false}) => PublicWebsiteForm(
         id: id,
         schoolId: schoolId,
         title: title.trimmed(),
         description: description.trimmed(),
         coverMediaId: coverMediaId,
-        items: items,
+        items: [
+          for (final i in items)
+            if (includeHidden || !(i is WebsiteFormField ? i.hidden : (i as FormContentBlock).hidden)) i,
+        ],
         successMessage: successMessage.trimmed(),
         version: version,
+        multiStep: multiStep,
+        reviewStep: multiStep && reviewStep,
+        completionTitle: completionTitle.trimmed(),
       );
 }
 
@@ -913,10 +1186,17 @@ class PublicWebsiteForm {
     List<WebsiteFormField> fields = const [],
     required this.successMessage,
     required this.version,
+    this.multiStep = false,
+    this.reviewStep = false,
+    this.completionTitle = const LocalizedText(),
   }) : items = List.unmodifiable(items ?? fields);
 
-  /// The stored fields, and only these.
+  /// The stored fields, and only these (with [optionalStoredFields]).
   static const storedFields = {'formId', 'schoolId', 'title', 'description', 'coverMediaId', 'items', 'fields', 'mediaIds', 'successMessage', 'version', 'activatedAt'};
+
+  /// Stored only when set, so a single-page form's copy is exactly as
+  /// before.
+  static const optionalStoredFields = {'multiStep', 'reviewStep', 'completionTitle'};
 
   /// The form in [data], or null when it isn't a usable form (missing,
   /// malformed, inconsistent, or with any schema problem): visitors then
@@ -935,6 +1215,9 @@ class PublicWebsiteForm {
       items: _itemsFrom(data),
       successMessage: LocalizedText.fromMap(data['successMessage']),
       version: version,
+      multiStep: data['multiStep'] == true,
+      reviewStep: data['reviewStep'] == true,
+      completionTitle: LocalizedText.fromMap(data['completionTitle']),
     );
     // The questions are stored twice (in their items, and alone): both
     // must agree, since submissions are checked against them.
@@ -950,12 +1233,15 @@ class PublicWebsiteForm {
   final List<FormItem> items;
   final LocalizedText successMessage;
   final int version;
+  final bool multiStep;
+  final bool reviewStep;
+  final LocalizedText completionTitle;
 
   List<WebsiteFormField> get fields => items.whereType<WebsiteFormField>().toList();
   List<String> get mediaIds => _mediaIds(coverMediaId, items);
 
-  List<String> schemaProblems() =>
-      formSchemaProblems(title: title, items: items, successMessage: successMessage, description: description, coverMediaId: coverMediaId, complete: true);
+  List<String> schemaProblems() => formSchemaProblems(
+      title: title, items: items, successMessage: successMessage, description: description, coverMediaId: coverMediaId, completionTitle: completionTitle, complete: true);
 
   Map<String, dynamic> toMap() => {
         'formId': id,
@@ -968,6 +1254,9 @@ class PublicWebsiteForm {
         'mediaIds': mediaIds,
         'successMessage': successMessage.toMap(),
         'version': version,
+        if (multiStep) 'multiStep': true,
+        if (reviewStep) 'reviewStep': true,
+        if (!completionTitle.isEmpty) 'completionTitle': completionTitle.toMap(),
       };
 
   /// Whether visitors would see the same form.
@@ -977,6 +1266,9 @@ class PublicWebsiteForm {
       other.description == description &&
       other.coverMediaId == coverMediaId &&
       other.successMessage == successMessage &&
+      other.multiStep == multiStep &&
+      other.reviewStep == reviewStep &&
+      other.completionTitle == completionTitle &&
       listEquals(other.items, items);
 }
 
