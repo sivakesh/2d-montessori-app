@@ -9,12 +9,20 @@ class FinanceSummaryCard extends StatelessWidget {
     required this.value,
     required this.icon,
     this.color,
+    this.caption,
+    this.valueColor,
   });
 
   final String label;
   final String value;
   final IconData icon;
   final Color? color;
+
+  /// Optional line under the label (e.g. the period, or "Profit").
+  final String? caption;
+
+  /// Optional colour of [value] (e.g. a loss in red).
+  final Color? valueColor;
 
   @override
   Widget build(BuildContext context) {
@@ -52,10 +60,10 @@ class FinanceSummaryCard extends StatelessWidget {
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
+              color: valueColor ?? AppColors.textPrimary,
               letterSpacing: -0.3,
             ),
           ),
@@ -70,6 +78,15 @@ class FinanceSummaryCard extends StatelessWidget {
               color: AppColors.textSecondary,
             ),
           ),
+          if (caption != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              caption!,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: valueColor ?? AppColors.textSecondary),
+            ),
+          ],
         ],
       ),
     );

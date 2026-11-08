@@ -445,7 +445,7 @@ void main() {
       }
 
       await pumpLedger();
-      expect(find.text('Account Balances'), findsOneWidget);
+      expect(find.text('Current Account Balances'), findsOneWidget);
       expect(find.textContaining('is not shown in Cash, Bank or UPI'), findsNothing);
 
       await addEntry(accountId: 'deleted-account', accountName: 'Cash', amount: 100);

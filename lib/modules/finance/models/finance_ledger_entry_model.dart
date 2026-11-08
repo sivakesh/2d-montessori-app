@@ -22,11 +22,15 @@ class FinanceLedgerEntryModel {
     required this.createdAt,
     required this.updatedAt,
     required this.createdBy,
+    this.invoiceNo = '',
   });
   final String id, entryType, sourceModule, sourceId, categoryId, categoryName, subCategoryName, title, description, paymentMode, accountId, accountName, referenceNo, status, createdBy;
   final double amount;
   final DateTime? transactionDate, createdAt, updatedAt;
   final List<String> attachmentUrls;
+
+  /// The invoice number, on entries for invoice payments ('' otherwise).
+  final String invoiceNo;
   factory FinanceLedgerEntryModel.fromMap(String id, Map<String, dynamic> data) {
     DateTime? p(dynamic v) => v is Timestamp ? v.toDate() : v is DateTime ? v : null;
     double n(dynamic v) => v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0;
@@ -51,6 +55,7 @@ class FinanceLedgerEntryModel {
       createdAt: p(data['createdAt']),
       updatedAt: p(data['updatedAt']),
       createdBy: data['createdBy']?.toString() ?? '',
+      invoiceNo: data['invoiceNo']?.toString() ?? '',
     );
   }
 
@@ -75,5 +80,6 @@ class FinanceLedgerEntryModel {
         'createdAt': createdAt,
         'updatedAt': updatedAt,
         'createdBy': createdBy,
+        if (invoiceNo.isNotEmpty) 'invoiceNo': invoiceNo,
       };
 }

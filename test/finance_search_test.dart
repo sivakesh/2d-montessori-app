@@ -27,6 +27,9 @@ import 'support/buffered_transaction_firestore.dart';
 
 String _two(int n) => n.toString().padLeft(2, '0');
 
+
+/// The Ledger opens on the current month: the month these tests' entries are in.
+DateTime _september() => DateTime(2026, 9, 15);
 void main() {
   late BufferedTransactionFirestore firestore;
   late FinanceService service;
@@ -42,7 +45,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(ProviderScope(child: MaterialApp(home: AdminFinanceScreen(service: service))));
+    await tester.pumpWidget(ProviderScope(child: MaterialApp(home: AdminFinanceScreen(service: service, clock: _september))));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ChoiceChip, label));
     await tester.pumpAndSettle();
@@ -419,15 +422,17 @@ void main() {
         .toList();
     List<String> titles(Iterable<int> ns) => [for (final n in ns) title(n)];
     void expectFigures() {
-      expectCard('Total Inflow', '₹19300');
-      expectCard('Total Outflow', '₹18200');
-      expectCard('Net Movement', '₹1100');
-      expectCard('Closing Balance', '₹1100');
+      expectCard('Total Income', '₹19300');
+      expectCard('Total Expenses', '₹18200');
+      expectCard('Profit / Loss', '₹1100');
+      expectCard('Current Closing Balance', '₹1100');
     }
 
     testWidgets('1 + 6. title, description, category, vendor, reference and account; figures unchanged', (tester) async {
       await seed();
       await pumpTab(tester, 'Ledger');
+      // Search the complete ledger: cancelled entry 3 included.
+      await tapAndSettle(tester, find.byKey(const Key('ledger-show-cancelled')));
       expectFigures();
 
       await search(tester, 'ledger', 'FEES');
@@ -451,6 +456,8 @@ void main() {
     testWidgets('2 + 3 + 4 + 5. trim, paging, reset on query change, page size kept, no-match, Clear', (tester) async {
       await seed();
       await pumpTab(tester, 'Ledger');
+      // Search the complete ledger: cancelled entry 3 included.
+      await tapAndSettle(tester, find.byKey(const Key('ledger-show-cancelled')));
       await tapAndSettle(tester, next());
       await tapAndSettle(tester, next());
       expect(find.text('Page 3 of 3'), findsOneWidget);
@@ -465,7 +472,7 @@ void main() {
 
       await choosePageSize(tester, 'ledger', 25);
       await search(tester, 'ledger', 'no such entry');
-      expect(find.text('No transactions match "no such entry".'), findsOneWidget);
+      expect(find.text('No transactions in September 2026, including cancelled transactions, match "no such entry".'), findsOneWidget);
       expect(find.byKey(const Key('ledger-pagination')), findsNothing);
       expectFigures();
 

@@ -16,6 +16,9 @@ class FinanceDashboardSummaryModel {
     this.unclassifiedOpeningBalance = 0,
     double? closingBalance,
     this.hasUnclassifiedActivity = false,
+    this.undatedOpeningBalance = 0,
+    this.undatedOpeningAccounts = const [],
+    this.openingBalanceNotYetEffective = 0,
   }) : closingBalance = closingBalance ?? openingBalance + netBalance;
 
   final double totalIncome;
@@ -57,5 +60,19 @@ class FinanceDashboardSummaryModel {
   /// [unclassifiedBalance] alone can't show it. An unclassified account
   /// with no balance and no activity doesn't set it.
   final bool hasUnclassifiedActivity;
+
+  /// With a `periodEnd` only (historical balances; zero otherwise): the
+  /// non-zero opening balances with no `openingBalanceDate`, counted from
+  /// the beginning, and the names of their accounts.
+  final double undatedOpeningBalance;
+  final List<String> undatedOpeningAccounts;
+
+  /// With a `periodEnd` only: opening balances dated after it, so left out
+  /// of [openingBalance] and the balances.
+  final double openingBalanceNotYetEffective;
+
+  /// [openingBalance] minus the undated part: opening balances dated on or
+  /// before `periodEnd`.
+  double get datedOpeningBalance => openingBalance - undatedOpeningBalance;
 }
 

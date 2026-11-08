@@ -10,6 +10,7 @@ class FinanceAccountModel {
     required this.isActive,
     required this.createdAt,
     required this.updatedAt,
+    this.openingBalanceDate,
   });
 
   final String id;
@@ -20,6 +21,20 @@ class FinanceAccountModel {
   final bool isActive;
   final DateTime? createdAt;
   final DateTime? updatedAt;
+
+  /// The calendar day [openingBalance] applies from (stored as a Timestamp
+  /// at that day's local midnight). Historical month-end balances include
+  /// the opening balance only from this day; current balances always
+  /// include it. Null on accounts made before it existed, and allowed while
+  /// the opening balance is zero.
+  final DateTime? openingBalanceDate;
+
+  /// A non-zero opening balance with no [openingBalanceDate]: historical
+  /// balances count it from the beginning.
+  bool get hasUndatedOpeningBalance => (openingBalance * 100).round() != 0 && openingBalanceDate == null;
+
+  /// [date] as the day an opening balance applies from (time dropped).
+  static DateTime openingDay(DateTime date) => DateTime(date.year, date.month, date.day);
 
   factory FinanceAccountModel.fromMap(String id, Map<String, dynamic> data) {
     DateTime? parse(dynamic v) => v is Timestamp ? v.toDate() : v is DateTime ? v : null;
@@ -35,6 +50,7 @@ class FinanceAccountModel {
       isActive: data['isActive'] != false,
       createdAt: parse(data['createdAt']),
       updatedAt: parse(data['updatedAt']),
+      openingBalanceDate: parse(data['openingBalanceDate']),
     );
   }
 
@@ -46,6 +62,7 @@ class FinanceAccountModel {
         'isActive': isActive,
         'createdAt': createdAt,
         'updatedAt': updatedAt,
+        if (openingBalanceDate != null) 'openingBalanceDate': Timestamp.fromDate(openingDay(openingBalanceDate!)),
       };
 }
 

@@ -159,10 +159,13 @@ void main() {
     // fake_cloud_firestore's transaction mock ignores SetOptions(merge: true)
     // (see FinanceService.updateIncome), so payInvoice's merge write replaces
     // the invoice doc in tests; real Firestore merges. Restore the untouched
-    // invoice fields so the invoice stays listed on the Salary tab.
+    // invoice fields so the invoice stays listed on the Salary tab, and the
+    // account's (so the next cash payment still finds an active Cash
+    // account: payments never fall back to another account).
     Future<void> pay(String invoiceId, double amount, DateTime paidOn) async {
       final ref = firestore.collection('finance_invoices').doc(invoiceId);
       final before = (await ref.get()).data()!;
+      final accountsBefore = {for (final d in (await firestore.collection('finance_accounts').get()).docs) d.id: d.data()};
       await service.payInvoice(
         invoiceId: invoiceId,
         invoiceType: 'salary',
@@ -173,6 +176,10 @@ void main() {
         remarks: '',
       );
       await ref.set({...before, ...(await ref.get()).data()!});
+      for (final e in accountsBefore.entries) {
+        final account = firestore.collection('finance_accounts').doc(e.key);
+        await account.set({...e.value, ...?(await account.get()).data()});
+      }
     }
 
     /// An older payment record written directly, with [incomeDate] as given

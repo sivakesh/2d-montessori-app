@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../models/finance_account_model.dart';
@@ -28,6 +29,10 @@ class _AddAccountDialogState extends State<AddAccountDialog> {
   final _opening = TextEditingController(text: '0');
   String _type = 'cash';
   bool _isActive = true;
+
+  /// The day the opening balance applies from (FinanceAccountModel
+  /// .openingBalanceDate); required for a new or changed non-zero one.
+  DateTime? _openingDate;
   late final _service = widget.service ?? FinanceService();
   bool _saving = false;
   String? _error;
@@ -46,6 +51,7 @@ class _AddAccountDialogState extends State<AddAccountDialog> {
       _type = account.type;
       _opening.text = _exact(account.openingBalance);
       _isActive = account.isActive;
+      _openingDate = account.openingBalanceDate;
       _usage = _service.accountUsage(account);
     }
   }
@@ -66,13 +72,21 @@ class _AddAccountDialogState extends State<AddAccountDialog> {
       _saving = true;
       _error = null;
     });
+    final opening = double.tryParse(_opening.text) ?? 0;
+    final account = widget.account;
+    final changed = account == null || opening != account.openingBalance;
+    if (changed && (opening * 100).round() != 0 && _openingDate == null) {
+      setState(() {
+        _saving = false;
+        _error = FinanceService.openingDateRequiredMessage;
+      });
+      return;
+    }
     try {
-      final opening = double.tryParse(_opening.text) ?? 0;
-      final account = widget.account;
       if (account != null) {
-        await _service.updateAccount(id: account.id, name: _name.text, type: _type, openingBalance: opening, isActive: _isActive);
+        await _service.updateAccount(id: account.id, name: _name.text, type: _type, openingBalance: opening, isActive: _isActive, openingBalanceDate: _openingDate);
       } else {
-        await _service.createAccount(FinanceAccountModel(id: '', name: _name.text, type: _type, openingBalance: opening, currentBalance: opening, isActive: true, createdAt: DateTime.now(), updatedAt: DateTime.now()));
+        await _service.createAccount(FinanceAccountModel(id: '', name: _name.text, type: _type, openingBalance: opening, currentBalance: opening, isActive: true, createdAt: DateTime.now(), updatedAt: DateTime.now(), openingBalanceDate: _openingDate));
       }
       if (!mounted) return;
       Navigator.pop(context, true);
@@ -83,6 +97,68 @@ class _AddAccountDialogState extends State<AddAccountDialog> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  /// The opening balance's date: shown always, editable even when the
+  /// amount is locked (it only places the balance in history).
+  Widget _openingDateField() {
+    final account = widget.account;
+    final amount = double.tryParse(_opening.text.trim()) ?? 0;
+    final nonZero = (amount * 100).round() != 0;
+    final legacyUndated = account != null && account.hasUndatedOpeningBalance && _openingDate == null;
+    return Column(
+      key: const Key('account-opening-date'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Opening balance date${nonZero ? '' : ' (optional)'}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+              Text(
+                _openingDate == null ? 'Not set' : DateFormat('dd MMM yyyy').format(_openingDate!),
+                key: const Key('account-opening-date-value'),
+                style: const TextStyle(fontSize: 15),
+              ),
+            ]),
+          ),
+          TextButton.icon(
+            key: const Key('account-opening-date-pick'),
+            onPressed: _saving
+                ? null
+                : () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: _openingDate ?? DateTime.now(),
+                      firstDate: DateTime(2000),
+                      lastDate: DateTime(2100),
+                      helpText: 'Opening balance date',
+                    );
+                    if (picked != null) {
+                      setState(() {
+                        _openingDate = DateTime(picked.year, picked.month, picked.day);
+                        _error = null;
+                      });
+                    }
+                  },
+            icon: const Icon(Icons.event_outlined, size: 18),
+            label: Text(_openingDate == null ? 'Choose date' : 'Change'),
+          ),
+        ]),
+        Text(
+          'The day this opening balance applies from. Historical month-end balances include it from that day; current balances always include it.',
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+        ),
+        if (legacyUndated) ...[
+          const SizedBox(height: 6),
+          Text(
+            'Opening date not set: historical month-end balances count this ₹${account.openingBalance.toStringAsFixed(0)} from the beginning. '
+            'Choose the date it applies from to place it correctly. The amount is not changed.',
+            key: const Key('account-opening-date-missing'),
+            style: const TextStyle(fontSize: 12, color: Color(0xFFB26A00)),
+          ),
+        ],
+      ],
+    );
   }
 
   Widget _form({bool historyLocked = false, String? activeLockedReason, List<String> notes = const []}) {
@@ -117,7 +193,10 @@ class _AddAccountDialogState extends State<AddAccountDialog> {
           decoration: const InputDecoration(labelText: 'Opening Balance'),
           keyboardType: TextInputType.number,
           validator: _isEdit ? (v) => double.tryParse(v?.trim() ?? '')?.isFinite == true ? null : 'Enter a number' : null,
+          onChanged: (_) => setState(() {}),
         ),
+        const SizedBox(height: 8),
+        _openingDateField(),
         if (_isEdit) ...[
           const SizedBox(height: 8),
           SwitchListTile(
@@ -163,7 +242,7 @@ class _AddAccountDialogState extends State<AddAccountDialog> {
   Widget build(BuildContext context) {
     return ResponsiveDialogShell(
       desktopWidth: 520,
-      desktopHeight: _isEdit ? 560 : 420,
+      desktopHeight: _isEdit ? 680 : 540,
       child: Form(
           key: _formKey,
           child: SingleChildScrollView(

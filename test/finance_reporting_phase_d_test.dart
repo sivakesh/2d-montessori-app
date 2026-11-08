@@ -148,7 +148,8 @@ void main() {
       expect(find.text(reconciliation), findsOneWidget);
 
       await openTab(tester, 'Ledger');
-      expect(find.text('₹16700'), findsOneWidget); // Closing Balance card
+      // The Ledger's month-end balances can show the same amounts.
+      expect(find.descendant(of: find.byKey(const Key('ledger-closing-balance')), matching: find.text('₹16700')), findsOneWidget); // Closing Balance card
       expect(find.text(reconciliation), findsOneWidget); // same figures, same model
       expect(find.textContaining('₹200 is not shown in Cash, Bank or UPI'), findsOneWidget);
     });

@@ -10,6 +10,7 @@ import '../models/finance_expense_model.dart';
 import '../models/finance_invoice_model.dart';
 import '../models/finance_income_model.dart';
 import '../models/finance_ledger_entry_model.dart';
+import '../models/finance_reconciliation_model.dart';
 import '../models/staff_salary_payment_model.dart';
 import '../models/vendor_model.dart';
 
@@ -74,12 +75,23 @@ class FinanceService {
   /// balance is the stored one. Entries dated after [periodEnd] are
   /// excluded. Entries without a transaction date can't be placed in a
   /// period: they count in an all-time summary only.
-  Stream<FinanceDashboardSummaryModel> watchDashboardSummary({DateTime? periodStart, DateTime? periodEnd}) {
+  Stream<FinanceDashboardSummaryModel> watchDashboardSummary({DateTime? periodStart, DateTime? periodEnd}) =>
+      _ledger.snapshots().asyncMap((snap) => _summarize(snap, periodStart: periodStart, periodEnd: periodEnd));
+
+  /// The same summary as [watchDashboardSummary], once, from the ledger as
+  /// it is now: for the Ledger's month-end balances, account balances as at
+  /// [periodEnd] (opening balances plus every non-cancelled entry dated on
+  /// or before that day; undated entries can't be placed and are left out).
+  Future<FinanceDashboardSummaryModel> dashboardSummaryAt({required DateTime periodEnd}) async =>
+      _summarize(await _ledger.get(), periodEnd: periodEnd);
+
+  /// [watchDashboardSummary]'s calculation over one read of the ledger.
+  Future<FinanceDashboardSummaryModel> _summarize(QuerySnapshot<Map<String, dynamic>> snap, {DateTime? periodStart, DateTime? periodEnd}) async {
     DateTime dayOf(DateTime d) => DateTime(d.year, d.month, d.day);
     final start = periodStart == null ? null : dayOf(periodStart);
     final end = periodEnd == null ? null : dayOf(periodEnd);
     final bounded = start != null || end != null;
-    return _ledger.snapshots().asyncMap((snap) async {
+    {
       final accounts = await _accounts.get();
       final accountTypeById = <String, String>{
         for (final doc in accounts.docs) doc.id: doc.data()['type']?.toString().trim().toLowerCase() ?? '',
@@ -90,10 +102,27 @@ class FinanceService {
       // Presence of unclassified balances/activity, tracked separately from
       // the amounts so activity that nets to zero is still reported.
       var hasUnclassifiedActivity = false;
+      var undatedOpening = 0.0;
+      var excludedOpening = 0.0;
+      final undatedOpeningAccounts = <String>[];
       for (final doc in accounts.docs) {
         final value = doc.data()['openingBalance'];
         final amount = value is num ? value.toDouble() : double.tryParse(value?.toString() ?? '') ?? 0.0;
         final key = bucket(accountTypeById[doc.id]);
+        // As at a past day: an opening balance dated after it doesn't exist
+        // yet. Undated ones (older accounts) count, and are reported.
+        final rawDate = doc.data()['openingBalanceDate'];
+        final openingDate = rawDate is Timestamp ? rawDate.toDate() : rawDate is DateTime ? rawDate : null;
+        if (end != null && amount != 0) {
+          if (openingDate != null && dayOf(openingDate).isAfter(end)) {
+            excludedOpening += amount;
+            continue;
+          }
+          if (openingDate == null) {
+            undatedOpening += amount;
+            undatedOpeningAccounts.add(doc.data()['name']?.toString() ?? '');
+          }
+        }
         opening[key] = opening[key]! + amount;
         if (key.isEmpty && amount != 0) hasUnclassifiedActivity = true;
       }
@@ -146,8 +175,11 @@ class FinanceService {
         unclassifiedOpeningBalance: opening['']!,
         closingBalance: openingBalance + netMovement,
         hasUnclassifiedActivity: hasUnclassifiedActivity,
+        undatedOpeningBalance: undatedOpening,
+        undatedOpeningAccounts: List.unmodifiable(undatedOpeningAccounts),
+        openingBalanceNotYetEffective: excludedOpening,
       );
-    });
+    }
   }
 
   /// Read-only summary of cancelled/voided transactions for the Dashboard.
@@ -343,6 +375,79 @@ class FinanceService {
     return FinanceCancelledTransactionsSummary(transactions: transactions, exclusions: exclusions);
   }
 
+  /// Compares each account's stored running balance (`currentBalance`)
+  /// with the balance its ledger gives: its `openingBalance` plus its
+  /// non-cancelled ledger entries, income in and anything else out, by the
+  /// entry's `accountId` (the same rules as [watchDashboardSummary]). Also
+  /// lists the non-cancelled entries whose account is missing. One read of
+  /// the accounts and the ledger; writes nothing and corrects nothing.
+  Future<FinanceReconciliation> reconcileAccounts() async {
+    final accounts = await _accounts.get();
+    final ledger = await _ledger.get();
+    double numVal(dynamic v) => v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0;
+    final movement = <String, double>{};
+    final count = <String, int>{};
+    final known = {for (final d in accounts.docs) d.id};
+    final problems = <LedgerAccountProblem>[];
+    for (final doc in ledger.docs) {
+      final d = doc.data();
+      if (d['status']?.toString() == 'cancelled') continue;
+      final accountId = d['accountId']?.toString() ?? '';
+      final amount = numVal(d['amount']);
+      final signed = d['entryType']?.toString() == 'income' ? amount : -amount;
+      if (!known.contains(accountId)) {
+        final raw = d['transactionDate'];
+        problems.add(LedgerAccountProblem(
+          entryId: doc.id,
+          title: d['title']?.toString() ?? '',
+          entryType: d['entryType']?.toString() ?? '',
+          amount: amount,
+          accountId: accountId,
+          accountName: d['accountName']?.toString() ?? '',
+          transactionDate: raw is Timestamp ? raw.toDate() : raw is DateTime ? raw : null,
+        ));
+        continue;
+      }
+      movement[accountId] = (movement[accountId] ?? 0) + signed;
+      count[accountId] = (count[accountId] ?? 0) + 1;
+    }
+    const groupOrder = {'cash': 0, 'bank': 1, 'upi': 2};
+    final rows = [
+      for (final doc in accounts.docs)
+        () {
+          final d = doc.data();
+          final opening = numVal(d['openingBalance']);
+          return AccountReconciliation(
+            accountId: doc.id,
+            name: d['name']?.toString() ?? '',
+            type: d['type']?.toString().trim().toLowerCase() ?? '',
+            isActive: isActiveAccountData(d),
+            openingBalance: opening,
+            storedBalance: numVal(d['currentBalance']),
+            calculatedBalance: opening + (movement[doc.id] ?? 0),
+            entryCount: count[doc.id] ?? 0,
+            openingBalanceDate: switch (d['openingBalanceDate']) { final Timestamp t => t.toDate(), final DateTime t => t, _ => null },
+          );
+        }(),
+    ]..sort((a, b) {
+        final g = (groupOrder[a.type] ?? 3).compareTo(groupOrder[b.type] ?? 3);
+        return g != 0 ? g : a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+    return FinanceReconciliation(accounts: rows, problems: problems);
+  }
+
+  /// The `finance_income` record a ledger entry mirrors (manual income, a
+  /// Fee Collection's income, or an invoice payment), found by its
+  /// `ledgerEntryId`, voided ones included; null when there is none (direct
+  /// expenses and salary payments are stored elsewhere). One equality
+  /// query; reads only.
+  Future<FinanceIncomeModel?> findIncomeForLedgerEntry(String ledgerEntryId) async {
+    if (ledgerEntryId.isEmpty) return null;
+    final snap = await _income.where('ledgerEntryId', isEqualTo: ledgerEntryId).limit(1).get();
+    if (snap.docs.isEmpty) return null;
+    return FinanceIncomeModel.fromMap(snap.docs.first.id, snap.docs.first.data());
+  }
+
   Stream<List<FinanceLedgerEntryModel>> watchLedger() {
     return _ledger.orderBy('createdAt', descending: true).snapshots().map(
           (snap) => snap.docs.map((d) => FinanceLedgerEntryModel.fromMap(d.id, d.data())).toList(),
@@ -381,6 +486,12 @@ class FinanceService {
           (snap) => snap.docs.map((d) => FinanceCategoryModel.fromMap(d.id, d.data())).toList(),
         );
   }
+
+  /// Fires on every change to any account, with no ordering, so accounts
+  /// without a `name` (which [watchAccounts]' order by name leaves out) are
+  /// covered too. A change signal only (the Ledger's month-end balances
+  /// recalculate on it); no account is parsed or listed from it.
+  Stream<void> watchAccountChanges() => _accounts.snapshots().map((_) {});
 
   Stream<List<FinanceAccountModel>> watchAccounts() {
     return _accounts.orderBy('name').snapshots().map(
@@ -600,11 +711,17 @@ class FinanceService {
     await ref.delete();
   }
 
+  /// Adds an account. A non-zero opening balance needs the date it applies
+  /// from ([FinanceAccountModel.openingBalanceDate]); without one nothing is
+  /// written.
   Future<String> createAccount(FinanceAccountModel account) async {
+    if (account.hasUndatedOpeningBalance) throw StateError(openingDateRequiredMessage);
     final doc = _accounts.doc();
     await doc.set(account.toMap());
     return doc.id;
   }
+
+  static const openingDateRequiredMessage = 'Choose the date this opening balance applies from.';
 
   /// Account types offered by the Add/Edit Account form.
   static const accountTypes = ['cash', 'bank', 'upi', 'wallet', 'other'];
@@ -625,7 +742,7 @@ class FinanceService {
   ///   for audit and still point at the account;
   /// - the payment types it is the only active account for, and whether it
   ///   is the last active account (new payments are routed to an active
-  ///   account by type, falling back to any active one).
+  ///   account of their type, never to another type).
   Future<FinanceAccountUsage> accountUsage(FinanceAccountModel account) async {
     Future<bool> used(CollectionReference<Map<String, dynamic>> c) async =>
         (await c.where('accountId', isEqualTo: account.id).limit(1).get()).docs.isNotEmpty;
@@ -635,8 +752,7 @@ class FinanceService {
       if (await used(_expenses)) 'expense records',
       if (await used(_salary)) 'salary payment records',
     ];
-    final others = (await _accounts.where('isActive', isEqualTo: true).get())
-        .docs
+    final others = (await _activeAccountDocs())
         .where((d) => d.id != account.id)
         .map((d) => d.data()['type']?.toString() ?? '')
         .toList();
@@ -665,6 +781,10 @@ class FinanceService {
   ///   Cash/Bank/UPI; an opening-balance change would rewrite its closing
   ///   balance). A new opening balance moves the current balance by the same
   ///   difference.
+  /// - [openingBalanceDate] (the day the opening balance applies from) can
+  ///   be set at any time, even on a used account: it only places the
+  ///   opening balance in historical month-end balances. Null keeps the
+  ///   stored date. A changed non-zero opening balance needs one.
   /// - It can't stop being the only active account for a payment type (by
   ///   type change or deactivation), nor can the last active account be
   ///   deactivated, since new payments would then go to another account
@@ -675,6 +795,7 @@ class FinanceService {
     required String type,
     required double openingBalance,
     required bool isActive,
+    DateTime? openingBalanceDate,
   }) async {
     final ref = _accounts.doc(id);
     final snap = await ref.get();
@@ -691,6 +812,12 @@ class FinanceService {
 
     final typeChanged = type != current.type;
     final openingChanged = openingBalance != current.openingBalance;
+    // A new or changed non-zero opening balance must be dated; an existing
+    // undated one may stay as it is (no date is assumed).
+    final effectiveDate = openingBalanceDate ?? current.openingBalanceDate;
+    if (openingChanged && (openingBalance * 100).round() != 0 && effectiveDate == null) {
+      throw StateError(openingDateRequiredMessage);
+    }
     final usage = await accountUsage(current);
     if ((typeChanged || openingChanged) && usage.references.isNotEmpty) {
       throw StateError(
@@ -719,6 +846,8 @@ class FinanceService {
         'name': newName,
         'type': type,
         'openingBalance': openingBalance,
+        // Its date only places it in history: the stored balance is unchanged.
+        if (openingBalanceDate != null) 'openingBalanceDate': Timestamp.fromDate(FinanceAccountModel.openingDay(openingBalanceDate)),
         if (openingChanged) 'currentBalance': numVal(liveData['currentBalance']) + (openingBalance - numVal(liveData['openingBalance'])),
         'isActive': isActive,
         'updatedAt': FieldValue.serverTimestamp(),
@@ -751,13 +880,17 @@ class FinanceService {
     return doc.id;
   }
 
+  /// Records manual income in its chosen account: the income, its ledger
+  /// entry and the account's balance in one transaction. The account must
+  /// be given, exist and be active; otherwise nothing is written.
   Future<String> createIncome(FinanceIncomeModel income) async {
+    if (income.accountId.trim().isEmpty) throw StateError('Choose the account this income was received in.');
     final incomeRef = _income.doc();
     final ledgerRef = _ledger.doc();
     await _firestore.runTransaction((txn) async {
       final accountRef = _accounts.doc(income.accountId);
       final accountSnap = await txn.get(accountRef);
-      final current = (accountSnap.data()?['currentBalance'] as num?)?.toDouble() ?? 0.0;
+      final current = (_requireActiveAccount(accountSnap)['currentBalance'] as num?)?.toDouble() ?? 0.0;
       final amount = income.amount;
       txn.set(incomeRef, income.toMap(incomeRef.id, ledgerEntryId: ledgerRef.id, createdBy: _createdBy));
       txn.set(ledgerRef, {
@@ -796,19 +929,63 @@ class FinanceService {
     return doc.id;
   }
 
-  /// Picks the account whose type best matches a payment mode string
-  /// (e.g. 'upi', 'bank_transfer', 'cash'), falling back to the first
-  /// active account if nothing matches.
+  /// The active account a payment in [paymentMode] goes to: one whose type
+  /// serves the mode's account type (cash / upi / bank, see
+  /// [_accountTypeForPaymentMode]). Never another type: with no such active
+  /// account the payment is refused ([StateError]) instead of landing in
+  /// whichever account happens to come first. Of several, an account whose
+  /// type is exactly that type comes first, then by name, then id, so the
+  /// same one is always chosen.
   QueryDocumentSnapshot<Map<String, dynamic>> _matchAccountForPaymentMode(
     List<QueryDocumentSnapshot<Map<String, dynamic>>> accounts,
     String paymentMode,
   ) {
     final targetType = _accountTypeForPaymentMode(paymentMode);
-    for (final doc in accounts) {
-      final type = doc.data()['type']?.toString().toLowerCase() ?? '';
-      if (type.contains(targetType)) return doc;
+    String typeOf(QueryDocumentSnapshot<Map<String, dynamic>> d) => d.data()['type']?.toString().toLowerCase() ?? '';
+    final candidates = accounts.where((d) => isActiveAccountData(d.data()) && typeOf(d).contains(targetType)).toList()
+      ..sort((a, b) {
+        final exact = (typeOf(a) == targetType ? 0 : 1).compareTo(typeOf(b) == targetType ? 0 : 1);
+        if (exact != 0) return exact;
+        final byName = (a.data()['name']?.toString() ?? '').toLowerCase().compareTo((b.data()['name']?.toString() ?? '').toLowerCase());
+        return byName != 0 ? byName : a.id.compareTo(b.id);
+      });
+    if (candidates.isEmpty) throw StateError(noAccountForModeMessage(paymentMode));
+    return candidates.first;
+  }
+
+  /// Why a payment in [paymentMode] can't be recorded: no active account
+  /// of the type it goes to.
+  static String noAccountForModeMessage(String paymentMode) {
+    final type = _accountTypeForPaymentMode(paymentMode);
+    final name = type == 'upi' ? 'UPI' : '${type[0].toUpperCase()}${type.substring(1)}';
+    return 'No active $name account for "$paymentMode" payments, so it was not recorded. '
+        'Add or activate a $name account in Finance -> Settings, then try again.';
+  }
+
+  /// Whether a stored account is active: only an explicit `isActive: false`
+  /// makes it inactive; a missing or null field (older accounts) is active,
+  /// as [FinanceAccountModel.fromMap] reads it. Used everywhere the service
+  /// interprets the field.
+  static bool isActiveAccountData(Map<String, dynamic>? data) => data != null && data['isActive'] != false;
+
+  /// The active accounts ([isActiveAccountData]). Read in full and filtered
+  /// here rather than queried by `isActive == true`, which would leave out
+  /// older accounts that have no `isActive` field.
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _activeAccountDocs() async =>
+      [for (final d in (await _accounts.get()).docs) if (isActiveAccountData(d.data())) d];
+
+  /// [snap] as the account a new money movement goes to: it must exist and
+  /// be active ([StateError] otherwise, so nothing is written and no
+  /// account is created by the balance update).
+  static Map<String, dynamic> _requireActiveAccount(DocumentSnapshot<Map<String, dynamic>> snap) {
+    final data = snap.data();
+    if (!snap.exists || data == null) {
+      throw StateError('The selected account no longer exists, so nothing was recorded. Choose another account.');
     }
-    return accounts.first;
+    if (!isActiveAccountData(data)) {
+      throw StateError('"${data['name'] ?? 'The selected account'}" is inactive, so nothing was recorded. Choose an active account.');
+    }
+    return data;
   }
 
   /// The account type a payment mode maps to — the mapping
@@ -848,8 +1025,7 @@ class FinanceService {
       final currentAccount = await _accounts.doc(accountId).get();
       if (currentAccount.exists && matches(currentAccount.data())) return null;
     }
-    final active = await _accounts.where('isActive', isEqualTo: true).get();
-    final candidates = active.docs.where((d) => matches(d.data())).toList();
+    final candidates = (await _activeAccountDocs()).where((d) => matches(d.data())).toList();
     if (candidates.length != 1) {
       throw StateError(
         'Cannot change the payment mode to "$newPaymentMode": '
@@ -905,11 +1081,17 @@ class FinanceService {
         throw StateError('This entry was changed while being edited. Please try again.');
       }
       final destinationData = destinationSnap?.data();
-      if (destinationRef != null && (destinationData == null || destinationData['isActive'] != true)) {
+      if (destinationRef != null && !isActiveAccountData(destinationData)) {
         throw StateError('The account for the new payment mode is no longer available.');
       }
 
       final oldAmount = (live['amount'] as num?)?.toDouble() ?? 0.0;
+      // Its saved account is kept (even if since deactivated), but a change
+      // of amount must reach a balance: with the account gone, refuse
+      // rather than move the ledger without it.
+      if (destinationRef == null && amount != oldAmount && (accountRef == null || accountSnap?.data() == null)) {
+        throw StateError('The account this income was recorded in no longer exists, so its amount can\'t be changed. Nothing was changed.');
+      }
       final accountFields = destinationRef != null
           ? {'accountId': destinationRef.id, 'accountName': destinationData!['name']?.toString() ?? ''}
           : const <String, dynamic>{};
@@ -969,14 +1151,26 @@ class FinanceService {
     if (amount <= 0 || amount > invoice.balanceAmount) {
       throw StateError('Invalid amount');
     }
-    final accounts = await _accounts.where('isActive', isEqualTo: true).get();
-    if (accounts.docs.isEmpty) throw StateError('No active finance account found');
-    final accountDoc = _matchAccountForPaymentMode(accounts.docs, paymentMode);
+    final accountDoc = _matchAccountForPaymentMode(await _activeAccountDocs(), paymentMode);
     final account = FinanceAccountModel.fromMap(accountDoc.id, accountDoc.data());
     final ledgerRef = _ledger.doc();
     final paymentRef = _income.doc();
     await _firestore.runTransaction((txn) async {
-      final currentBalance = (accountDoc.data()['currentBalance'] as num?)?.toDouble() ?? 0.0;
+      // Read again inside the transaction, so a payment made meanwhile is
+      // neither lost from the balance nor allowed to overpay the invoice.
+      final liveInvoice = await txn.get(invoiceRef);
+      final liveAccount = await txn.get(accountDoc.reference);
+      final currentBalance = (_requireActiveAccount(liveAccount)['currentBalance'] as num?)?.toDouble() ?? 0.0;
+      final liveData = liveInvoice.data();
+      if (!liveInvoice.exists || liveData == null) throw StateError('Invoice not found');
+      if (liveData['status']?.toString() == 'cancelled') {
+        throw StateError('This invoice has been cancelled and cannot receive payments.');
+      }
+      final liveBalance = (liveData['balanceAmount'] as num?)?.toDouble() ?? invoice.balanceAmount;
+      if (amount > liveBalance + 0.000001) {
+        throw StateError('Invalid amount: the invoice balance is now ₹${liveBalance.toStringAsFixed(0)} (another payment was recorded).');
+      }
+      final livePaid = (liveData['paidAmount'] as num?)?.toDouble() ?? invoice.paidAmount;
       txn.set(paymentRef, {
         'id': paymentRef.id,
         'title': invoice.type == 'salary' ? 'Salary Payment - ${invoice.partyName}' : 'Expense Payment - ${invoice.partyName}',
@@ -1033,8 +1227,11 @@ class FinanceService {
         'createdBy': _createdBy,
       });
       txn.set(accountDoc.reference, {'currentBalance': currentBalance - amount}, SetOptions(merge: true));
-      final paidAmount = (invoice.paidAmount + amount);
-      final balanceAmount = (invoice.totalAmount - paidAmount).clamp(0, double.infinity);
+      final paidAmount = (livePaid + amount);
+      // The total as read in this transaction (it may have been corrected
+      // since the invoice was first read).
+      final liveTotal = (liveData['totalAmount'] as num?)?.toDouble() ?? invoice.totalAmount;
+      final balanceAmount = (liveTotal - paidAmount).clamp(0, double.infinity);
       final status = balanceAmount == 0 ? 'paid' : paidAmount > 0 ? 'partial' : 'unpaid';
       txn.set(invoiceRef, {
         'paidAmount': paidAmount,
@@ -1318,10 +1515,11 @@ class FinanceService {
   Future<String> createExpense(FinanceExpenseModel expense) async {
     final expenseRef = _expenses.doc();
     final ledgerRef = _ledger.doc();
+    if (expense.accountId.trim().isEmpty) throw StateError('Choose the account this expense was paid from.');
     await _firestore.runTransaction((txn) async {
       final accountRef = _accounts.doc(expense.accountId);
       final accountSnap = await txn.get(accountRef);
-      final current = (accountSnap.data()?['currentBalance'] as num?)?.toDouble() ?? 0.0;
+      final current = (_requireActiveAccount(accountSnap)['currentBalance'] as num?)?.toDouble() ?? 0.0;
       txn.set(expenseRef, expense.toMap(expenseRef.id, ledgerEntryId: ledgerRef.id, createdBy: _createdBy));
       txn.set(ledgerRef, {
         ...expense.toLedgerMap(ledgerRef.id, createdBy: _createdBy),
@@ -1348,10 +1546,11 @@ class FinanceService {
     }
     final paymentRef = _salary.doc();
     final ledgerRef = _ledger.doc();
+    if (payment.accountId.trim().isEmpty) throw StateError('Choose the account this salary was paid from.');
     await _firestore.runTransaction((txn) async {
       final accountRef = _accounts.doc(payment.accountId);
       final accountSnap = await txn.get(accountRef);
-      final current = (accountSnap.data()?['currentBalance'] as num?)?.toDouble() ?? 0.0;
+      final current = (_requireActiveAccount(accountSnap)['currentBalance'] as num?)?.toDouble() ?? 0.0;
       txn.set(paymentRef, payment.toMap(paymentRef.id, ledgerEntryId: ledgerRef.id, createdBy: _createdBy));
       txn.set(ledgerRef, {
         'id': ledgerRef.id,
@@ -1454,11 +1653,7 @@ class FinanceService {
       return existing.docs.first.id;
     }
 
-    final accounts = await _accounts.where('isActive', isEqualTo: true).get();
-    if (accounts.docs.isEmpty) {
-      throw StateError('No active finance account found');
-    }
-    final accountDoc = _matchAccountForPaymentMode(accounts.docs, entry['paymentMode']?.toString() ?? '');
+    final accountDoc = _matchAccountForPaymentMode(await _activeAccountDocs(), entry['paymentMode']?.toString() ?? '');
     final account = FinanceAccountModel.fromMap(accountDoc.id, accountDoc.data());
 
     final incomeRef = _income.doc();
@@ -1470,7 +1665,7 @@ class FinanceService {
       if (duplicateSnap.exists) return;
       final accountRef = _accounts.doc(account.id);
       final accountSnap = await txn.get(accountRef);
-      final current = (accountSnap.data()?['currentBalance'] as num?)?.toDouble() ?? 0.0;
+      final current = (_requireActiveAccount(accountSnap)['currentBalance'] as num?)?.toDouble() ?? 0.0;
       final title = entry['description']?.toString().isNotEmpty == true
           ? entry['description'].toString()
           : 'Fee collected';

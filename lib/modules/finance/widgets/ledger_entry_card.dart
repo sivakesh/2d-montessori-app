@@ -10,10 +10,14 @@ class LedgerEntryCard extends StatelessWidget {
     super.key,
     required this.entry,
     this.onCancel,
+    this.onTap,
   });
 
   final FinanceLedgerEntryModel entry;
   final VoidCallback? onCancel;
+
+  /// Optional: tapping the row (e.g. to open its details).
+  final VoidCallback? onTap;
 
   static const _expenseColor = Color(0xFFD32F2F);
 
@@ -43,7 +47,7 @@ class LedgerEntryCard extends StatelessWidget {
     // chip for exceptions (e.g. cancelled) instead of repeating it on every row.
     final showStatus = entry.status.isNotEmpty && entry.status != 'confirmed';
 
-    return Container(
+    final card = Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.card,
@@ -149,6 +153,15 @@ class LedgerEntryCard extends StatelessWidget {
             style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: color),
           ),
         ],
+      ),
+    );
+    if (onTap == null) return card;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Semantics(button: true, child: card),
       ),
     );
   }

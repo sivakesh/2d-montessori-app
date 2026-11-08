@@ -15,6 +15,7 @@
 // - Ledger totals and account balances never change except by a deliberate
 //   opening-balance correction of an unused account.
 // - Usage-check, save, delete and loading errors are shown, never success.
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -44,10 +45,10 @@ class _FaultyFinanceService extends FinanceService {
       failUsage ? Future.error(Exception('lookup failed')) : super.accountUsage(account);
 
   @override
-  Future<void> updateAccount({required String id, required String name, required String type, required double openingBalance, required bool isActive}) =>
+  Future<void> updateAccount({required String id, required String name, required String type, required double openingBalance, required bool isActive, DateTime? openingBalanceDate}) =>
       failUpdate
           ? Future.error(Exception('write failed'))
-          : super.updateAccount(id: id, name: name, type: type, openingBalance: openingBalance, isActive: isActive);
+          : super.updateAccount(id: id, name: name, type: type, openingBalance: openingBalance, isActive: isActive, openingBalanceDate: openingBalanceDate);
 
   @override
   Future<void> deleteAccount(String id) => failDelete ? Future.error(Exception('write failed')) : super.deleteAccount(id);
@@ -238,8 +239,14 @@ void main() {
     await cardAction(tester, 'HDFC Savings', 'Edit');
     await tester.enterText(field('Name'), 'HDFC Current');
     await tester.enterText(field('Opening Balance'), '6500');
+    // A changed non-zero opening balance needs its date (Phase 2B).
+    await tapAndSettle(tester, find.byKey(const Key('account-opening-date-pick')));
+    await tester.tap(find.text('15'));
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
     await save(tester);
     expectAmounts('HDFC Current', opening: '₹6500', current: '₹6500');
+    expect(((await account(hdfcId))!['openingBalanceDate'] as Timestamp).toDate().day, 15);
     final after = await summary();
     expect(after.closingBalance, before.closingBalance + 1500);
     expect(after.bankBalance, before.bankBalance + 1500);

@@ -19,6 +19,9 @@ import 'package:montessori_app/modules/finance/ui/admin_finance_screen.dart';
 
 import 'support/buffered_transaction_firestore.dart';
 
+
+/// The Ledger opens on the current month: the month these tests' entries are in.
+DateTime _september() => DateTime(2026, 9, 15);
 void main() {
   late BufferedTransactionFirestore firestore;
   late FinanceService service;
@@ -202,7 +205,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(ProviderScope(child: MaterialApp(home: AdminFinanceScreen(service: service))));
+    await tester.pumpWidget(ProviderScope(child: MaterialApp(home: AdminFinanceScreen(service: service, clock: _september))));
     await tester.pumpAndSettle();
     // Dashboard: Net Balance remains the period movement; account cards are closing balances.
     expect(find.text('₹4400'), findsWidgets); // Net Balance (4500 − 100)
@@ -211,10 +214,11 @@ void main() {
 
     await tester.tap(find.widgetWithText(ChoiceChip, 'Ledger'));
     await tester.pumpAndSettle();
-    expect(find.text('₹4400'), findsOneWidget); // Net Movement
-    expect(find.text('₹16700'), findsOneWidget); // Closing = 12300 opening + 4400
-    expect(find.text('₹14500'), findsOneWidget); // Cash
-    expect(find.text('₹2000'), findsOneWidget); // UPI
+    expect(find.text('₹4400'), findsOneWidget); // Profit / Loss for September 2026
+    // The month-end balances (September, every entry) show the same amounts.
+    expect(find.descendant(of: find.byKey(const Key('ledger-closing-balance')), matching: find.text('₹16700')), findsOneWidget); // Closing = 12300 opening + 4400
+    expect(find.descendant(of: find.byKey(const Key('finance-balance-cash')), matching: find.text('₹14500')), findsOneWidget); // Cash
+    expect(find.descendant(of: find.byKey(const Key('finance-balance-upi')), matching: find.text('₹2000')), findsOneWidget); // UPI
     expect(find.textContaining('includes ₹12300 in account opening balances'), findsOneWidget);
     expect(find.textContaining('₹200 is not shown in Cash, Bank or UPI'), findsOneWidget);
     expect(find.textContaining('includes ₹300 opening balance'), findsOneWidget);

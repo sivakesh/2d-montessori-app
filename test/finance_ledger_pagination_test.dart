@@ -2,8 +2,9 @@
 // page), the same controls and behaviour as Income/Expenses/Salary.
 // - Only the current page's LedgerEntryCards are built, in the existing
 //   watchLedger() order (newest createdAt first).
-// - Total Inflow / Total Outflow / Net Movement (confirmed entries) and the
-//   Closing Balance / account cards always cover the complete ledger.
+// - Total Income / Total Expenses / Profit / Loss (confirmed entries) and the
+//   Closing Balance / account cards always cover the complete ledger (the
+//   Ledger opens on the current month, which holds every entry here).
 // - Previous/Next (disabled at the ends), "Showing x–y of n", "Page p of q";
 //   back to page 1 when entries are added/removed/reordered or the page
 //   becomes invalid; no controls for an empty ledger.
@@ -22,6 +23,9 @@ import 'package:montessori_app/modules/finance/widgets/ledger_entry_card.dart';
 
 import 'support/buffered_transaction_firestore.dart';
 
+
+/// The Ledger opens on the current month: the month these tests' entries are in.
+DateTime _september() => DateTime(2026, 9, 15);
 void main() {
   late BufferedTransactionFirestore firestore;
   late FinanceService service;
@@ -64,10 +68,16 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(ProviderScope(child: MaterialApp(home: AdminFinanceScreen(service: service))));
+    await tester.pumpWidget(ProviderScope(child: MaterialApp(home: AdminFinanceScreen(service: service, clock: _september))));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ChoiceChip, 'Ledger'));
     await tester.pumpAndSettle();
+    // Page through the complete ledger: cancelled entry 3 included (an
+    // empty ledger has no filters to set).
+    if (find.byKey(const Key('ledger-show-cancelled')).evaluate().isNotEmpty) {
+      await tester.tap(find.byKey(const Key('ledger-show-cancelled')));
+      await tester.pumpAndSettle();
+    }
   }
 
   List<String> shown(WidgetTester tester) => tester
@@ -95,10 +105,10 @@ void main() {
 
   void expectFigures(WidgetTester tester, {required String inflow, required String outflow, required String net, required String closing}) {
     Finder card(String label) => find.ancestor(of: find.text(label), matching: find.byType(FinanceSummaryCard));
-    expect(find.descendant(of: card('Total Inflow'), matching: find.text(inflow)), findsOneWidget);
-    expect(find.descendant(of: card('Total Outflow'), matching: find.text(outflow)), findsOneWidget);
-    expect(find.descendant(of: card('Net Movement'), matching: find.text(net)), findsOneWidget);
-    expect(find.descendant(of: card('Closing Balance'), matching: find.text(closing)), findsOneWidget);
+    expect(find.descendant(of: card('Total Income'), matching: find.text(inflow)), findsOneWidget);
+    expect(find.descendant(of: card('Total Expenses'), matching: find.text(outflow)), findsOneWidget);
+    expect(find.descendant(of: card('Profit / Loss'), matching: find.text(net)), findsOneWidget);
+    expect(find.descendant(of: card('Current Closing Balance'), matching: find.text(closing)), findsOneWidget);
   }
 
   // Entries 1..27: inflow = odd n except cancelled 3 = (196 − 3) × 100;
@@ -173,7 +183,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Showing 1–10 of 28'), findsOneWidget);
     expect(shown(tester), range(28, 19));
-    expectFigures(tester, inflow: '₹19300', outflow: '₹21000', net: '₹-1700', closing: '₹-1700');
+    expectFigures(tester, inflow: '₹19300', outflow: '₹21000', net: '-₹1700', closing: '₹-1700');
   });
 
   testWidgets('5b. removing an entry returns to page 1; a status-only change keeps the page', (tester) async {

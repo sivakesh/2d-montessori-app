@@ -8,10 +8,13 @@ import '../../../core/theme/app_colors.dart';
 /// brighter, unrelated green — Color(0xFF2E7D32) — instead of reusing
 /// AppColors.primary, the app's actual dark-green brand token).
 class AdminFab extends StatelessWidget {
-  const AdminFab({super.key, required this.icon, required this.onPressed});
+  const AdminFab({super.key, required this.icon, required this.onPressed, this.tooltip});
 
   final IconData icon;
   final VoidCallback? onPressed;
+
+  /// Optional tooltip, also the button's accessible label.
+  final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
@@ -19,6 +22,7 @@ class AdminFab extends StatelessWidget {
       backgroundColor: AppColors.primary,
       elevation: 4,
       onPressed: onPressed,
+      tooltip: tooltip,
       child: Icon(icon, color: Colors.white),
     );
   }

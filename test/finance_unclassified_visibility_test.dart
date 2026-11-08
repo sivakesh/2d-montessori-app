@@ -195,7 +195,8 @@ void main() {
     expect(find.text(line), findsOneWidget);
     await openTab(tester, 'Ledger');
     expect(find.text(line), findsOneWidget);
-    expect(find.text('₹4880'), findsOneWidget); // Closing Balance card
+    // The Ledger's month-end balances can show the same amounts.
+    expect(find.descendant(of: find.byKey(const Key('ledger-closing-balance')), matching: find.text('₹4880')), findsOneWidget); // Closing Balance card
   });
 
   testWidgets('Settings -> Accounts shows a missing type as unclassified, not CASH', (tester) async {

@@ -1,15 +1,24 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/services/document_number_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_sizes.dart';
+import '../../../core/widgets/monthly_bar_chart.dart';
 import '../../../core/widgets/responsive_dialog_shell.dart';
+import '../../admin/settings/models/academic_year_model.dart';
+import '../../admin/settings/models/academic_year_months.dart';
+import '../../admin/settings/models/school_settings_model.dart' show kDefaultSchoolId;
+import '../../admin/settings/providers/academic_year_provider.dart';
 import '../../admin/ui/admin_fab.dart';
 import '../../admin/ui/admin_layout.dart';
 import '../../fees/services/fee_service.dart';
+import '../../fees/ui/admin_fees_screen.dart';
 import '../models/finance_account_model.dart';
 import '../models/finance_cancelled_transactions_model.dart';
 import '../models/finance_category_model.dart';
@@ -17,23 +26,46 @@ import '../models/finance_dashboard_summary_model.dart';
 import '../models/finance_invoice_model.dart';
 import '../models/finance_income_model.dart';
 import '../models/finance_ledger_entry_model.dart';
+import '../models/finance_monthly_totals.dart';
+import '../models/ledger_period.dart';
 import '../models/vendor_model.dart';
 import '../services/finance_service.dart';
 import '../widgets/finance_status_chip.dart';
 import '../widgets/finance_summary_card.dart';
 import '../widgets/ledger_entry_card.dart';
+import 'dialogs/account_reconciliation_dialog.dart';
 import 'dialogs/add_account_dialog.dart';
 import 'dialogs/add_category_dialog.dart';
+import '../efficiency/expense_efficiency_service.dart';
+import '../efficiency/expense_efficiency_page.dart';
 import 'dialogs/add_expense_dialog.dart';
 import 'dialogs/add_income_dialog.dart';
 import 'dialogs/add_salary_payment_dialog.dart';
 import 'dialogs/add_vendor_dialog.dart';
+import 'dialogs/ledger_entry_details_dialog.dart';
 
 class AdminFinanceScreen extends StatefulWidget {
-  const AdminFinanceScreen({super.key, FinanceService? service, FeeService? feeService, DocumentNumberService? numberService})
-      : _service = service,
+  const AdminFinanceScreen({
+    super.key,
+    FinanceService? service,
+    FeeService? feeService,
+    DocumentNumberService? numberService,
+    DateTime Function()? clock,
+    ExpenseEfficiencyService? efficiencyService,
+  })  : _service = service,
         _feeService = feeService,
-        _numberService = numberService;
+        _numberService = numberService,
+        _clock = clock,
+        _efficiencyService = efficiencyService;
+
+  /// Optional injection seam (tests): Expense Efficiency's own analytical
+  /// data (Reports → Expense Efficiency). Null builds the default when it
+  /// is opened.
+  final ExpenseEfficiencyService? _efficiencyService;
+
+  /// Optional injection seam (tests): "today" for the Ledger's default
+  /// month. Null is the device clock.
+  final DateTime Function()? _clock;
 
   final FinanceService? _service;
 
@@ -60,6 +92,20 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
   FeeService get _feeService => widget._feeService ?? (_defaultFeeService ??= FeeService(financeService: _service));
   int _tab = 0;
 
+  /// Set by the Dashboard's monthly chart: the Ledger opens on that month
+  /// and type; cleared when the Ledger is opened any other way.
+  ({LedgerPeriod period, _LedgerType type, String note})? _ledgerDrill;
+
+  void _openLedgerMonth(LedgerPeriod period, _LedgerType type, String note) => setState(() {
+        _ledgerDrill = (period: period, type: type, note: note);
+        _tab = 5;
+      });
+
+  void _backToDashboard() => setState(() {
+        _ledgerDrill = null;
+        _tab = 0;
+      });
+
   @override
   void initState() {
     super.initState();
@@ -71,11 +117,17 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 
+  /// Fees -> Receipts, opening Fee Collection [receiptId] in its own Edit
+  /// Collection dialog (Ledger details' "Open in Fees").
+  Future<void> _openInFees(String receiptId) => Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => AdminFeesScreen(service: _feeService, openReceiptId: receiptId)),
+      );
+
   Future<void> _openEditIncome(FinanceIncomeModel income) async {
     await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AddIncomeDialog(initial: income),
+      builder: (_) => AddIncomeDialog(initial: income, service: _service),
     );
   }
 
@@ -424,6 +476,65 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
     }
   }
 
+  /// The Ledger tab's Add: a choice between the two existing entry
+  /// workflows — Add Income (the Income tab's dialog) and Add Expense (the
+  /// Expenses tab's Raise Expense Invoice; paying the invoice records the
+  /// expense in the Ledger). Nothing is written by the menu itself.
+  Future<void> _showLedgerAddChoice(BuildContext context) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          key: const Key('ledger-add-menu'),
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const Key('ledger-add-income'),
+              leading: const Icon(Icons.arrow_downward_rounded, color: AppColors.primary),
+              title: const Text('Add Income'),
+              subtitle: const Text('Record income received. Fees are collected in Fees.'),
+              onTap: () => Navigator.pop(sheetContext, 'income'),
+            ),
+            ListTile(
+              key: const Key('ledger-add-expense'),
+              leading: const Icon(Icons.arrow_upward_rounded, color: Color(0xFFD32F2F)),
+              title: const Text('Add Expense'),
+              subtitle: const Text('Raise an expense invoice. Paying it records the expense in the Ledger.'),
+              onTap: () => Navigator.pop(sheetContext, 'expense'),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(key: const Key('ledger-add-cancel'), onPressed: () => Navigator.pop(sheetContext), child: const Text('Cancel')),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!context.mounted) return;
+    if (choice == 'income') {
+      await showDialog(context: context, barrierDismissible: false, builder: (_) => AddIncomeDialog(service: _service));
+    } else if (choice == 'expense') {
+      await showDialog(context: context, barrierDismissible: false, builder: (_) => _raiseExpenseDialog());
+    }
+  }
+
+  /// The Add button's tooltip (and accessible label) on each tab.
+  String get _fabTooltip => switch (_tab) {
+        0 || 1 => 'Add income',
+        2 => 'Raise expense invoice',
+        3 => 'Raise salary invoice',
+        4 => 'Add vendor',
+        5 => 'Add income or expense',
+        _ => 'Add category or account',
+      };
+
   @override
   Widget build(BuildContext context) {
     return AdminLayout(
@@ -433,7 +544,9 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
       floatingActionButton: _tab == 6
           ? null
           : AdminFab(
+              key: const Key('finance-add'),
               icon: Icons.add,
+              tooltip: _fabTooltip,
               onPressed: () async {
                 switch (_tab) {
                   case 0:
@@ -448,6 +561,9 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
                     break;
                   case 4:
                     await showDialog(context: context, barrierDismissible: false, builder: (_) => const AddVendorDialog());
+                    break;
+                  case 5:
+                    await _showLedgerAddChoice(context);
                     break;
                   case 7:
                     await _showSettingsAddChoice(context);
@@ -471,7 +587,10 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
                     .map((e) => ChoiceChip(
                           label: Text(e.value),
                           selected: _tab == e.key,
-                          onSelected: (_) => setState(() => _tab = e.key),
+                          onSelected: (_) => setState(() {
+                            _tab = e.key;
+                            _ledgerDrill = null;
+                          }),
                         ))
                     .toList(),
               ),
@@ -483,6 +602,16 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
       ),
     );
   }
+
+  /// Reports → Expense Efficiency: the existing feature on its own page
+  /// over Finance; popping it returns here with Reports still selected.
+  Future<void> _openExpenseEfficiency() => Navigator.of(context).push<void>(MaterialPageRoute(
+        builder: (_) => ExpenseEfficiencyPage(
+          finance: _service,
+          service: widget._efficiencyService ?? ExpenseEfficiencyService(),
+          clock: widget._clock ?? DateTime.now,
+        ),
+      ));
 
   Widget _buildBody() {
     switch (_tab) {
@@ -516,18 +645,42 @@ class _AdminFinanceScreenState extends State<AdminFinanceScreen> {
           onAddVendor: () => showDialog(context: context, barrierDismissible: false, builder: (_) => const AddVendorDialog()),
         );
       case 5:
-        return _LedgerTab(service: _service);
+        return _LedgerTab(
+          // A new drill-down starts the tab afresh on its month and type.
+          key: ValueKey(_ledgerDrill),
+          drillDown: _ledgerDrill,
+          onBackToDashboard: _backToDashboard,
+          service: _service,
+          clock: widget._clock ?? DateTime.now,
+          onEditIncome: _openEditIncome,
+          onVoidIncome: _voidIncome,
+          onReversePayment: _reverseExpensePayment,
+          onOpenAttachment: _launch,
+          onOpenInFees: _openInFees,
+        );
       case 6:
-        return _ReportsTab();
+        return _ReportsTab(onOpenExpenseEfficiency: _openExpenseEfficiency);
       case 7:
         return _SettingsTab(service: _service);
       default:
-        return _DashboardTab(service: _service, onViewAllTransactions: () => setState(() => _tab = 5));
+        return _DashboardTab(
+          service: _service,
+          clock: widget._clock ?? DateTime.now,
+          onViewAllTransactions: () => setState(() {
+            _ledgerDrill = null;
+            _tab = 5;
+          }),
+          onOpenLedgerMonth: _openLedgerMonth,
+        );
     }
   }
 }
 
 const _warningColor = Color(0xFFB26A00);
+const _negativeColor = Color(0xFFD32F2F);
+
+/// Below zero to the paisa (a balance of -0.001 is not negative).
+bool _isNegative(double? value) => value != null && (value * 100).round() < 0;
 
 /// Whether the Unclassified card/note is shown: when unclassified balances
 /// or activity exist, even if they net to ₹0.
@@ -539,24 +692,60 @@ bool _showsUnclassified(FinanceDashboardSummaryModel summary) =>
 /// recalculated here): how the account balances add up to the Closing
 /// Balance and, when there is one, what the unclassified amount is.
 class _AccountBalancesReconciliation extends StatelessWidget {
-  const _AccountBalancesReconciliation({required this.summary});
+  const _AccountBalancesReconciliation({required this.summary, required this.service});
 
   final FinanceDashboardSummaryModel summary;
+  final FinanceService service;
 
   @override
   Widget build(BuildContext context) {
     String amount(double v) => '₹${v.toStringAsFixed(0)}';
     final unclassified = summary.unclassifiedBalance;
     final showUnclassified = _showsUnclassified(summary);
+    final negative = [
+      for (final (name, value) in [('Cash', summary.cashBalance), ('Bank', summary.bankBalance), ('UPI', summary.upiBalance)])
+        if (_isNegative(value)) (name, value),
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (negative.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Container(
+            key: const Key('finance-negative-warning'),
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: _negativeColor.withValues(alpha: 0.07), borderRadius: BorderRadius.circular(10), border: Border.all(color: _negativeColor.withValues(alpha: 0.3))),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.warning_amber_rounded, size: 18, color: _negativeColor),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${negative.map((n) => '${n.$1} is ${amount(n.$2)}').join(', ')}: an account can\'t hold less than nothing, so something is missing or recorded '
+                  'against the wrong account. Check ${negative.length == 1 ? 'its' : 'their'} opening balance and the payments recorded against ${negative.length == 1 ? 'it' : 'them'}. '
+                  'Nothing has been changed.',
+                  style: const TextStyle(fontSize: 12.5, color: _negativeColor),
+                ),
+              ),
+            ]),
+          ),
+        ],
         const SizedBox(height: 8),
         Text(
           'Closing Balance ${amount(summary.closingBalance)} = Cash ${amount(summary.cashBalance)}'
           ' + Bank ${amount(summary.bankBalance)} + UPI ${amount(summary.upiBalance)}'
           '${showUnclassified ? ' + Unclassified ${amount(unclassified)}' : ''}',
           style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const Key('finance-check-balances'),
+            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 4), visualDensity: VisualDensity.compact),
+            onPressed: () => showDialog<void>(context: context, builder: (_) => AccountReconciliationDialog(service: service)),
+            icon: const Icon(Icons.fact_check_outlined, size: 16),
+            label: const Text('Check balances'),
+          ),
         ),
         if (showUnclassified) ...[
           const SizedBox(height: 4),
@@ -927,10 +1116,12 @@ class _CancelledTransactionsDialogState extends State<_CancelledTransactionsDial
 /// from FinanceService's existing streams — no new business logic, no new
 /// Firestore queries beyond the ones already used by the Expense/Salary tabs.
 class _DashboardTab extends StatelessWidget {
-  const _DashboardTab({required this.service, required this.onViewAllTransactions});
+  const _DashboardTab({required this.service, required this.clock, required this.onViewAllTransactions, required this.onOpenLedgerMonth});
 
   final FinanceService service;
+  final DateTime Function() clock;
   final VoidCallback onViewAllTransactions;
+  final void Function(LedgerPeriod period, _LedgerType type, String note) onOpenLedgerMonth;
 
   @override
   Widget build(BuildContext context) {
@@ -983,6 +1174,10 @@ class _DashboardTab extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 28),
+                      _DashboardSectionHeader(title: 'Monthly Income and Expenses'),
+                      const SizedBox(height: 12),
+                      _MonthlyIncomeExpenseChart(service: service, clock: clock, onOpen: onOpenLedgerMonth),
+                      const SizedBox(height: 28),
                       _DashboardSectionHeader(title: 'Account Balances'),
                       const SizedBox(height: 12),
                       _ResponsiveCardGrid(
@@ -990,20 +1185,29 @@ class _DashboardTab extends StatelessWidget {
                         tabletColumns: 2,
                         children: [
                           FinanceSummaryCard(
+                            key: const Key('finance-balance-cash'),
                             label: 'Cash',
                             value: '₹${(summary?.cashBalance ?? 0).toStringAsFixed(0)}',
+                            valueColor: _isNegative(summary?.cashBalance) ? _negativeColor : null,
+                            caption: _isNegative(summary?.cashBalance) ? 'Negative balance' : null,
                             icon: Icons.payments_outlined,
                             color: AppColors.primary,
                           ),
                           FinanceSummaryCard(
+                            key: const Key('finance-balance-bank'),
                             label: 'Bank',
                             value: '₹${(summary?.bankBalance ?? 0).toStringAsFixed(0)}',
+                            valueColor: _isNegative(summary?.bankBalance) ? _negativeColor : null,
+                            caption: _isNegative(summary?.bankBalance) ? 'Negative balance' : null,
                             icon: Icons.account_balance_outlined,
                             color: AppColors.secondary,
                           ),
                           FinanceSummaryCard(
+                            key: const Key('finance-balance-upi'),
                             label: 'UPI',
                             value: '₹${(summary?.upiBalance ?? 0).toStringAsFixed(0)}',
+                            valueColor: _isNegative(summary?.upiBalance) ? _negativeColor : null,
+                            caption: _isNegative(summary?.upiBalance) ? 'Negative balance' : null,
                             icon: Icons.qr_code_rounded,
                             color: const Color(0xFF5E35B1),
                           ),
@@ -1016,7 +1220,7 @@ class _DashboardTab extends StatelessWidget {
                             ),
                         ],
                       ),
-                      if (summary != null) _AccountBalancesReconciliation(summary: summary),
+                      if (summary != null) _AccountBalancesReconciliation(summary: summary, service: service),
                       const SizedBox(height: 16),
                       _ResponsiveCardGrid(
                         desktopColumns: 3,
@@ -1075,6 +1279,101 @@ class _DashboardTab extends StatelessWidget {
   double _outstandingTotal(List<FinanceInvoiceModel>? invoices) {
     if (invoices == null) return 0;
     return invoices.fold<double>(0, (total, invoice) => total + invoice.balanceAmount);
+  }
+}
+
+/// Finance Dashboard → Monthly Income and Expenses: each month of the
+/// current academic year through today (FinanceMonthlyTotals: the Ledger's
+/// own Profit / Loss calculation, by transaction date). Each bar opens the
+/// Ledger on that month and type.
+class _MonthlyIncomeExpenseChart extends ConsumerStatefulWidget {
+  const _MonthlyIncomeExpenseChart({required this.service, required this.clock, required this.onOpen});
+
+  final FinanceService service;
+  final DateTime Function() clock;
+  final void Function(LedgerPeriod period, _LedgerType type, String note) onOpen;
+
+  static const incomeColor = MonthlyBarChart.moneyInColor;
+  static const expenseColor = MonthlyBarChart.moneyOutColor;
+
+  @override
+  ConsumerState<_MonthlyIncomeExpenseChart> createState() => _MonthlyIncomeExpenseChartState();
+}
+
+class _MonthlyIncomeExpenseChartState extends ConsumerState<_MonthlyIncomeExpenseChart> {
+  late final Stream<List<FinanceLedgerEntryModel>> _ledger = widget.service.watchLedger();
+  late final Future<AcademicYearModel?> _year = _currentYear();
+
+  /// The current academic year, or null when none is set or it can't be read.
+  Future<AcademicYearModel?> _currentYear() async {
+    try {
+      return await ref.read(academicYearServiceProvider).getCurrentAcademicYear(schoolId: kDefaultSchoolId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final small = TextStyle(fontSize: 12, color: Colors.grey.shade700);
+    Widget frame(List<Widget> children) => Container(
+          key: const Key('finance-chart-card'),
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.black.withValues(alpha: 0.06))),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: children),
+        );
+    return FutureBuilder<AcademicYearModel?>(
+      future: _year,
+      builder: (context, yearSnap) {
+        if (yearSnap.connectionState != ConnectionState.done) return frame([const LinearProgressIndicator()]);
+        final year = yearSnap.data;
+        if (year == null) {
+          return frame([Text('No current academic year is available, so the monthly chart can\'t be shown.', key: const Key('finance-chart-no-year'), style: small)]);
+        }
+        final window = AcademicYearMonths(year, widget.clock());
+        if (window.notStarted) {
+          return frame([Text('The academic year ${year.name} starts on ${DateFormat('d MMM yyyy').format(window.start)}.', key: const Key('finance-chart-not-started'), style: small)]);
+        }
+        return StreamBuilder<List<FinanceLedgerEntryModel>>(
+          stream: _ledger,
+          builder: (context, snap) {
+            if (!snap.hasData) return frame([const LinearProgressIndicator()]);
+            final t = FinanceMonthlyTotals.of(snap.data!, window);
+            final months = t.months;
+            return frame([
+              Text(
+                'Ledger income and expenses in ${year.name}, by transaction date, through ${DateFormat('d MMM yyyy').format(window.end)}. '
+                'Cancelled entries excluded, as in the Ledger.',
+                key: const Key('finance-chart-caption'),
+                style: small,
+              ),
+              const SizedBox(height: 12),
+              MonthlyBarChart(
+                key: const Key('finance-chart'),
+                months: months,
+                monthLabels: [
+                  for (final m in months)
+                    m == months.first || AcademicYearMonths.monthStart(m).month == 1
+                        ? '${AcademicYearMonths.shortLabel(m)}\n${AcademicYearMonths.monthStart(m).year}'
+                        : AcademicYearMonths.shortLabel(m),
+                ],
+                series: [
+                  MonthlyChartSeries(label: 'Income', color: _MonthlyIncomeExpenseChart.incomeColor, values: [for (final m in months) t.incomeIn(m)], keyPrefix: 'finance-chart-income'),
+                  MonthlyChartSeries(label: 'Expenses', color: _MonthlyIncomeExpenseChart.expenseColor, values: [for (final m in months) t.expensesIn(m)], keyPrefix: 'finance-chart-expense'),
+                ],
+                onBarTap: (series, m) {
+                  final d = AcademicYearMonths.monthStart(m);
+                  widget.onOpen(LedgerPeriod.month(d.year, d.month), series == 0 ? _LedgerType.income : _LedgerType.expense, t.drillDownNote(m));
+                },
+              ),
+              Text(t.isEmpty ? 'No income or expenses recorded yet this academic year.' : 'Select a bar to see that month\'s entries in the Ledger.',
+                  key: const Key('finance-chart-hint'), style: small),
+            ]);
+          },
+        );
+      },
+    );
   }
 }
 
@@ -1615,7 +1914,12 @@ class _SearchablePagedList<T> extends StatefulWidget {
     required this.hint,
     required this.noun,
     this.exactSearchFieldsOf,
+    this.emptyText,
   });
+
+  /// Optional: shown (under the search box) when [items] itself is empty,
+  /// e.g. a filter matched nothing. Key: `<keyPrefix>-filter-empty`.
+  final String? emptyText;
 
   final String keyPrefix;
   final List<T> items;
@@ -1665,7 +1969,15 @@ class _SearchablePagedListState<T> extends State<_SearchablePagedList<T>> {
           hint: widget.hint,
           onChanged: (v) => setState(() => _query = v),
         ),
-        if (shown.isEmpty)
+        if (widget.items.isEmpty && widget.emptyText != null)
+          Padding(
+            key: Key('${widget.keyPrefix}-filter-empty'),
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: Text(widget.emptyText!, textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+            ),
+          )
+        else if (shown.isEmpty)
           _FinanceSearchEmpty(keyPrefix: widget.keyPrefix, noun: widget.noun, query: _query)
         else
           _PagedList<T>(
@@ -2562,17 +2874,488 @@ class _VendorCard extends StatelessWidget {
   }
 }
 
-/// The Finance "Ledger" tab: the same [LedgerEntryCard] and `watchLedger()`
-/// stream the Dashboard's "Recent Transactions -> View all" link leads to —
-/// just the full, unfiltered list instead of the latest 5.
-class _LedgerTab extends StatelessWidget {
-  const _LedgerTab({required this.service});
+/// The Ledger's "Month-end balances" for one month: every account as at
+/// its last day, from FinanceService.dashboardSummaryAt that day (the
+/// dashboard summary's own calculation: opening balances + every non-cancelled entry dated on or before
+/// it, by local calendar day; an opening balance only from its opening
+/// date, or throughout when it has none), grouped as the current balances
+/// are.
+/// Undated entries can't be placed and are left out, and said so; the
+/// data model's other limits are explained in a note.
+///
+/// Collapsed to its heading ("Historical Month-end Balances", the date and
+/// a line on what it holds) until opened; it starts collapsed each time the
+/// Ledger opens and when the month changes (the caller keys it by month).
+///
+/// Worked out only while open: opening it listens to the accounts
+/// ([FinanceService.watchAccountChanges], every account, named or not),
+/// whose first snapshot starts the
+/// calculation and whose later ones (an opening balance or its date
+/// changed) redo it; a new [ledger] list (the Ledger stream's latest) redoes
+/// it too. Collapsing it stops listening and calculating.
+class _MonthEndBalances extends StatefulWidget {
+  const _MonthEndBalances({super.key, required this.service, required this.month, required this.ledger, required this.undated, required this.today});
+
   final FinanceService service;
+  final LedgerPeriod month;
+
+  /// The Ledger stream's latest list: a new one means the ledger changed.
+  final List<FinanceLedgerEntryModel> ledger;
+  final UndatedLedgerEntries undated;
+  final DateTime today;
+
+  @override
+  State<_MonthEndBalances> createState() => _MonthEndBalancesState();
+}
+
+class _MonthEndBalancesState extends State<_MonthEndBalances> {
+  bool _expanded = false;
+
+  /// The latest calculation (null until the first, and while collapsed).
+  Future<FinanceDashboardSummaryModel>? _balances;
+  StreamSubscription<void>? _accounts;
+
+  void _refresh() {
+    if (!mounted || !_expanded) return;
+    final next = widget.service.dashboardSummaryAt(periodEnd: widget.month.lastDay!);
+    setState(() {
+      _balances = next;
+    });
+  }
+
+  void _listen() {
+    _accounts?.cancel();
+    // The first snapshot does the first calculation; later ones, each account change.
+    _accounts = widget.service.watchAccountChanges().listen((_) => _refresh(), onError: (Object _) => _refresh());
+  }
+
+  void _toggle() {
+    setState(() => _expanded = !_expanded);
+    if (_expanded) {
+      _listen();
+    } else {
+      _accounts?.cancel();
+      _accounts = null;
+      _balances = null;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _MonthEndBalances oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_expanded) return;
+    if (oldWidget.service != widget.service) {
+      _listen();
+    } else if (!identical(oldWidget.ledger, widget.ledger)) {
+      // A new ledger list: recalculate (build follows didUpdateWidget).
+      _balances = widget.service.dashboardSummaryAt(periodEnd: widget.month.lastDay!);
+    }
+  }
+
+  @override
+  void dispose() {
+    _accounts?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final endLabel = DateFormat('d MMMM yyyy').format(widget.month.lastDay!);
+    return Container(
+      key: const Key('ledger-month-end'),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Semantics(
+            button: true,
+            expanded: _expanded,
+            label: 'Historical Month-end Balances, $endLabel. ${_expanded ? 'Collapse' : 'Expand'}',
+            onTap: _toggle,
+            excludeSemantics: true,
+            child: InkWell(
+              key: const Key('ledger-month-end-toggle'),
+              borderRadius: BorderRadius.circular(16),
+              onTap: _toggle,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                child: Row(
+                  children: [
+                    const Icon(Icons.history_rounded, size: 20, color: AppColors.textSecondary),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Historical Month-end Balances', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                          Text(endLabel, key: const Key('ledger-month-end-date'), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                          const SizedBox(height: 2),
+                          const Text(
+                            'View historical Cash, Bank, UPI and total balances at the end of the selected month.',
+                            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      _expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                      key: const Key('ledger-month-end-chevron'),
+                      color: AppColors.textSecondary,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (_expanded)
+            Padding(
+              key: const Key('ledger-month-end-content'),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: _MonthEndBalancesContent(month: widget.month, balances: _balances, undated: widget.undated, today: widget.today),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The opened section: the month-end cards and their disclosures.
+class _MonthEndBalancesContent extends StatelessWidget {
+  const _MonthEndBalancesContent({required this.month, required this.balances, required this.undated, required this.today});
+
+  final LedgerPeriod month;
+
+  /// Null until the first calculation starts (shown as "…").
+  final Future<FinanceDashboardSummaryModel>? balances;
+  final UndatedLedgerEntries undated;
+  final DateTime today;
+
+  static String _rupees(double v) => '₹${v.toStringAsFixed(0)}';
+
+  @override
+  Widget build(BuildContext context) {
+    final end = month.lastDay!;
+    final endLabel = DateFormat('d MMMM yyyy').format(end);
+    final notOver = !DateTime(today.year, today.month, today.day).isAfter(end);
+    return FutureBuilder<FinanceDashboardSummaryModel>(
+      future: balances,
+      builder: (context, snap) {
+        // While a new figure is worked out, the previous one stays (no flicker).
+        final s = snap.data;
+        FinanceSummaryCard card(String key, String label, double? value, IconData icon, Color color) => FinanceSummaryCard(
+              key: Key('ledger-month-end-$key'),
+              label: label,
+              value: s == null ? '…' : _rupees(value ?? 0),
+              icon: icon,
+              color: color,
+              valueColor: _isNegative(value) ? _negativeColor : null,
+              caption: _isNegative(value) ? 'Negative balance' : 'at $endLabel',
+            );
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Historical, from the ledger: each account’s opening balance plus every transaction dated on or before $endLabel (cancelled ones left out)'
+              '${undated.count == 0 ? '.' : ', excluding undated transactions.'}',
+              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 12),
+            _ResponsiveCardGrid(
+              desktopColumns: 4,
+              tabletColumns: 2,
+              children: [
+                card('cash', 'Cash', s?.cashBalance, Icons.payments_outlined, AppColors.primary),
+                card('bank', 'Bank', s?.bankBalance, Icons.account_balance_outlined, AppColors.secondary),
+                card('upi', 'UPI', s?.upiBalance, Icons.qr_code_rounded, const Color(0xFF5E35B1)),
+                if (s != null && _showsUnclassified(s)) card('other', 'Other / Unclassified', s.unclassifiedBalance, Icons.help_outline, _warningColor),
+                FinanceSummaryCard(
+                  key: const Key('ledger-month-end-total'),
+                  label: undated.count == 0 ? 'Total at month-end' : 'Total at month-end (excl. undated)',
+                  value: s == null ? '…' : _rupees(s.closingBalance),
+                  icon: Icons.savings_outlined,
+                  color: const Color(0xFF00796B),
+                  valueColor: _isNegative(s?.closingBalance) ? _negativeColor : null,
+                  caption: _isNegative(s?.closingBalance)
+                      ? 'Negative balance'
+                      : (s != null && s.undatedOpeningBalance != 0)
+                          ? 'Includes undated opening balances'
+                          : 'at $endLabel',
+                ),
+              ],
+            ),
+            if (s != null && (s.datedOpeningBalance * 100).round() != 0) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Includes ${_rupees(s.datedOpeningBalance)} of opening balances dated on or before $endLabel.',
+                key: const Key('ledger-month-end-opening-dated'),
+                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+            ],
+            if (s != null && (s.undatedOpeningBalance * 100).round() != 0) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Includes ${_rupees(s.undatedOpeningBalance)} of opening balances with no date '
+                '(${s.undatedOpeningAccounts.map((n) => n.isEmpty ? 'an account' : n).join(', ')}): they are counted from the beginning, so these figures are not fully date-checked. '
+                'Set their opening dates in Finance → Settings → Accounts.',
+                key: const Key('ledger-month-end-opening-undated'),
+                style: const TextStyle(fontSize: 12, color: _warningColor),
+              ),
+            ],
+            if (s != null && (s.openingBalanceNotYetEffective * 100).round() != 0) ...[
+              const SizedBox(height: 6),
+              Text(
+                '${_rupees(s.openingBalanceNotYetEffective)} of opening balances apply from after $endLabel, so they are not included.',
+                key: const Key('ledger-month-end-opening-later'),
+                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+            ],
+            if (s != null && _showsUnclassified(s)) ...[
+              const SizedBox(height: 6),
+              const Text(
+                'Other / Unclassified: accounts whose type isn’t Cash, Bank or UPI, and transactions whose account is missing.',
+                style: TextStyle(fontSize: 12, color: _warningColor),
+              ),
+            ],
+            if (undated.count > 0) ...[
+              const SizedBox(height: 6),
+              Text(
+                '${undated.count} undated transaction${undated.count == 1 ? '' : 's'} (net ${undated.net < 0 ? '-' : '+'}₹${undated.net.abs().toStringAsFixed(0)}) '
+                '${undated.count == 1 ? 'is' : 'are'} not in these month-end balances: with no date, ${undated.count == 1 ? 'it' : 'they'} can’t be placed in a month. '
+                '${undated.count == 1 ? 'It is' : 'They are'} included in the current Account Balances.',
+                key: const Key('ledger-month-end-undated'),
+                style: const TextStyle(fontSize: 12, color: _warningColor),
+              ),
+            ],
+            if (notOver) ...[
+              const SizedBox(height: 6),
+              Text(
+                '${month.label} hasn’t ended yet: these include every transaction recorded so far with a date up to $endLabel.',
+                key: const Key('ledger-month-end-not-over'),
+                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+            ],
+            const SizedBox(height: 6),
+            const Text(
+              'Limits of these figures: opening balances count from their opening date (any without a date, from the beginning); voids, reversals '
+              'and edits change past months too, so a month-end can differ from what was shown at the time.',
+              key: Key('ledger-month-end-limits'),
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Which ledger entries the Transactions list shows by type.
+enum _LedgerType { all, income, expense }
+
+/// The Finance "Ledger" tab: the same [LedgerEntryCard] and `watchLedger()`
+/// stream the Dashboard's "Recent Transactions -> View all" link leads to.
+///
+/// A period (a month, the current one at first, or All time) drives the
+/// Ledger Summary's Total Income, Total Expenses and Profit / Loss
+/// ([LedgerPeriodSummary]) and the Transactions list, which a type filter
+/// (All / Income / Expense) and the search narrow further; cancelled entries
+/// are listed only with "Show cancelled transactions". Closing Balance
+/// and Account Balances are current balances from
+/// FinanceService.watchDashboardSummary, unchanged by the period. Both
+/// streams are subscribed once; filtering is in memory. Tapping a row opens
+/// its details ([LedgerEntryDetailsDialog]) with the existing actions.
+class _LedgerTab extends StatefulWidget {
+  const _LedgerTab({
+    super.key,
+    required this.service,
+    required this.clock,
+    required this.onEditIncome,
+    required this.onVoidIncome,
+    required this.onReversePayment,
+    required this.onOpenAttachment,
+    required this.onOpenInFees,
+    this.drillDown,
+    this.onBackToDashboard,
+  });
+
+  /// Opened from the Dashboard's Monthly Income and Expenses chart: starts
+  /// on this month and type (the usual filters, still changeable) and
+  /// shows where it came from, with Back to Dashboard.
+  final ({LedgerPeriod period, _LedgerType type, String note})? drillDown;
+  final VoidCallback? onBackToDashboard;
+  final FinanceService service;
+  final DateTime Function() clock;
+  final ValueChanged<FinanceIncomeModel> onEditIncome;
+  final ValueChanged<FinanceIncomeModel> onVoidIncome;
+  final ValueChanged<FinanceIncomeModel> onReversePayment;
+  final ValueChanged<String> onOpenAttachment;
+  final ValueChanged<String> onOpenInFees;
+
+  @override
+  State<_LedgerTab> createState() => _LedgerTabState();
+}
+
+class _LedgerTabState extends State<_LedgerTab> {
+  late Stream<List<FinanceLedgerEntryModel>> _ledger = widget.service.watchLedger();
+  late Stream<FinanceDashboardSummaryModel> _summary = widget.service.watchDashboardSummary();
+  late LedgerPeriod _period = widget.drillDown?.period ?? LedgerPeriod.of(widget.clock());
+  late _LedgerType _type = widget.drillDown?.type ?? _LedgerType.all;
+
+  /// Whether the list also shows cancelled entries (voided income, reversed
+  /// payments). Off whenever the tab opens; list visibility only: the
+  /// totals never include cancelled entries.
+  bool _showCancelled = false;
+
+  @override
+  void didUpdateWidget(covariant _LedgerTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.service != widget.service) {
+      _ledger = widget.service.watchLedger();
+      _summary = widget.service.watchDashboardSummary();
+    }
+  }
+
+  Future<void> _pickMonth() async {
+    final chosen = await showDialog<LedgerPeriod>(
+      context: context,
+      builder: (_) => LedgerMonthPickerDialog(initial: _period, now: widget.clock()),
+    );
+    if (chosen != null && mounted) setState(() => _period = chosen);
+  }
+
+  void _openDetails(FinanceLedgerEntryModel entry) => showDialog<void>(
+        context: context,
+        builder: (_) => LedgerEntryDetailsDialog(
+          entry: entry,
+          findLinkedIncome: widget.service.findIncomeForLedgerEntry,
+          onEditIncome: widget.onEditIncome,
+          onVoidIncome: widget.onVoidIncome,
+          onReversePayment: widget.onReversePayment,
+          onOpenAttachment: widget.onOpenAttachment,
+          onOpenInFees: widget.onOpenInFees,
+        ),
+      );
+
+  static String _signedRupees(double amount) => '${amount < 0 ? '-' : ''}₹${amount.abs().toStringAsFixed(0)}';
+
+  Widget _periodBar() {
+    final month = !_period.isAllTime;
+    return Wrap(
+      key: const Key('ledger-period'),
+      spacing: 4,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        IconButton(
+          key: const Key('ledger-period-previous'),
+          tooltip: 'Previous month',
+          icon: const Icon(Icons.chevron_left),
+          onPressed: month ? () => setState(() => _period = _period.previous) : null,
+        ),
+        OutlinedButton.icon(
+          key: const Key('ledger-period-pick'),
+          onPressed: _pickMonth,
+          icon: const Icon(Icons.calendar_month_outlined, size: 18),
+          label: Text(_period.label, key: const Key('ledger-period-label')),
+        ),
+        IconButton(
+          key: const Key('ledger-period-next'),
+          tooltip: 'Next month',
+          icon: const Icon(Icons.chevron_right),
+          onPressed: month ? () => setState(() => _period = _period.next) : null,
+        ),
+        if (month)
+          TextButton(
+            key: const Key('ledger-period-all-time'),
+            onPressed: () => setState(() => _period = const LedgerPeriod.allTime()),
+            child: const Text('All time'),
+          )
+        else
+          TextButton(
+            key: const Key('ledger-period-this-month'),
+            onPressed: () => setState(() => _period = LedgerPeriod.of(widget.clock())),
+            child: const Text('This month'),
+          ),
+      ],
+    );
+  }
+
+  Widget _showCancelledToggle() => InkWell(
+        key: const Key('ledger-show-cancelled'),
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => setState(() => _showCancelled = !_showCancelled),
+        child: Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Checkbox(
+              key: const Key('ledger-show-cancelled-checkbox'),
+              value: _showCancelled,
+              onChanged: (v) => setState(() => _showCancelled = v ?? false),
+            ),
+            const Flexible(child: Text('Show cancelled transactions', style: TextStyle(fontSize: 13, color: AppColors.textPrimary))),
+          ]),
+        ),
+      );
+
+  Widget _typeFilter() => SegmentedButton<_LedgerType>(
+        key: const Key('ledger-type-filter'),
+        showSelectedIcon: true,
+        segments: const [
+          ButtonSegment(value: _LedgerType.all, label: Text('All', key: Key('ledger-type-all'))),
+          ButtonSegment(value: _LedgerType.income, label: Text('Income', key: Key('ledger-type-income')), icon: Icon(Icons.arrow_downward_rounded, size: 16)),
+          ButtonSegment(value: _LedgerType.expense, label: Text('Expense', key: Key('ledger-type-expense')), icon: Icon(Icons.arrow_upward_rounded, size: 16)),
+        ],
+        selected: {_type},
+        onSelectionChanged: (s) => setState(() => _type = s.single),
+      );
+
+  /// Where a chart drill-down came from: the month and type it opened on.
+  Widget _drillBanner(({LedgerPeriod period, _LedgerType type, String note}) d) => Container(
+        key: const Key('ledger-drill-banner'),
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.06), borderRadius: BorderRadius.circular(12)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                'From the Dashboard chart: ${d.type == _LedgerType.income ? 'Income' : 'Expenses'} for ${d.period.label}',
+                key: const Key('ledger-drill-title'),
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              if (widget.onBackToDashboard != null)
+                TextButton.icon(
+                  key: const Key('ledger-drill-back'),
+                  onPressed: widget.onBackToDashboard,
+                  icon: const Icon(Icons.arrow_back, size: 18),
+                  label: const Text('Back to Dashboard'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(d.note, key: const Key('ledger-drill-note'), style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary)),
+        ]),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final ledger = _ledgerBody(context);
+    if (widget.drillDown case final d?) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [_drillBanner(d), ledger]);
+    }
+    return ledger;
+  }
+
+  Widget _ledgerBody(BuildContext context) {
     return StreamBuilder<List<FinanceLedgerEntryModel>>(
-      stream: service.watchLedger(),
+      stream: _ledger,
       builder: (context, snap) {
         if (!snap.hasData) {
           return const Padding(
@@ -2583,16 +3366,27 @@ class _LedgerTab extends StatelessWidget {
         final items = snap.data!;
         // Only confirmed ledger entries represent actual money movement —
         // unpaid/partial invoice balances never reach the ledger in the
-        // first place (invoices only post here once paid), so no separate
-        // "exclude outstanding" filter is needed beyond skipping cancelled
-        // entries, the same rule FinanceService's own summary uses.
-        final confirmed = items.where((e) => e.status != 'cancelled');
-        final inflow = confirmed.where((e) => e.entryType == 'income').fold<double>(0, (total, e) => total + e.amount);
-        final outflow = confirmed.where((e) => e.entryType == 'expense').fold<double>(0, (total, e) => total + e.amount);
-        final netMovement = inflow - outflow;
+        // first place (invoices only post here once paid) — so the period
+        // totals skip cancelled entries, the same rule FinanceService's own
+        // summary uses.
+        final period = LedgerPeriodSummary.of(items, _period);
+        // The list: within the period and type, cancelled entries only when
+        // asked for. The totals above use [period], which never counts them.
+        final inPeriod = [
+          for (final e in items)
+            if ((_showCancelled || e.status != 'cancelled') &&
+                _period.contains(e.transactionDate) &&
+                switch (_type) { _LedgerType.all => true, _LedgerType.income => e.entryType == 'income', _LedgerType.expense => e.entryType == 'expense' })
+              e,
+        ];
+        final kind = switch (_type) { _LedgerType.all => 'transactions', _LedgerType.income => 'income transactions', _LedgerType.expense => 'expense transactions' };
+        final where = _period.isAllTime ? '' : ' in ${_period.label}';
+        final including = _showCancelled ? ', including cancelled transactions' : '';
+        const lossColor = Color(0xFFD32F2F);
+        final profitColor = period.isBreakEven ? null : (period.isProfit ? AppColors.primary : lossColor);
 
         return StreamBuilder<FinanceDashboardSummaryModel>(
-          stream: service.watchDashboardSummary(),
+          stream: _summary,
           builder: (context, summarySnap) {
             final summary = summarySnap.data;
             return Column(
@@ -2603,35 +3397,54 @@ class _LedgerTab extends StatelessWidget {
                   subtitle: 'A complete record of every income and expense transaction',
                 ),
                 const SizedBox(height: 20),
-                const _DashboardSectionHeader(title: 'Ledger Summary'),
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: [
+                    const _DashboardSectionHeader(title: 'Ledger Summary'),
+                    _periodBar(),
+                  ],
+                ),
                 const SizedBox(height: 12),
                 _ResponsiveCardGrid(
                   desktopColumns: 4,
                   tabletColumns: 2,
                   children: [
                     FinanceSummaryCard(
-                      label: 'Total Inflow',
-                      value: '₹${inflow.toStringAsFixed(0)}',
+                      key: const Key('ledger-total-income'),
+                      label: 'Total Income',
+                      value: '₹${period.totalIncome.toStringAsFixed(0)}',
+                      caption: _period.label,
                       icon: Icons.trending_up,
                       color: AppColors.primary,
                     ),
                     FinanceSummaryCard(
-                      label: 'Total Outflow',
-                      value: '₹${outflow.toStringAsFixed(0)}',
+                      key: const Key('ledger-total-expenses'),
+                      label: 'Total Expenses',
+                      value: '₹${period.totalExpenses.toStringAsFixed(0)}',
+                      caption: _period.label,
                       icon: Icons.trending_down,
                       color: const Color(0xFFD32F2F),
                     ),
                     FinanceSummaryCard(
-                      label: 'Net Movement',
-                      value: '₹${netMovement.toStringAsFixed(0)}',
+                      key: const Key('ledger-profit-loss'),
+                      label: 'Profit / Loss',
+                      value: period.isBreakEven ? '₹0' : _signedRupees(period.profitLoss),
+                      caption: period.isBreakEven ? 'Break-even' : (period.isProfit ? 'Profit (surplus)' : 'Loss (deficit)'),
+                      valueColor: profitColor,
                       icon: Icons.account_balance_wallet_outlined,
                       color: AppColors.secondary,
                     ),
                     FinanceSummaryCard(
                       // Opening balances + Net Movement, computed once in
-                      // FinanceService.watchDashboardSummary (not here).
-                      label: 'Closing Balance',
+                      // FinanceService.watchDashboardSummary (not here);
+                      // the current balance, whatever the period.
+                      key: const Key('ledger-closing-balance'),
+                      label: 'Current Closing Balance',
                       value: '₹${(summary?.closingBalance ?? 0).toStringAsFixed(0)}',
+                      caption: 'Current, all accounts',
                       icon: Icons.savings_outlined,
                       color: const Color(0xFF5E35B1),
                     ),
@@ -2640,57 +3453,107 @@ class _LedgerTab extends StatelessWidget {
                 if ((summary?.openingBalance ?? 0) != 0) ...[
                   const SizedBox(height: 8),
                   Text(
-                    'Closing Balance includes ₹${summary!.openingBalance.toStringAsFixed(0)} in account opening balances.',
+                    'Current Closing Balance includes ₹${summary!.openingBalance.toStringAsFixed(0)} in account opening balances.',
                     style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                   ),
                 ],
+                if (!_period.isAllTime) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'Total Income, Total Expenses and Profit / Loss are for ${_period.label}. Historical Month-end Balances show the accounts at the end of ${_period.label}. '
+                    'Current Account Balances and the Current Closing Balance are today’s balances and don’t change with the month.',
+                    key: const Key('ledger-period-note'),
+                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  ),
+                  const SizedBox(height: 28),
+                  _MonthEndBalances(
+                    // A new month starts collapsed.
+                    key: ValueKey(_period),
+                    service: widget.service,
+                    month: _period,
+                    ledger: items,
+                    undated: UndatedLedgerEntries.of(items),
+                    today: widget.clock(),
+                  ),
+                ],
                 const SizedBox(height: 28),
-                const _DashboardSectionHeader(title: 'Account Balances'),
+                const _DashboardSectionHeader(title: 'Current Account Balances'),
+                const SizedBox(height: 2),
+                const Text(
+                  'Today’s balances, whatever month is selected.',
+                  key: Key('ledger-current-balances-note'),
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                ),
                 const SizedBox(height: 12),
                 _ResponsiveCardGrid(
                   desktopColumns: 3,
                   tabletColumns: 2,
                   children: [
                     FinanceSummaryCard(
+                      key: const Key('finance-balance-cash'),
                       label: 'Cash',
                       value: '₹${(summary?.cashBalance ?? 0).toStringAsFixed(0)}',
+                      valueColor: _isNegative(summary?.cashBalance) ? _negativeColor : null,
+                      caption: _isNegative(summary?.cashBalance) ? 'Negative balance' : null,
                       icon: Icons.payments_outlined,
                       color: AppColors.primary,
                     ),
                     FinanceSummaryCard(
+                      key: const Key('finance-balance-bank'),
                       label: 'Bank',
                       value: '₹${(summary?.bankBalance ?? 0).toStringAsFixed(0)}',
+                      valueColor: _isNegative(summary?.bankBalance) ? _negativeColor : null,
+                      caption: _isNegative(summary?.bankBalance) ? 'Negative balance' : null,
                       icon: Icons.account_balance_outlined,
                       color: AppColors.secondary,
                     ),
                     FinanceSummaryCard(
+                      key: const Key('finance-balance-upi'),
                       label: 'UPI',
                       value: '₹${(summary?.upiBalance ?? 0).toStringAsFixed(0)}',
+                      valueColor: _isNegative(summary?.upiBalance) ? _negativeColor : null,
+                      caption: _isNegative(summary?.upiBalance) ? 'Negative balance' : null,
                       icon: Icons.qr_code_rounded,
                       color: const Color(0xFF5E35B1),
                     ),
                   ],
                 ),
-                if (summary != null) _AccountBalancesReconciliation(summary: summary),
+                if (summary != null) _AccountBalancesReconciliation(summary: summary, service: widget.service),
                 const SizedBox(height: 28),
-                const _DashboardSectionHeader(title: 'Transactions'),
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: [
+                    const _DashboardSectionHeader(title: 'Transactions'),
+                    if (items.isNotEmpty)
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [_typeFilter(), _showCancelledToggle()],
+                      ),
+                  ],
+                ),
                 const SizedBox(height: 12),
                 if (items.isEmpty)
                   const _EmptyTransactions()
                 else
-                  // Searched and paged in the UI only; the inflow/outflow/net
-                  // movement and balance figures above use the complete list.
+                  // Searched and paged in the UI only, within the period
+                  // and type chosen above.
                   _SearchablePagedList<FinanceLedgerEntryModel>(
                     keyPrefix: 'ledger',
-                    items: items,
+                    items: inPeriod,
                     idOf: (e) => e.id,
                     hint: 'Search description, category, reference, account or vendor',
-                    noun: 'transactions',
+                    noun: '$kind$where${_showCancelled ? '$including,' : ''}',
+                    emptyText: 'No $kind found$where$including.',
                     // subCategoryName holds the vendor name on direct expenses.
                     searchFieldsOf: (e) => [e.title, e.description, e.categoryName, e.subCategoryName, e.referenceNo, e.accountName],
                     itemBuilder: (e) => Padding(
                       padding: const EdgeInsets.only(bottom: 10),
-                      child: LedgerEntryCard(entry: e),
+                      child: LedgerEntryCard(key: Key('ledger-entry-${e.id}'), entry: e, onTap: () => _openDetails(e)),
                     ),
                   ),
                 // Reserves clearance so the last transaction can scroll
@@ -3101,6 +3964,14 @@ class _AccountRow extends StatelessWidget {
                       account.type.isEmpty ? 'NO TYPE · UNCLASSIFIED' : account.type.toUpperCase(),
                       style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
                     ),
+                    if ((account.openingBalance * 100).round() != 0)
+                      Text(
+                        account.openingBalanceDate == null
+                            ? 'Opening date not set'
+                            : 'Opening date: ${DateFormat('dd MMM yyyy').format(account.openingBalanceDate!)}',
+                        key: Key('account-${account.id}-opening'),
+                        style: TextStyle(fontSize: 11, color: account.openingBalanceDate == null ? _warningColor : AppColors.textSecondary),
+                      ),
                   ],
                 ),
               ),
@@ -3137,7 +4008,15 @@ class _AccountRow extends StatelessWidget {
 }
 
 class _ReportsTab extends StatelessWidget {
-  // Report generation isn't implemented yet — these are placeholders that
+  const _ReportsTab({required this.onOpenExpenseEfficiency});
+
+  /// Opens Expense Efficiency, the one working report in this list.
+  final VoidCallback onOpenExpenseEfficiency;
+
+  static const expenseEfficiencyDescription =
+      'Analyse expenses, identify avoidable spending, manage monthly targets and compare actual, adjusted and target financial performance.';
+
+  // The other reports aren't implemented yet — these are placeholders that
   // visually belong to the app, not invented functionality.
   static const _reports = [
     (title: 'Daily Cash Book', description: 'Day-wise cash, bank and UPI movement.', icon: Icons.menu_book_outlined),
@@ -3161,21 +4040,34 @@ class _ReportsTab extends StatelessWidget {
             child: _ReportCard(title: report.title, description: report.description, icon: report.icon),
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: _ReportCard(
+            key: const Key('finance-report-expense-efficiency'),
+            title: 'Expense Efficiency',
+            description: expenseEfficiencyDescription,
+            icon: Icons.insights_outlined,
+            onOpen: onOpenExpenseEfficiency,
+          ),
+        ),
       ],
     );
   }
 }
 
 class _ReportCard extends StatelessWidget {
-  const _ReportCard({required this.title, required this.description, required this.icon});
+  const _ReportCard({super.key, required this.title, required this.description, required this.icon, this.onOpen});
 
   final String title;
   final String description;
   final IconData icon;
 
+  /// A working report: tappable, marked Open. Null: Coming Soon (unchanged).
+  final VoidCallback? onOpen;
+
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final card = Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -3206,8 +4098,20 @@ class _ReportCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          const FinanceStatusChip(label: 'COMING SOON', color: Colors.grey),
+          if (onOpen == null)
+            const FinanceStatusChip(label: 'COMING SOON', color: Colors.grey)
+          else
+            const Icon(Icons.chevron_right, color: AppColors.primary),
         ],
+      ),
+    );
+    if (onOpen == null) return card;
+    return Semantics(
+      button: true,
+      label: 'Open $title',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(borderRadius: BorderRadius.circular(16), onTap: onOpen, child: card),
       ),
     );
   }

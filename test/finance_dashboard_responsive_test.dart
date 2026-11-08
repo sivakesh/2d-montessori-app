@@ -19,6 +19,9 @@ import 'package:montessori_app/modules/finance/widgets/ledger_entry_card.dart';
 
 import 'support/buffered_transaction_firestore.dart';
 
+
+/// The Ledger opens on the current month: the month these tests' entries are in.
+DateTime _september() => DateTime(2026, 9, 15);
 void main() {
   late BufferedTransactionFirestore firestore;
   late FinanceService service;
@@ -42,7 +45,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(ProviderScope(child: MaterialApp(home: AdminFinanceScreen(service: service))));
+    await tester.pumpWidget(ProviderScope(child: MaterialApp(home: AdminFinanceScreen(service: service, clock: _september))));
     await tester.pumpAndSettle();
   }
 
