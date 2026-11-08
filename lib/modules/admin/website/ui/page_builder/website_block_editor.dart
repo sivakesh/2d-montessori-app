@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../../core/theme/app_colors.dart';
 import '../../../../public_website/content/blocks/asymmetric_gallery.dart';
 import '../../../../public_website/content/blocks/testimonials.dart';
+import '../../../../public_website/content/blocks/faq_accordion.dart';
 import '../../../../public_website/content/blocks/block_ids.dart';
 import '../../../../public_website/content/blocks/block_spacing.dart';
 import '../../../../public_website/content/blocks/block_registry.dart';
@@ -21,6 +22,8 @@ import '../../../../public_website/content/website_design.dart';
 import '../../../../public_website/public_website_theme.dart';
 import '../../../../public_website/widgets/blocks/public_accreditations.dart';
 import '../../../../public_website/widgets/blocks/public_custom_html.dart';
+import '../../../../public_website/widgets/blocks/public_faq_accordion.dart';
+import '../../../../public_website/public_strings.dart' show PublicLanguage;
 import '../../../../forms/models/website_form.dart';
 import '../../../../forms/public/public_forms_repository.dart';
 import '../website_content_editors.dart';
@@ -139,6 +142,7 @@ String blockSummary(WebsiteBlock block) {
     'map' => block.text('address').en.trim().isEmpty ? 'No address yet' : block.text('address').en.trim(),
     'accreditations' => '${block.items('items').length} accreditation(s)',
     'testimonials' => '${block.items('testimonials').length} testimonial(s)',
+    'faq' => '${block.items('items').length} question(s) · ${FaqAccordion.multipleOpen(block) ? 'several open at once' : 'one open at a time'}',
     'embed' => switch (EmbedSource.parse(block.text('source').en)) {
         final e when e.isValid => '${e.provider!.label}: ${block.text('title').en.trim().isEmpty ? 'no title yet' : block.text('title').en.trim()}',
         _ => 'Not a supported link yet',
@@ -178,6 +182,7 @@ IconData blockIcon(WebsiteBlock block) => switch (block is StructuredBlock ? blo
       'form' => Icons.assignment_outlined,
       'accreditations' => Icons.workspace_premium_outlined,
       'testimonials' => Icons.format_quote_outlined,
+      'faq' => Icons.quiz_outlined,
       'html' => Icons.code,
       'embed' => Icons.smart_display_outlined,
       // Unsupported blocks (and any type without its own icon).
@@ -897,7 +902,7 @@ class _FieldEditor extends StatelessWidget {
       case ToggleFieldSpec():
         return SwitchListTile(key: Key(keyPrefix), contentPadding: EdgeInsets.zero, title: Text(f.label), value: value as bool? ?? f.initial, onChanged: onChanged);
       case ItemsFieldSpec():
-        return _ItemsEditor(
+        final itemsEditor = _ItemsEditor(
           keyPrefix: keyPrefix,
           field: f,
           items: value as List<BlockItem>? ?? const [],
@@ -908,6 +913,15 @@ class _FieldEditor extends StatelessWidget {
           blockValues: owner?.values ?? const {},
           itemPreview: owner?.type == Testimonials.type ? (item) => _TestimonialPreview(keyPrefix: '$keyPrefix-item-${item.id}', item: item, block: owner!, library: library) : null,
         );
+        // FAQ: the questions as visitors use them, to try the behaviour
+        // (the canvas shows the initial state; it doesn't take clicks).
+        if (owner?.type == FaqAccordion.type) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [itemsEditor, const SizedBox(height: 8), _FaqTryIt(keyPrefix: keyPrefix, block: owner!, design: design)],
+          );
+        }
+        return itemsEditor;
       case ColorFieldSpec():
         // Automatic is "unset" in the picker (its Reset to default).
         final v = value as String? ?? ColorFieldSpec.automatic;
@@ -1021,6 +1035,14 @@ class _ItemsEditor extends StatelessWidget {
                     ),
                     IconButton(key: Key('$keyPrefix-item-${item.id}-up'), tooltip: 'Move up', onPressed: i == 0 ? null : () => _move(i, -1), icon: const Icon(Icons.arrow_upward, size: 18)),
                     IconButton(key: Key('$keyPrefix-item-${item.id}-down'), tooltip: 'Move down', onPressed: i == items.length - 1 ? null : () => _move(i, 1), icon: const Icon(Icons.arrow_downward, size: 18)),
+                    if (field.duplicable)
+                      IconButton(
+                        key: Key('$keyPrefix-item-${item.id}-duplicate'),
+                        tooltip: 'Duplicate',
+                        // A copy just below, with its own id (and its text in every language).
+                        onPressed: items.length >= field.maxItems ? null : () => onChanged([...items]..insert(i + 1, item.withId(BlockIds.item()))),
+                        icon: const Icon(Icons.copy_outlined, size: 18),
+                      ),
                     IconButton(
                       key: Key('$keyPrefix-item-${item.id}-remove'),
                       tooltip: 'Remove',
@@ -1101,6 +1123,78 @@ class _ItemsEditor extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// An FAQ block's questions working as on the website, in the properties
+/// panel: open and close them to try one-at-a-time or several-at-once,
+/// and the initial state (*Show the initial state again*). Nothing here is
+/// saved.
+class _FaqTryIt extends StatefulWidget {
+  const _FaqTryIt({required this.keyPrefix, required this.block, required this.design});
+
+  final String keyPrefix;
+  final StructuredBlock block;
+  final SiteDesign design;
+
+  @override
+  State<_FaqTryIt> createState() => _FaqTryItState();
+}
+
+class _FaqTryItState extends State<_FaqTryIt> {
+  var _restart = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final b = widget.block;
+    final empty = PublicFaqAccordion.shown(b, PublicLanguage.english).isEmpty;
+    return Container(
+      key: Key('${widget.keyPrefix}-try'),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(10)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Wraps in a narrow panel.
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              const Text('Try it (as visitors will; not saved)', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              TextButton(
+                key: Key('${widget.keyPrefix}-try-reset'),
+                onPressed: () => setState(() => _restart++),
+                child: const Text('Show the initial state again'),
+              ),
+            ],
+          ),
+          Text(
+            '${FaqAccordion.multipleOpen(b) ? 'Several answers can be open at once.' : 'Opening an answer closes the one open.'} '
+            '${FaqAccordion.firstOpen(b) ? 'The first answer is open when the page opens.' : 'All answers are closed when the page opens.'}',
+            key: Key('${widget.keyPrefix}-try-summary'),
+            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 8),
+          if (empty)
+            const Text('Enter a question to try it.', style: TextStyle(fontSize: 12, color: AppColors.textSecondary))
+          else
+            WebsiteDesignScope(
+              design: widget.design,
+              child: PublicFaqAccordion(
+                key: ValueKey(_restart),
+                block: b,
+                language: PublicLanguage.english,
+                layout: PublicLayout.mobile,
+                headingStyle: PublicText.heading.copyWith(fontSize: 18, color: widget.design.colorOf('forestDark')),
+                bodyStyle: PublicText.body.copyWith(fontSize: 14),
+                headingColor: widget.design.colorOf('forestDark'),
+                textColor: widget.design.colorOf('muted'),
+                keyPrefix: '${widget.keyPrefix}-try',
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

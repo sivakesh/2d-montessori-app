@@ -27,6 +27,7 @@ import 'public_asymmetric_gallery.dart';
 import 'public_custom_html.dart';
 import 'public_embed_block.dart';
 import 'public_map_block.dart';
+import 'public_faq_accordion.dart';
 import 'public_testimonials.dart';
 import 'public_events_feed.dart';
 import 'public_item_cards.dart';
@@ -259,6 +260,7 @@ class _BlockWidget extends StatelessWidget {
     if (b.type == 'gallery' && b.text('heading').resolve(view.language).isEmpty && !b.items('images').any((i) => view.media[i.string('mediaId')] != null)) return null;
     if (b.type == 'asymmetric_gallery' && !PublicAsymmetricGallery.hasContent(b, view.media, view.language)) return null;
     if (b.type == 'testimonials' && !PublicTestimonials.hasContent(b, view.language)) return null;
+    if (b.type == 'faq' && !PublicFaqAccordion.hasContent(b, view.language)) return null;
     // A section or columns block with nothing to show (no visible block,
     // and for a section no heading text either) is left out.
     if (containerTypes.contains(b.type) &&
@@ -554,6 +556,15 @@ class _BlockWidget extends StatelessWidget {
           headingStyle: look.headingStyle,
           bodyStyle: look.bodyStyle,
           headingColor: look.heading,
+        ),
+      'faq' => PublicFaqAccordion(
+          block: block,
+          language: language,
+          layout: layout,
+          headingStyle: look.headingStyle,
+          bodyStyle: look.bodyStyle,
+          headingColor: look.heading,
+          textColor: look.text,
         ),
       'features' => _features(layout, look),
       'page_header' => _pageHeader(strings, layout, look),

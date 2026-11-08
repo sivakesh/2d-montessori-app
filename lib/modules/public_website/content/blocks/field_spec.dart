@@ -337,7 +337,11 @@ final class IdListFieldSpec extends FieldSpec {
 /// A list of items (buttons, gallery images, cards …), each with a stable
 /// id and its own [itemFields].
 final class ItemsFieldSpec extends FieldSpec {
-  const ItemsFieldSpec(super.key, super.label, {required this.itemLabel, required this.itemFields, this.minItems = 0, required this.maxItems, this.badge, int? newItems}) : _newItems = newItems;
+  const ItemsFieldSpec(super.key, super.label, {required this.itemLabel, required this.itemFields, this.minItems = 0, required this.maxItems, this.badge, int? newItems, this.duplicable = false}) : _newItems = newItems;
+
+  /// The editor offers Duplicate on each item (a copy below it, with a
+  /// fresh id). Off unless asked for, so other lists are unchanged.
+  final bool duplicable;
 
   final int? _newItems;
 

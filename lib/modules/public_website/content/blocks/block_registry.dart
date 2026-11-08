@@ -13,6 +13,7 @@ import 'block_spacing.dart';
 import 'block_limits.dart';
 import 'custom_html.dart';
 import 'embed_providers.dart';
+import 'faq_accordion.dart';
 import 'field_spec.dart';
 import 'testimonials.dart';
 import 'website_block.dart';
@@ -691,6 +692,17 @@ class BlockRegistry {
     fields: Testimonials.fields,
   );
 
+  /// Questions that open to show their answers, one at a time or several
+  /// ([FaqAccordion]).
+  static const faq = BlockDefinition(
+    type: FaqAccordion.type,
+    version: 1,
+    label: 'FAQ',
+    description: 'Questions that open to show their answers',
+    styleKeys: ['spacing', 'width', 'textColor', 'headingColor', 'headingFontSize', 'bodyFontSize'],
+    fields: FaqAccordion.fields,
+  );
+
   /// A Google map of a place the editor enters (an address or a place
   /// name), shown with Google's keyless embed, with an optional
   /// "Get directions" link (also the fallback when the map can't load) and
@@ -918,7 +930,7 @@ class BlockRegistry {
   );
 
   /// Every known block type, in the order the "Add block" menus show.
-  static final List<BlockDefinition> all = [text, icon, image, columns, cta, buttons, gallery, asymmetricGallery, divider, section, hero, cards, features, pageHeader, notice, galleryFeed, eventsFeed, announcementsFeed, form, map, accreditations, testimonials, html, embed, row];
+  static final List<BlockDefinition> all = [text, icon, image, columns, cta, buttons, gallery, asymmetricGallery, divider, section, hero, cards, features, pageHeader, notice, galleryFeed, eventsFeed, announcementsFeed, form, map, accreditations, testimonials, faq, html, embed, row];
 
   /// Every block type the page's own "Add block" menus offer (a Columns /
   /// Row goes only inside a section's column).
