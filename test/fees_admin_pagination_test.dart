@@ -1,7 +1,8 @@
 // Admin Fees: UI pagination (10/25/50 per page) on all five lists —
 // Structures, Assignments, Collections, Receipts, Dues.
 // - Only the current page's rows are built, in the existing service order
-//   (newest first); Collections/Dues are assignments with a balance.
+//   (newest first); Collections lists every assignment, Dues those with a
+//   balance.
 // - Previous/Next (disabled at the ends), "Showing x–y of n", "Page p of q";
 //   back to page 1 when records are added/removed/reordered or the page
 //   becomes invalid; no controls for an empty list.
@@ -38,11 +39,12 @@ class _List {
 }
 
 // 27 structures/assignments/receipts; odd-numbered assignments have a
-// balance, so Collections and Dues list 14 rows.
+// balance, so Dues lists 14 rows; Collections lists all 27 (paid ones
+// too, without Collect).
 final _lists = [
   _List('structures', 'Structures', r'^Structure \d\d$', [for (var n = 27; n >= 1; n--) 'Structure ${_nn(n)}']),
   _List('assignments', 'Assignments', r'^Student \d\d$', [for (var n = 27; n >= 1; n--) 'Student ${_nn(n)}']),
-  _List('collections', 'Collections', r'^Student \d\d$', [for (var n = 27; n >= 1; n -= 2) 'Student ${_nn(n)}']),
+  _List('collections', 'Collections', r'^Student \d\d$', [for (var n = 27; n >= 1; n--) 'Student ${_nn(n)}']),
   _List('receipts', 'Receipts', r'^REC-\d\d$', [for (var n = 27; n >= 1; n--) 'REC-${_nn(n)}']),
   _List('dues', 'Dues', r'^Student \d\d$', [for (var n = 27; n >= 1; n -= 2) 'Student ${_nn(n)}']),
 ];
@@ -96,6 +98,13 @@ void main() {
       overrides: [academicYearServiceProvider.overrideWithValue(AcademicYearService(firestore: firestore))],
       child: MaterialApp(home: AdminFeesScreen(service: fees)),
     ));
+    await tester.pumpAndSettle();
+    // Collections is now the opening tab; these tests start on Structures,
+    // as before the tabs were reordered.
+    final structuresTab = find.widgetWithText(ChoiceChip, 'Structures');
+    await tester.ensureVisible(structuresTab);
+    await tester.pumpAndSettle();
+    await tester.tap(structuresTab);
     await tester.pumpAndSettle();
   }
 
@@ -226,7 +235,7 @@ void main() {
       expect(find.text('Page 1 of 2'), findsOneWidget);
       await tapAndSettle(tester, next());
       await openTab(tester, _lists[2]); // Collections
-      expect(find.text('Page 1 of 2'), findsOneWidget);
+      expect(find.text('Page 1 of 3'), findsOneWidget);
 
       await openTab(tester, _lists[0]);
       expect(find.text('Page 3 of 3'), findsOneWidget);
@@ -269,17 +278,17 @@ void main() {
       await seed();
       await pumpFees(tester);
 
-      await openTab(tester, _lists[2]); // Collections page 2: Student 07, 05, 03, 01
+      await openTab(tester, _lists[2]); // Collections page 2: Student 17 … 08
       await tapAndSettle(tester, next());
       final collect = find.widgetWithText(TextButton, 'Collect');
-      expect(collect, findsNWidgets(4));
+      expect(collect, findsNWidgets(5), reason: 'only the five with a balance (17, 15, 13, 11, 09)');
       expect(tester.widget<TextButton>(collect.first).onPressed, isNotNull);
 
       await tapAndSettle(tester, find.byTooltip('Delete').first);
       await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
       await tester.pumpAndSettle();
-      expect((await firestore.doc('student_fee_assignments/a-07').get()).data()!['isDeleted'], isTrue);
-      expect(find.text('Showing 1–10 of 13'), findsOneWidget);
+      expect((await firestore.doc('student_fee_assignments/a-17').get()).data()!['isDeleted'], isTrue);
+      expect(find.text('Showing 1–10 of 26'), findsOneWidget);
 
       await openTab(tester, _lists[4]); // Dues reflects the same reload
       await tapAndSettle(tester, next());

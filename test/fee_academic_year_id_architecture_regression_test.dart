@@ -135,6 +135,7 @@ void main() {
       'paidAmount': 0.0,
       'balanceAmount': 20000.0,
       'status': 'unpaid',
+      'dueDate': DateTime(2026, 7, 31),
     });
     expect(assignmentId, isNotNull);
 

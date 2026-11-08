@@ -1,5 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../../../fees/models/fee_discount.dart';
+import 'admission_date.dart';
+
 class AdminStudentParentLink {
   AdminStudentParentLink({
     required this.userId,
@@ -107,11 +110,22 @@ class AdminStudentModel {
     required this.parentLinks,
     required this.documents,
     this.profileImageUrl = '',
+    this.admissionDate,
+    this.feeDiscount,
   });
+
+  /// The student's global fee discount configuration (`feeDiscount`), or
+  /// null: none. Saved only through AdminStudentService (validated); not
+  /// part of [toMap].
+  final StudentFeeDiscount? feeDiscount;
 
   final String id;
   final String name;
   final String admissionNo;
+
+  /// Optional calendar date the student was admitted (AdmissionDate);
+  /// null for older records, never inferred.
+  final DateTime? admissionDate;
   final String classId;
   final String section;
   final String rollNumber;
@@ -142,6 +156,8 @@ class AdminStudentModel {
       id: id,
       name: data['name']?.toString() ?? '',
       admissionNo: data['admissionNo']?.toString() ?? '',
+      admissionDate: AdmissionDate.parse(data['admissionDate']),
+      feeDiscount: StudentFeeDiscount.fromStudent(data),
       classId: data['classId']?.toString() ?? '',
       section: data['section']?.toString() ?? '',
       rollNumber: data['rollNumber']?.toString() ?? '',
@@ -184,6 +200,9 @@ class AdminStudentModel {
     return {
       'name': name,
       'admissionNo': admissionNo,
+      // Only when set, so a merge-update never erases a stored date; it
+      // is removed only explicitly (AdminStudentService.updateStudent).
+      if (admissionDate case final d?) 'admissionDate': Timestamp.fromDate(AdmissionDate.dateOnly(d)),
       'classId': classId,
       'section': section,
       'rollNumber': rollNumber,

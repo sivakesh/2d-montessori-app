@@ -7,6 +7,7 @@ import '../../../admin/settings/models/academic_year_model.dart';
 import '../../../admin/settings/models/school_settings_model.dart' show kDefaultSchoolId;
 import '../../../admin/settings/providers/academic_year_provider.dart';
 import '../../models/fee_component_model.dart';
+import '../../models/fee_due_date.dart';
 import '../../models/fee_structure_model.dart';
 import '../../services/fee_service.dart';
 
@@ -127,22 +128,40 @@ class _FeeStructureDialogState extends ConsumerState<FeeStructureDialog> {
     });
   }
 
-  Future<void> _addComponent() async {
-    final name = TextEditingController();
-    final amount = TextEditingController();
-    final term = TextEditingController();
-    final dueDay = TextEditingController();
-    DateTime? dueDate;
-    String frequency = 'monthly';
-    bool optional = false;
+  Future<void> _addComponent() => _editComponent();
+
+  /// Add Component (no [index]) or Edit Component (the component at
+  /// [index], prefilled with everything it stores, including its due-date
+  /// configuration). Only this dialog's own Add/Save changes the list, and
+  /// only the structure's Save writes anything; existing assignments keep
+  /// their own stored due dates either way.
+  ///
+  /// Due-date configuration, used as the default when the fee is assigned:
+  /// - Monthly: Due Day of Month (`dueDayOfMonth`), empty or 1–31.
+  /// - Term / One-time: Default Due Date (`dueDate`), empty or a date in
+  ///   2000–2100 ([FeeService.componentDueDateError]).
+  Future<void> _editComponent([int? index]) async {
+    final existing = index == null ? null : _components[index];
+    final name = TextEditingController(text: existing?.name ?? '');
+    final amount = TextEditingController(text: existing == null ? '' : _amountText(existing.amount));
+    final term = TextEditingController(text: existing?.termName ?? '');
+    final dueDay = TextEditingController(text: existing?.dueDayOfMonth?.toString() ?? '');
+    DateTime? dueDate = existing?.dueDate == null ? null : FeeDueDate.dateOnly(existing!.dueDate!);
+    String frequency = existing?.frequency ?? 'monthly';
+    if (!const ['monthly', 'term', 'oneTime'].contains(frequency)) frequency = 'oneTime';
+    bool optional = existing?.isOptional ?? false;
+    final componentForm = GlobalKey<FormState>();
+    final first = DateTime(2000), last = DateTime(2100, 12, 31);
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => ResponsiveDialogShell.form(
           desktopWidth: 460,
-          desktopHeight: 520,
-          title: 'Add Component',
-          content: Column(
+          desktopHeight: 560,
+          title: existing == null ? 'Add Component' : 'Edit Component',
+          content: Form(
+            key: componentForm,
+            child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   TextField(controller: name, decoration: const InputDecoration(labelText: 'Component Name *')),
@@ -156,56 +175,111 @@ class _FeeStructureDialogState extends ConsumerState<FeeStructureDialog> {
                   if (frequency == 'term')
                     TextField(controller: term, decoration: const InputDecoration(labelText: 'Term Name *')),
                   if (frequency == 'monthly')
-                    TextField(controller: dueDay, decoration: const InputDecoration(labelText: 'Due Day of Month (optional)'), keyboardType: TextInputType.number),
+                    TextFormField(
+                      key: const Key('fee-component-due-day'),
+                      controller: dueDay,
+                      decoration: const InputDecoration(
+                        labelText: 'Due Day of Month (optional)',
+                        helperText: 'Used as the default due date when monthly assignments are created. 1 to 31; a month '
+                            'without this day uses its last day (31 → 28 or 29 Feb, 30 Apr).',
+                        helperMaxLines: 3,
+                      ),
+                      keyboardType: TextInputType.number,
+                      autovalidateMode: AutovalidateMode.onUserInteraction,
+                      validator: FeeService.dueDayOfMonthError,
+                    ),
                   if (frequency != 'monthly')
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(dueDate == null ? 'Optional Due Date' : dueDate!.toIso8601String().split('T').first),
-                      trailing: TextButton(
-                        onPressed: () async {
-                          final picked = await showDatePicker(
-                            context: context,
-                            firstDate: DateTime(2000),
-                            lastDate: DateTime(2100),
-                            initialDate: dueDate ?? DateTime.now(),
-                          );
-                          if (picked != null) setModalState(() => dueDate = picked);
-                        },
-                        child: const Text('Pick'),
+                    FormField<DateTime>(
+                      key: const Key('fee-component-due-date'),
+                      validator: (_) => FeeService.componentDueDateError(dueDate),
+                      builder: (field) => Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: InputDecorator(
+                          decoration: InputDecoration(
+                            labelText: 'Default Due Date (optional)',
+                            errorText: field.errorText,
+                            helperText: 'Used as the default due date when this fee is assigned; it can be changed for each assignment.',
+                            helperMaxLines: 3,
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(dueDate == null ? 'Not set' : FeeDueDate.label(dueDate!), key: const Key('fee-component-due-date-value')),
+                              ),
+                              if (dueDate != null)
+                                IconButton(
+                                  key: const Key('fee-component-due-date-clear'),
+                                  tooltip: 'Clear',
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    setModalState(() => dueDate = null);
+                                    field.didChange(null);
+                                  },
+                                ),
+                              TextButton(
+                                key: const Key('fee-component-due-date-pick'),
+                                onPressed: () async {
+                                  final current = dueDate;
+                                  final today = FeeDueDate.dateOnly(DateTime.now());
+                                  final initial = current != null && !current.isBefore(first) && !current.isAfter(last) ? current : today;
+                                  final picked = await showDatePicker(
+                                    context: context,
+                                    firstDate: first,
+                                    lastDate: last,
+                                    initialDate: initial,
+                                    helpText: 'Default due date',
+                                  );
+                                  if (picked == null) return;
+                                  setModalState(() => dueDate = FeeDueDate.dateOnly(picked));
+                                  field.didChange(dueDate);
+                                },
+                                child: Text(dueDate == null ? 'Pick' : 'Change'),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Optional'), value: optional, onChanged: (v) => setModalState(() => optional = v)),
                 ],
               ),
+          ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
             FilledButton(
+              key: const Key('fee-component-submit'),
               onPressed: () {
                 if (name.text.trim().isEmpty || double.tryParse(amount.text) == null || double.parse(amount.text) <= 0) return;
                 if (frequency == 'term' && term.text.trim().isEmpty) return;
+                if (!(componentForm.currentState?.validate() ?? false)) return;
                 Navigator.pop(context, true);
               },
-              child: const Text('Add'),
+              child: Text(existing == null ? 'Add' : 'Save'),
             ),
           ],
         ),
       ),
     );
     if (ok == true) {
-      setState(() {
-        _components.add(
-          FeeComponentModel(
-            name: name.text.trim(),
-            amount: double.parse(amount.text),
-            frequency: frequency,
-            termName: frequency == 'term' ? term.text.trim() : null,
-            dueDate: frequency == 'monthly' ? null : dueDate,
-            dueDayOfMonth: frequency == 'monthly' ? int.tryParse(dueDay.text) : null,
-            isOptional: optional,
-          ),
-        );
-      });
+      final component = FeeComponentModel(
+        name: name.text.trim(),
+        amount: double.parse(amount.text),
+        frequency: frequency,
+        termName: frequency == 'term' ? term.text.trim() : null,
+        dueDate: frequency == 'monthly' ? null : dueDate,
+        dueDayOfMonth: frequency == 'monthly' ? int.tryParse(dueDay.text.trim()) : null,
+        isOptional: optional,
+      );
+      setState(() => index == null ? _components.add(component) : _components[index] = component);
     }
+  }
+
+  static String _amountText(double v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
+
+  /// "Due day 5" / "Due 10 Jun 2026" / '' for a component's configuration.
+  static String _dueText(FeeComponentModel c) {
+    if (c.frequency == 'monthly') return c.dueDayOfMonth == null ? 'No due day' : 'Due day ${c.dueDayOfMonth}';
+    return c.dueDate == null ? 'No default due date' : 'Due ${FeeDueDate.label(c.dueDate!)}';
   }
 
   Future<void> _save() async {
@@ -233,11 +307,20 @@ class _FeeStructureDialogState extends ConsumerState<FeeStructureDialog> {
       'createdBy': 'admin',
     };
     late final String structureId;
-    if (widget.structure == null) {
-      structureId = await _service.createFeeStructure(data);
-    } else {
-      structureId = widget.structure!.id;
-      await _service.updateFeeStructure(structureId, data);
+    try {
+      if (widget.structure == null) {
+        structureId = await _service.createFeeStructure(data);
+      } else {
+        structureId = widget.structure!.id;
+        await _service.updateFeeStructure(structureId, data);
+      }
+    } on StateError catch (e) {
+      // e.g. a component's Due Day of Month outside 1–31.
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+      return;
     }
 
     if (!mounted) return;
@@ -276,12 +359,27 @@ class _FeeStructureDialogState extends ConsumerState<FeeStructureDialog> {
                 if (_components.isEmpty)
                   const Text('At least one component required')
                 else
-                  ..._components.map((c) => Card(
-                        child: ListTile(
-                          title: Text(c.name),
-                          subtitle: Text('${c.frequency} • ${c.amount.toStringAsFixed(0)}${c.frequency == 'term' && (c.termName ?? '').isNotEmpty ? ' • ${c.termName}' : ''}'),
+                  for (final (i, c) in _components.indexed)
+                    Card(
+                      child: ListTile(
+                        title: Text(c.name),
+                        subtitle: Text(
+                          '${c.frequency} • ${c.amount.toStringAsFixed(0)}${c.frequency == 'term' && (c.termName ?? '').isNotEmpty ? ' • ${c.termName}' : ''} • ${_dueText(c)}',
+                          key: Key('fee-component-summary-$i'),
                         ),
-                      )),
+                        trailing: IconButton(
+                          key: Key('fee-component-edit-$i'),
+                          tooltip: 'Edit Component',
+                          icon: const Icon(Icons.edit_outlined),
+                          onPressed: _saving ? null : () => _editComponent(i),
+                        ),
+                      ),
+                    ),
+                if (_dueConflict case final note?)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(note, key: const Key('fee-structure-due-conflict'), style: const TextStyle(color: Colors.orange, fontSize: 12)),
+                  ),
                 const SizedBox(height: 12),
                 Text('Total Amount: ${totalAmountText()}'),
               ],
@@ -293,6 +391,13 @@ class _FeeStructureDialogState extends ConsumerState<FeeStructureDialog> {
       ],
     );
   }
+
+  /// A note when the components' due-date settings give no shared default
+  /// (FeeDueDate.configurationConflict): assignments then need an explicit
+  /// due date. Nothing is changed.
+  String? get _dueConflict => _components.isEmpty
+      ? null
+      : FeeDueDate.configurationConflict(FeeStructureModel.fromMap('', {'components': [for (final c in _components) c.toMap()]}));
 
   String totalAmountText() => _components.fold<double>(0, (t, c) => t + c.amount).toStringAsFixed(0);
 

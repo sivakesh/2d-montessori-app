@@ -2,19 +2,28 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/widgets/responsive_dialog_shell.dart';
+import '../../models/fee_month.dart';
 import '../../models/fee_receipt_model.dart';
 import '../../services/fee_service.dart';
 
 class FeeReceiptViewDialog extends StatefulWidget {
-  const FeeReceiptViewDialog({super.key, required this.receipt});
+  const FeeReceiptViewDialog({super.key, required this.receipt, this.service, this.voided = false});
   final FeeReceiptModel receipt;
+
+  /// The service used to refresh the receipt and generate its PDF;
+  /// defaults to FeeService(), created only when first needed.
+  final FeeService? service;
+
+  /// A voided (cancelled) payment's receipt, opened from Collection
+  /// Details: marked as voided, and no new PDF can be generated for it.
+  final bool voided;
 
   @override
   State<FeeReceiptViewDialog> createState() => _FeeReceiptViewDialogState();
 }
 
 class _FeeReceiptViewDialogState extends State<FeeReceiptViewDialog> {
-  final _service = FeeService();
+  late final _service = widget.service ?? FeeService();
   late FeeReceiptModel _receipt = widget.receipt;
   bool _isGeneratingPdf = false;
   String? _pdfStatusMessage;
@@ -124,11 +133,28 @@ class _FeeReceiptViewDialogState extends State<FeeReceiptViewDialog> {
                 ),
               ),
               const SizedBox(height: 16),
+              if (widget.voided)
+                Container(
+                  key: const Key('fee-receipt-voided'),
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    border: Border.all(color: Colors.red.shade200),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'VOIDED: this payment was cancelled and does not count towards the fee.',
+                    style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.w600, fontSize: 12),
+                  ),
+                ),
               row('Receipt No', _receipt.receiptNo),
               row('Student Name', _receipt.studentName),
               row('Admission No', _receipt.admissionNo),
               row('Class', _receipt.className),
               row('Fee Name', _receipt.feeStructureName),
+              if (_receipt.feeMonth.isNotEmpty) row('Fee Month', FeeMonth.label(_receipt.feeMonth)),
               row('Amount Paid', 'Rs. ${_receipt.amount.toStringAsFixed(0)}', boldValue: true),
               row('Payment Mode', _receipt.paymentMode),
               row('Reference No', _receipt.referenceNo),
@@ -164,7 +190,7 @@ class _FeeReceiptViewDialogState extends State<FeeReceiptViewDialog> {
                   ),
                   const SizedBox(width: 12),
                   TextButton(
-                    onPressed: _isGeneratingPdf ? null : _generatePdf,
+                    onPressed: _isGeneratingPdf || widget.voided ? null : _generatePdf,
                     child: Text(_isGeneratingPdf ? 'Generating...' : (hasPdf ? 'Regenerate PDF' : 'Generate PDF')),
                   ),
                 ],

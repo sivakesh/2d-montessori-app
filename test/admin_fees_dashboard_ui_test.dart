@@ -25,7 +25,8 @@ FeeService _service(FakeFirebaseFirestore firestore) => FeeService(
 
 /// Seeds exactly the fixture used throughout this file:
 ///  - a1: payable 154000, fully paid (154000), not overdue.
-///  - a2: payable 19900, unpaid (0 paid), status 'overdue'.
+///  - a2: payable 19900, unpaid (0 paid), due 31 Jan 2026 (past), so
+///    overdue (its stored status 'overdue' is no longer what counts).
 ///
 /// So, via the exact same arithmetic as FeeService.getDashboardSummary
 /// (never re-implemented here):
@@ -33,7 +34,7 @@ FeeService _service(FakeFirebaseFirestore firestore) => FeeService(
 ///   Total Collected = 154000 + 0    = 154000 -> "₹1,54,000"
 ///   Outstanding     = 0 + 19900     = 19900  -> "₹19,900"
 ///   Collection %    = 154000/173900*100 = 88.55... -> "88.6%"
-///   Overdue Students = 1 (a2)
+///   Overdue Students = 1 (Diya: a2 has a balance and a past due date)
 ///   Today's Collection = 0 (no receipts seeded at all) -> "₹0"
 /// matching every currency example FEES-UX-01 specifies.
 Future<void> _seedFixture(FakeFirebaseFirestore firestore) async {
@@ -71,6 +72,7 @@ Future<void> _seedFixture(FakeFirebaseFirestore firestore) async {
     'paidAmount': 0.0,
     'balanceAmount': 19900.0,
     'status': 'overdue',
+    'dueDate': DateTime(2026, 1, 31),
     'assignedAt': DateTime(2026, 1, 1),
     'updatedAt': DateTime(2026, 1, 1),
   });
@@ -142,13 +144,14 @@ void main() {
       expect(find.text('88.6%'), findsOneWidget);
     });
 
-    testWidgets('overdue students count is displayed unchanged', (tester) async {
+    testWidgets('overdue students: students with a balance past its due date', (tester) async {
       final firestore = FakeFirebaseFirestore();
       await _seedFixture(firestore);
       await _pumpDashboard(tester, firestore, size: const Size(1600, 1000));
 
-      // Exactly one 'Overdue Students' card showing '1' (a2's status is
-      // 'overdue', a1 is not) — same count getDashboardSummary computes.
+      // Exactly one 'Overdue Students' card showing '1' (a2 is unpaid and
+      // past its due date; a1 is paid) — same count getDashboardSummary
+      // computes.
       expect(find.text('1'), findsOneWidget);
     });
 

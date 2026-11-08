@@ -1,10 +1,14 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class FeeReceiptModel {
-  FeeReceiptModel({required this.id, required this.receiptNo, required this.transactionId, required this.assignmentId, required this.studentId, required this.studentName, required this.admissionNo, required this.className, required this.feeStructureName, required this.amount, required this.paymentMode, required this.paymentDate, required this.referenceNo, required this.createdAt, required this.createdBy, required this.pdfUrl, required this.pdfPath, required this.pdfGeneratedAt});
+  FeeReceiptModel({required this.id, required this.receiptNo, required this.transactionId, required this.assignmentId, required this.studentId, required this.studentName, required this.admissionNo, required this.className, required this.feeStructureName, required this.amount, required this.paymentMode, required this.paymentDate, required this.referenceNo, required this.createdAt, required this.createdBy, required this.pdfUrl, required this.pdfPath, required this.pdfGeneratedAt, this.feeMonth = ''});
   final String id, receiptNo, transactionId, assignmentId, studentId, studentName, admissionNo, className, feeStructureName, paymentMode, referenceNo, createdBy, pdfUrl, pdfPath;
   final double amount;
   final DateTime? paymentDate, createdAt, pdfGeneratedAt;
+
+  /// The fee month of the assignment it paid (`YYYY-MM`), copied when
+  /// collected; '' otherwise.
+  final String feeMonth;
   factory FeeReceiptModel.fromMap(String id, Map<String, dynamic> data) {
     DateTime? d(dynamic v) => v is Timestamp ? v.toDate() : v is DateTime ? v : null;
     double n(dynamic v) {
@@ -30,7 +34,8 @@ class FeeReceiptModel {
       pdfUrl: data['pdfUrl']?.toString() ?? '',
       pdfPath: data['pdfPath']?.toString() ?? '',
       pdfGeneratedAt: d(data['pdfGeneratedAt']),
+      feeMonth: data['feeMonth']?.toString() ?? '',
     );
   }
-  Map<String, dynamic> toMap() => {'receiptNo': receiptNo,'transactionId': transactionId,'assignmentId': assignmentId,'studentId': studentId,'studentName': studentName,'admissionNo': admissionNo,'className': className,'feeStructureName': feeStructureName,'amount': amount,'paymentMode': paymentMode,'paymentDate': paymentDate,'referenceNo': referenceNo,'createdAt': createdAt,'createdBy': createdBy,'pdfUrl': pdfUrl,'pdfPath': pdfPath,'pdfGeneratedAt': pdfGeneratedAt};
+  Map<String, dynamic> toMap() => {'receiptNo': receiptNo,'transactionId': transactionId,'assignmentId': assignmentId,'studentId': studentId,'studentName': studentName,'admissionNo': admissionNo,'className': className,'feeStructureName': feeStructureName,'amount': amount,'paymentMode': paymentMode,'paymentDate': paymentDate,'referenceNo': referenceNo,'createdAt': createdAt,'createdBy': createdBy,'pdfUrl': pdfUrl,'pdfPath': pdfPath,'pdfGeneratedAt': pdfGeneratedAt, if (feeMonth.isNotEmpty) 'feeMonth': feeMonth};
 }

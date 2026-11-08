@@ -8,6 +8,8 @@ import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../ui/admin_fab.dart';
 import '../data/admin_student_service.dart';
 import '../models/admin_student_model.dart';
+import '../../../fees/models/fee_discount.dart';
+import '../models/admission_date.dart';
 import 'academic_history_section.dart';
 
 class AdminStudentViewDialog extends StatefulWidget {
@@ -422,6 +424,14 @@ class _AdminStudentViewDialogState extends State<AdminStudentViewDialog>
             [
               _info('Full Name', _display(data['name'])),
               _info('Admission No', _display(data['admissionNo'])),
+              _info('Admission Date', AdmissionDate.label(AdmissionDate.parse(data['admissionDate']))),
+              if (StudentFeeDiscount.fromStudent(data) case final d?) ...[
+                _info('Fee Discount', '${d.type?.label ?? 'Invalid'}: ${d.valueLabel}'),
+                _info('Discount Dates', d.datesLabel),
+                _info('Discount Status', d.isActive ? 'Active' : 'Inactive'),
+                if (d.reason.isNotEmpty) _info('Discount Reason', d.reason),
+              ] else
+                _info('Fee Discount', StudentFeeDiscount.noneLabel),
               _info('Class', _classNames[data['classId']?.toString()] ?? _display(data['classId'])),
               _info('Section', _display(data['section'])),
               _info('Roll Number', _display(data['rollNumber'])),

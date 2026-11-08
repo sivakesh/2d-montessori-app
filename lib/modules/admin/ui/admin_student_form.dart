@@ -19,6 +19,9 @@ import '../settings/providers/academic_year_provider.dart';
 import '../students/data/admin_student_service.dart';
 import '../students/data/student_enrollment_service.dart';
 import '../students/models/admin_student_model.dart';
+import '../students/models/admission_date.dart';
+import '../students/ui/student_fee_discount_dialog.dart';
+import '../../fees/models/fee_discount.dart';
 import '../students/models/student_enrollment_model.dart';
 import '../students/providers/student_enrollment_provider.dart';
 
@@ -125,6 +128,17 @@ class _AdminStudentFormState extends ConsumerState<AdminStudentForm>
 
   final _nameController = TextEditingController();
   final _admissionController = TextEditingController();
+
+  /// Admission Date: optional, never defaulted (not from the creation
+  /// date or the admission number). [_admissionCleared]: the stored date
+  /// was removed here, so Save deletes it.
+  DateTime? _admissionDate;
+  bool _admissionCleared = false;
+
+  /// The student's fee discount: [_feeDiscount] as shown; saved only when
+  /// [_feeDiscountChanged] (otherwise the stored one is left as it is).
+  StudentFeeDiscount? _feeDiscount;
+  bool _feeDiscountChanged = false;
   final _sectionController = TextEditingController();
   final _rollNumberController = TextEditingController();
   final _dobController = TextEditingController();
@@ -205,6 +219,8 @@ class _AdminStudentFormState extends ConsumerState<AdminStudentForm>
     final data = widget.initialData ?? const {};
     _nameController.text = data['name']?.toString() ?? '';
     _admissionController.text = data['admissionNo']?.toString() ?? '';
+    _admissionDate = AdmissionDate.parse(data['admissionDate']);
+    _feeDiscount = StudentFeeDiscount.fromStudent(data);
     _sectionController.text = data['section']?.toString() ?? '';
     _rollNumberController.text = data['rollNumber']?.toString() ?? '';
     _dobController.text = data['dateOfBirth']?.toString() ?? '';
@@ -560,6 +576,106 @@ class _AdminStudentFormState extends ConsumerState<AdminStudentForm>
     });
   }
 
+  Future<void> _pickAdmissionDate(FormFieldState<DateTime> field) async {
+    final current = _admissionDate;
+    final today = AdmissionDate.dateOnly(DateTime.now());
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: AdmissionDate.first,
+      lastDate: AdmissionDate.last,
+      initialDate: current != null && AdmissionDate.error(current) == null ? current : today,
+      helpText: 'Admission date',
+    );
+    if (picked == null) return;
+    safeSetState(() {
+      _admissionDate = AdmissionDate.dateOnly(picked);
+      _admissionCleared = false;
+    });
+    field.didChange(_admissionDate);
+  }
+
+  Widget _admissionDateField() => FormField<DateTime>(
+        key: const Key('student-admission-date'),
+        validator: (_) => AdmissionDate.error(_admissionDate),
+        builder: (field) => InkWell(
+          key: const Key('student-admission-date-pick'),
+          onTap: () => _pickAdmissionDate(field),
+          child: InputDecorator(
+            decoration: InputDecoration(
+              border: const OutlineInputBorder(),
+              isDense: true,
+              errorText: field.errorText,
+              suffixIcon: _admissionDate == null
+                  ? const Icon(Icons.calendar_month, size: 20)
+                  : IconButton(
+                      key: const Key('student-admission-date-clear'),
+                      tooltip: 'Clear admission date',
+                      icon: const Icon(Icons.clear, size: 20),
+                      onPressed: () {
+                        safeSetState(() {
+                          _admissionDate = null;
+                          _admissionCleared = true;
+                        });
+                        field.didChange(null);
+                      },
+                    ),
+            ),
+            child: Text(AdmissionDate.label(_admissionDate), key: const Key('student-admission-date-value')),
+          ),
+        ),
+      );
+
+  Future<void> _editFeeDiscount() async {
+    final result = await showDialog<StudentFeeDiscount>(
+      context: context,
+      builder: (_) => StudentFeeDiscountDialog(initial: _feeDiscount),
+    );
+    if (result == null) return;
+    safeSetState(() {
+      _feeDiscount = result;
+      _feeDiscountChanged = true;
+    });
+  }
+
+  Widget _feeDiscountSection() {
+    final d = _feeDiscount;
+    return Column(
+      key: const Key('student-fee-discount'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          d == null ? StudentFeeDiscount.noneLabel : d.summary,
+          key: const Key('student-fee-discount-summary'),
+        ),
+        if (d != null && d.reason.isNotEmpty) Text('Reason: ${d.reason}', style: Theme.of(context).textTheme.bodySmall),
+        if (_feeDiscountChanged)
+          Text('Saved with the student. Existing fee assignments are not changed.',
+              key: const Key('student-fee-discount-pending'), style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 4),
+        Wrap(spacing: 8, children: [
+          OutlinedButton.icon(
+            key: const Key('student-fee-discount-edit'),
+            onPressed: _editFeeDiscount,
+            icon: Icon(d == null ? Icons.add : Icons.edit, size: 18),
+            label: Text(d == null ? 'Add Fee Discount' : 'Edit Fee Discount'),
+          ),
+          if (d != null && d.isActive)
+            TextButton(
+              key: const Key('student-fee-discount-deactivate'),
+              onPressed: () => safeSetState(() {
+                _feeDiscount = StudentFeeDiscount(
+                  id: d.id, type: d.type, value: d.value, effectiveFrom: d.effectiveFrom, effectiveUntil: d.effectiveUntil,
+                  reason: d.reason, isActive: false, createdAt: d.createdAt,
+                );
+                _feeDiscountChanged = true;
+              }),
+              child: const Text('Deactivate'),
+            ),
+        ]),
+      ],
+    );
+  }
+
   Future<void> _pickDob() async {
     final picked = await showDatePicker(
       context: context,
@@ -676,6 +792,7 @@ class _AdminStudentFormState extends ConsumerState<AdminStudentForm>
         id: _effectiveStudentId ?? '',
         name: _nameController.text.trim(),
         admissionNo: admissionNo,
+        admissionDate: _admissionDate,
         classId: effectiveClassId,
         section: _sectionController.text.trim(),
         rollNumber: _rollNumberController.text.trim(),
@@ -724,10 +841,16 @@ class _AdminStudentFormState extends ConsumerState<AdminStudentForm>
       // student.
       final targetStudentId = _effectiveStudentId;
       if (targetStudentId == null) {
-        final newId = await _service.createStudent(student: model, createdBy: 'admin');
+        final newId = await _service.createStudent(student: model, createdBy: 'admin', feeDiscount: _feeDiscountChanged ? _feeDiscount : null);
         _createdStudentId = newId;
       } else {
-        await _service.updateStudent(studentId: targetStudentId, student: model);
+        await _service.updateStudent(
+          studentId: targetStudentId,
+          student: model,
+          clearAdmissionDate: _admissionCleared,
+          feeDiscount: _feeDiscountChanged ? _feeDiscount : null,
+        );
+        _feeDiscountChanged = false;
       }
       debugPrint('Existing documents after student save: $_documents');
 
@@ -1073,6 +1196,12 @@ class _AdminStudentFormState extends ConsumerState<AdminStudentForm>
                           child: _textField(controller: _admissionController),
                         ),
                       ),
+                      halfField(
+                        child: _fieldShell(
+                          label: 'Admission Date',
+                          child: _admissionDateField(),
+                        ),
+                      ),
                       // Academic Year immediately before Class (AY-01-R1).
                       // Hidden entirely when no current Academic Year
                       // exists yet — see `_academicYearFeatureEnabled`'s
@@ -1300,6 +1429,10 @@ class _AdminStudentFormState extends ConsumerState<AdminStudentForm>
                       ),
                     ],
                   ),
+                  const SizedBox(height: 16),
+                  _sectionTitle('Fee Discount'),
+                  const SizedBox(height: 8),
+                  _feeDiscountSection(),
                   const SizedBox(height: 16),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,

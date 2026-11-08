@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'fee_discount.dart';
+
 class StudentFeeAssignmentModel {
   StudentFeeAssignmentModel({
     required this.id,
@@ -20,6 +22,9 @@ class StudentFeeAssignmentModel {
     required this.status,
     required this.assignedAt,
     required this.updatedAt,
+    this.feeMonth = '',
+    this.dueDate,
+    this.studentDiscount,
   });
   final String id, studentId, studentName, admissionNo, classId, className, feeStructureId, feeStructureName, academicYear, status;
 
@@ -32,6 +37,32 @@ class StudentFeeAssignmentModel {
   final String academicYearId;
   final double totalFee, discountAmount, payableAmount, paidAmount, balanceAmount;
   final DateTime? assignedAt, updatedAt;
+
+  /// For a Monthly fee structure: the month this assignment is for, as
+  /// `YYYY-MM` (FeeMonth). '' for other structures, and for assignments
+  /// made before months were recorded (never inferred).
+  final String feeMonth;
+
+  /// The date this assignment is due (a calendar date, stored at local
+  /// midnight as a Timestamp). Null for assignments made before due dates
+  /// were recorded: never inferred.
+  final DateTime? dueDate;
+
+  /// The student's global discount applied to this assignment (its
+  /// snapshot), or null: none applied (every assignment made before student
+  /// discounts existed). [discountAmount] is always the total discount:
+  /// this plus any manual discount.
+  final FeeDiscountSnapshot? studentDiscount;
+
+  /// The student-discount part of [discountAmount].
+  double get studentDiscountAmount => studentDiscount?.amount ?? 0;
+
+  /// The manual (assignment-specific) part of [discountAmount].
+  double get manualDiscountAmount {
+    final v = ((discountAmount - studentDiscountAmount) * 100).round() / 100;
+    return v < 0 ? 0 : v;
+  }
+
   factory StudentFeeAssignmentModel.fromMap(String id, Map<String, dynamic> data) {
     DateTime? d(dynamic v) => v is Timestamp ? v.toDate() : v is DateTime ? v : null;
     double n(dynamic v) {
@@ -57,9 +88,15 @@ class StudentFeeAssignmentModel {
       status: data['status']?.toString() ?? 'unpaid',
       assignedAt: d(data['assignedAt']),
       updatedAt: d(data['updatedAt']),
+      feeMonth: data['feeMonth']?.toString() ?? '',
+      dueDate: d(data['dueDate']),
+      studentDiscount: FeeDiscountSnapshot.fromMap(data[FeeDiscountSnapshot.field]),
     );
   }
   Map<String, dynamic> toMap() => {
     'studentId': studentId,'studentName': studentName,'admissionNo': admissionNo,'classId': classId,'className': className,'feeStructureId': feeStructureId,'feeStructureName': feeStructureName,'academicYear': academicYear,'academicYearId': academicYearId,'totalFee': totalFee,'discountAmount': discountAmount,'payableAmount': payableAmount,'paidAmount': paidAmount,'balanceAmount': balanceAmount,'status': status,'assignedAt': assignedAt,'updatedAt': updatedAt,
+    if (feeMonth.isNotEmpty) 'feeMonth': feeMonth,
+    'dueDate': ?dueDate,
+    if (studentDiscount case final s?) FeeDiscountSnapshot.field: s.toMap(),
   };
 }

@@ -88,6 +88,17 @@ FeeService _feeService(FakeFirebaseFirestore firestore) => FeeService(
       storage: MockFirebaseStorage(),
     );
 
+/// A new assignment needs a due date (these structures set none).
+Future<void> _pickDueDay(WidgetTester tester, int day) async {
+  await tester.ensureVisible(find.byKey(const Key('fee-due-date-pick')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('fee-due-date-pick')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('$day').last);
+  await tester.tap(find.text('OK'));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   group('Fee Assignment — Academic Year derivation (FEES-AY-IMPLEMENT-01)', () {
     testWidgets('13. No free-text Academic Year field exists on the form', (tester) async {
@@ -135,6 +146,7 @@ void main() {
 
       expect(find.text('2026-2027 • Current'), findsOneWidget);
 
+      await _pickDueDay(tester, 15);
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 
@@ -244,6 +256,7 @@ void main() {
 
       expect(find.text('2026-2027 • Current'), findsOneWidget);
 
+      await _pickDueDay(tester, 15);
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 

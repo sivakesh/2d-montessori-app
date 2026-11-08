@@ -27,6 +27,7 @@ Future<void> _seedStudent(FakeFirebaseFirestore firestore, {required String id, 
     'admissionNo': 'ADM-$id',
     'classId': classId,
     'isActive': true,
+    'admissionDate': DateTime(2020, 1, 1), // admitted before every fee (Admission Date rule)
   });
 }
 
@@ -57,6 +58,8 @@ Map<String, dynamic> _assignmentPayload({
     'payableAmount': totalFee,
     'paidAmount': 0.0,
     'balanceAmount': totalFee,
+    // Every new assignment needs a due date (FeeService).
+    'dueDate': DateTime(2026, 7, 31),
     'status': 'unpaid',
   };
 }
@@ -236,6 +239,7 @@ void main() {
         academicYear: '2026-2027',
         totalFee: 20000,
         discountAmount: 0,
+        dueDate: DateTime(2026, 7, 31),
       );
 
       expect(summary['assigned'], 1, reason: 'only s2 gets a new assignment');

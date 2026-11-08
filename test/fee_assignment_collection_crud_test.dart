@@ -584,6 +584,7 @@ void main() {
         'paidAmount': 0.0,
         'balanceAmount': 20000.0,
         'status': 'unpaid',
+        'dueDate': DateTime(2026, 7, 31),
       });
 
       expect(id, isNotNull);
@@ -596,6 +597,7 @@ void main() {
         'studentId': 's1',
         'feeStructureId': 'f1',
         'academicYear': '2026-2027',
+        'dueDate': DateTime(2026, 7, 31),
       });
       expect(dup, isNull);
     });

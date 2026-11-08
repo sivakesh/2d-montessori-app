@@ -5,6 +5,8 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../models/admin_student_model.dart';
+import '../../../fees/models/fee_discount.dart';
+import '../models/admission_date.dart';
 
 class AdminStudentService {
   AdminStudentService({
@@ -69,25 +71,59 @@ class AdminStudentService {
     return snapshot.docs.any((doc) => doc.id != ignoreId);
   }
 
+  /// [feeDiscount]: the student's fee discount configuration, if any
+  /// (validated; [feeDiscountMap]).
   Future<String> createStudent({
     required AdminStudentModel student,
     required String createdBy,
+    StudentFeeDiscount? feeDiscount,
   }) async {
+    if (AdmissionDate.error(student.admissionDate) case final e?) throw StateError(e);
     final doc = _students.doc();
     await doc.set({
       ...student.toMap(),
+      if (feeDiscount != null) StudentFeeDiscount.field: feeDiscountMap(feeDiscount, null),
       'createdBy': createdBy,
       'createdAt': FieldValue.serverTimestamp(),
     });
     return doc.id;
   }
 
+  /// The stored map for [incoming], replacing [existing] (the student's
+  /// current configuration, or null). A student has one configuration:
+  /// saving replaces it. Refused when invalid. Its id is kept while the
+  /// type, value and dates are unchanged (a reason or active-state edit),
+  /// and is new otherwise; `createdAt` is kept, `updatedAt` set.
+  Map<String, dynamic> feeDiscountMap(StudentFeeDiscount incoming, StudentFeeDiscount? existing) {
+    if (incoming.error case final e?) throw StateError(e);
+    final keepId = existing != null && existing.id.isNotEmpty && existing.sameTerms(incoming);
+    return {
+      ...incoming.toMap(),
+      'id': keepId ? existing.id : _students.doc().id,
+      'createdAt': existing?.createdAt != null ? Timestamp.fromDate(existing!.createdAt!) : FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+  }
+
+  /// Merges [student] into the record. A stored Admission Date is kept
+  /// unless [student] sets a new one, or [clearAdmissionDate] removes it.
+  ///
+  /// [feeDiscount]: a new or edited fee discount configuration (to stop a
+  /// discount, save it with `isActive: false`); null keeps the stored one
+  /// unchanged. Existing fee assignments are never changed here.
   Future<void> updateStudent({
     required String studentId,
     required AdminStudentModel student,
+    bool clearAdmissionDate = false,
+    StudentFeeDiscount? feeDiscount,
   }) async {
+    if (AdmissionDate.error(student.admissionDate) case final e?) throw StateError(e);
+    if (feeDiscount?.error case final e?) throw StateError(e);
+    final existing = feeDiscount == null ? null : StudentFeeDiscount.fromStudent((await _students.doc(studentId).get()).data());
     await _students.doc(studentId).set({
       ...student.toMap(),
+      if (feeDiscount != null) StudentFeeDiscount.field: feeDiscountMap(feeDiscount, existing),
+      if (clearAdmissionDate && student.admissionDate == null) 'admissionDate': FieldValue.delete(),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }

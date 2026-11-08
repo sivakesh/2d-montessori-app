@@ -40,11 +40,11 @@ class _List {
   final String matchAll; // a query every row matches
 }
 
-// As the pagination test: 27 rows each; Collections/Dues are the 14
-// odd-numbered (unpaid) assignments.
+// As the pagination test: 27 rows each; Collections lists every
+// assignment (paid ones too); Dues the 14 odd-numbered (unpaid) ones.
 const _structures = _List('structures', 'Structures', 'fee structures', r'^Structure \d\d$', 27, 'structure');
 const _assignments = _List('assignments', 'Assignments', 'assignments', r'^Student \d\d$', 27, 'student');
-const _collections = _List('collections', 'Collections', 'collections', r'^Student \d\d$', 14, 'student');
+const _collections = _List('collections', 'Collections', 'collections', r'^Student \d\d$', 27, 'student');
 const _receipts = _List('receipts', 'Receipts', 'receipts', r'^REC-\d\d$', 27, 'rec-');
 const _dues = _List('dues', 'Dues', 'dues', r'^Student \d\d$', 14, 'student');
 const _all = [_structures, _assignments, _collections, _receipts, _dues];
@@ -108,6 +108,13 @@ void main() {
       overrides: [academicYearServiceProvider.overrideWithValue(AcademicYearService(firestore: firestore))],
       child: MaterialApp(home: AdminFeesScreen(service: fees)),
     ));
+    await tester.pumpAndSettle();
+    // Collections is now the opening tab; these tests start on Structures,
+    // as before the tabs were reordered.
+    final structuresTab = find.widgetWithText(ChoiceChip, 'Structures');
+    await tester.ensureVisible(structuresTab);
+    await tester.pumpAndSettle();
+    await tester.tap(structuresTab);
     await tester.pumpAndSettle();
   }
 
@@ -182,18 +189,23 @@ void main() {
       expectSummary();
     });
 
-    testWidgets('Collections and Dues: assignment fields, within the balance-due rows only', (tester) async {
+    testWidgets('Collections (every assignment, paid ones too) and Dues (balance-due rows only): assignment fields', (tester) async {
       await seed();
       await pumpFees(tester);
-      for (final list in [_collections, _dues]) {
-        await openTab(tester, list);
-        await search(tester, list, 'MONT 2');
-        expect(shown(tester, list), students([27, 21, 15, 9, 3]));
-        await search(tester, list, ' adm-1 ');
-        expect(shown(tester, list), students([19, 17, 15, 13, 11]));
-        await search(tester, list, 'transport'); // assignment 4 is fully paid
-        expect(find.text('No ${list.noun} match "transport".'), findsOneWidget);
-      }
+      await openTab(tester, _collections);
+      await search(tester, _collections, 'MONT 2');
+      expect(shown(tester, _collections), students([27, 24, 21, 18, 15, 12, 9, 6, 3]));
+      await search(tester, _collections, ' adm-1 ');
+      expect(shown(tester, _collections), students([19, 18, 17, 16, 15, 14, 13, 12, 11, 10]));
+      await search(tester, _collections, 'transport'); // assignment 4 is fully paid, and still listed
+      expect(shown(tester, _collections), students([4]));
+      await openTab(tester, _dues);
+      await search(tester, _dues, 'MONT 2');
+      expect(shown(tester, _dues), students([27, 21, 15, 9, 3]));
+      await search(tester, _dues, ' adm-1 ');
+      expect(shown(tester, _dues), students([19, 17, 15, 13, 11]));
+      await search(tester, _dues, 'transport'); // fully paid: not due
+      expect(find.text('No dues match "transport".'), findsOneWidget);
       expectSummary();
     });
 
@@ -273,14 +285,14 @@ void main() {
 
     await openTab(tester, _collections);
     await tapAndSettle(tester, next());
-    expect(find.text('Page 2 of 2'), findsOneWidget);
+    expect(find.text('Page 2 of 3'), findsOneWidget);
     await openTab(tester, _dues);
     expect(query(tester, _dues), '', reason: 'independent of Collections');
     await search(tester, _dues, 'adm-1');
     expect(shown(tester, _dues), students([19, 17, 15, 13, 11]));
 
     await openTab(tester, _collections);
-    expect(find.text('Page 2 of 2'), findsOneWidget, reason: 'Dues query change left Collections alone');
+    expect(find.text('Page 2 of 3'), findsOneWidget, reason: 'Dues query change left Collections alone');
     expect(query(tester, _collections), '');
     await openTab(tester, _receipts);
     expect(find.text('Page 2 of 3'), findsOneWidget);

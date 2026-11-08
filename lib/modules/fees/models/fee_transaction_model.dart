@@ -1,10 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class FeeTransactionModel {
-  FeeTransactionModel({required this.id, required this.assignmentId, required this.studentId, required this.studentName, required this.admissionNo, required this.classId, required this.className, required this.feeStructureId, required this.feeStructureName, required this.amount, required this.paymentDate, required this.paymentMode, required this.referenceNo, required this.remarks, required this.collectedBy, required this.createdAt});
+  FeeTransactionModel({required this.id, required this.assignmentId, required this.studentId, required this.studentName, required this.admissionNo, required this.classId, required this.className, required this.feeStructureId, required this.feeStructureName, required this.amount, required this.paymentDate, required this.paymentMode, required this.referenceNo, required this.remarks, required this.collectedBy, required this.createdAt, this.feeMonth = ''});
   final String id, assignmentId, studentId, studentName, admissionNo, classId, className, feeStructureId, feeStructureName, paymentMode, referenceNo, remarks, collectedBy;
   final double amount;
   final DateTime? paymentDate, createdAt;
+
+  /// The fee month of the assignment it paid (`YYYY-MM`); '' otherwise.
+  final String feeMonth;
   factory FeeTransactionModel.fromMap(String id, Map<String, dynamic> data) {
     DateTime? d(dynamic v) => v is Timestamp ? v.toDate() : v is DateTime ? v : null;
     double n(dynamic v) {
@@ -28,7 +31,8 @@ class FeeTransactionModel {
       remarks: data['remarks']?.toString() ?? '',
       collectedBy: data['collectedBy']?.toString() ?? '',
       createdAt: d(data['createdAt']),
+      feeMonth: data['feeMonth']?.toString() ?? '',
     );
   }
-  Map<String, dynamic> toMap() => {'assignmentId': assignmentId,'studentId': studentId,'studentName': studentName,'admissionNo': admissionNo,'classId': classId,'className': className,'feeStructureId': feeStructureId,'feeStructureName': feeStructureName,'amount': amount,'paymentDate': paymentDate,'paymentMode': paymentMode,'referenceNo': referenceNo,'remarks': remarks,'collectedBy': collectedBy,'createdAt': createdAt};
+  Map<String, dynamic> toMap() => {'assignmentId': assignmentId,'studentId': studentId,'studentName': studentName,'admissionNo': admissionNo,'classId': classId,'className': className,'feeStructureId': feeStructureId,'feeStructureName': feeStructureName,'amount': amount,'paymentDate': paymentDate,'paymentMode': paymentMode,'referenceNo': referenceNo,'remarks': remarks,'collectedBy': collectedBy,'createdAt': createdAt, if (feeMonth.isNotEmpty) 'feeMonth': feeMonth};
 }

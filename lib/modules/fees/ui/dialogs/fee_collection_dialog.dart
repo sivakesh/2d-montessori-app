@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import '../../../../core/widgets/responsive_dialog_shell.dart';
+import '../../models/fee_month.dart';
 import '../../models/fee_receipt_model.dart';
 import '../../models/student_fee_assignment_model.dart';
 import '../../services/fee_service.dart';
 
 class FeeCollectionDialog extends StatefulWidget {
-  const FeeCollectionDialog({super.key, required this.assignment, this.receipt});
+  const FeeCollectionDialog({super.key, required this.assignment, this.receipt, this.service});
   final StudentFeeAssignmentModel assignment;
 
   /// Non-null to edit this existing collection instead of recording a new
@@ -14,12 +15,15 @@ class FeeCollectionDialog extends StatefulWidget {
   /// `assignment` param.
   final FeeReceiptModel? receipt;
 
+  /// The screen's FeeService; null builds one, as before.
+  final FeeService? service;
+
   @override
   State<FeeCollectionDialog> createState() => _FeeCollectionDialogState();
 }
 
 class _FeeCollectionDialogState extends State<FeeCollectionDialog> {
-  final _service = FeeService();
+  late final _service = widget.service ?? FeeService();
   final _amount = TextEditingController();
   final _ref = TextEditingController();
   final _remarks = TextEditingController();
@@ -161,6 +165,23 @@ class _FeeCollectionDialogState extends State<FeeCollectionDialog> {
                   padding: EdgeInsets.only(bottom: 12),
                   child: LinearProgressIndicator(minHeight: 2),
                 ),
+              // Which fee this is for: the structure, and its month when it
+              // has one, so one month's payment goes to that month.
+              Padding(
+                key: const Key('fee-collection-for'),
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    [
+                      widget.assignment.feeStructureName,
+                      if (widget.assignment.feeMonth.isNotEmpty) FeeMonth.label(widget.assignment.feeMonth),
+                      if (widget.assignment.academicYear.isNotEmpty) widget.assignment.academicYear,
+                    ].where((t) => t.trim().isNotEmpty).join(' • '),
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
               if (fullyCollected)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
