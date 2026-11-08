@@ -80,8 +80,8 @@ class WebsiteFormsService {
   }
 
   /// A new draft from starter template [templateId] (not on the website),
-  /// with the template's questions and description. A cover image must
-  /// still be chosen before it can be activated.
+  /// with the template's questions and description (a cover image is
+  /// optional).
   Future<WebsiteForm> createFromTemplate({required String requesterRole, required AppUser actor, required String templateId, String? title}) async {
     _requireAdmin(requesterRole);
     final template = FormTemplate.byId(templateId) ?? (throw FormsException('Choose one of the starter templates.'));
@@ -170,14 +170,13 @@ class WebsiteFormsService {
   }
 
   /// Why [media] (the image chosen as [what]) can't be shown to visitors,
-  /// or null when it can: it must exist, be published with its consent
-  /// confirmed and a file, and have English alt text — the media library's
-  /// own rules.
+  /// or null when it can: it must exist and be published with its consent
+  /// confirmed and a file — the media library's own rules (alt text is
+  /// optional there).
   static String? imageProblem(WebsiteMedia? media, {String what = 'image'}) {
     if (media == null) return 'The $what no longer exists in the media library. Choose another.';
     if (!media.consentConfirmed) return 'The $what’s consent isn’t confirmed (or was withdrawn). Choose another, or confirm consent in the media library.';
     if (!media.isPublished || media.url.isEmpty) return 'The $what isn’t published. Publish it in the media library, or choose another.';
-    if (media.alt.en.trim().isEmpty) return 'The $what has no English alt text. Add it in the media library.';
     return null;
   }
 
@@ -194,8 +193,9 @@ class WebsiteFormsService {
   // ------------------------------------------------------------ activation
 
   /// Makes the form as saved now the version visitors see and can submit.
-  /// The whole schema must be complete and valid — a title, description
-  /// and cover image included — and every image eligible
+  /// The whole schema must be complete and valid — a title and
+  /// description included; a cover image is optional — and every image it
+  /// uses eligible
   /// ([imageProblem]). A changed form gets the next version number (and a
   /// record in [FormCollections.versions]); activating an unchanged one
   /// keeps its number. The visitor copy, the form's status and the version

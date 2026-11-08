@@ -40,9 +40,10 @@ renderer in `widgets/blocks/website_blocks_view.dart`.
   - links, with the same `SafeLinkTarget` checks as page buttons,
     including same-site protected routes;
   - ids: valid, and unique across the page's blocks, items and columns;
-  - nesting depth, and at most 6 blocks per column;
-  - at most 40 blocks, and an encoded size of at most 500 KB
-    (`BlockLimits`, configurable).
+  - nesting depth (no separate per-column limit);
+  - the school's page block limit (Website → Pages → Editor settings,
+    default 150, 10–500; see website_visual_site_editor.md, "Page block
+    limit"), and an encoded size of at most 500 KB (`BlockLimits`).
 - **Duplicating** a block gives it, its items, its columns and the blocks
   inside them fresh ids.
 

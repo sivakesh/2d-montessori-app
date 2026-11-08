@@ -30,7 +30,7 @@ enum WebsiteCopyState {
 /// Where a record's website image stands, for the admin, by the media
 /// library's own rules: visitors see an image only once it is published
 /// with consent confirmed.
-/// - Uploaded: in the library, but no alt text or consent confirmation yet.
+/// - Uploaded: in the library, but no consent confirmation yet.
 /// - Approved: consent confirmed, not published yet.
 /// - Published: visitors see it.
 /// - Unavailable: deleted, hidden, or its consent withdrawn.
@@ -62,7 +62,7 @@ enum WebsiteCopyState {
   }
   return (
     label: 'Uploaded',
-    detail: 'Needs English alt text and consent confirmation, then publishing (Edit image), before saving.',
+    detail: 'Needs consent confirmation, then publishing (Edit image), before saving. Alt text is optional but recommended.',
     color: Colors.orange,
     visible: false,
   );

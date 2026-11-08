@@ -863,9 +863,10 @@ class FormContentBlock extends FormItem {
 /// [items] (or, for a list of questions only, [fields]) in order.
 /// [complete]: also what must be filled in before activation (a title,
 /// labels, options, a success message, at least one field).
-/// [requireMetadata]: also the description and cover image every form
-/// needs before it is activated (visitor copies saved before they existed
-/// are still shown, so the public website doesn't check them).
+/// [requireMetadata]: also the description every form needs before it is
+/// activated (visitor copies saved before it existed are still shown, so
+/// the public website doesn't check it). A cover image is optional; one
+/// that is chosen must be an id.
 List<String> formSchemaProblems({
   required LocalizedText title,
   List<WebsiteFormField>? fields,
@@ -889,7 +890,6 @@ List<String> formSchemaProblems({
     ...description.problems(FormLimits.maxDescription, 'The description'),
     if (requireMetadata && description.en.trim().isEmpty) 'Enter the form’s description in English.',
     if (cover.isNotEmpty && !FormIds.docPattern.hasMatch(cover)) 'The cover image can’t be identified.',
-    if (requireMetadata && cover.isEmpty) 'Choose the form’s cover image.',
     if (internalDescription.trim().length > FormLimits.maxDescription) 'The internal description must be ${FormLimits.maxDescription} characters or fewer.',
     ...successMessage.problems(FormLimits.maxSuccessMessage, 'The success message'),
     if (complete && successMessage.en.trim().isEmpty) 'Enter the success message in English.',
@@ -1134,8 +1134,8 @@ class WebsiteForm {
         extra: extra,
       );
 
-  /// [complete]: everything activation needs, the description and cover
-  /// image included.
+  /// [complete]: everything activation needs, the description included
+  /// (a cover image is optional).
   List<String> problems({required bool complete}) => formSchemaProblems(
         title: title,
         items: items,
@@ -1493,8 +1493,7 @@ class FormTemplate {
   List<WebsiteFormField> buildFields() => _fields();
   LocalizedText get successMessage => LocalizedText(en: _success);
 
-  /// The new form's description for visitors (a cover image must still be
-  /// chosen before it can be activated).
+  /// The new form's description for visitors.
   LocalizedText get formDescription => LocalizedText(en: _formDescription);
 
   static FormTemplate? byId(String id) {

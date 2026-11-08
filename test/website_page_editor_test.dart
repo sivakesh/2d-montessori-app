@@ -277,16 +277,22 @@ void main() {
       await tap(tester, key('website-block-$textId-up'));
       expect([for (final b in editorBlocks(tester)) b.id], [textId, dividerId]);
 
+      await tap(tester, key('website-block-$textId-more'));
+
       await tap(tester, key('website-block-$textId-visibility'));
       expect(key('website-block-$textId-hidden'), findsOneWidget);
       expect(find.descendant(of: key('website-custom-preview'), matching: key('public-block-$textId')), findsNothing, reason: 'hidden from the preview, as from visitors');
+      await tap(tester, key('website-block-$textId-more'));
       await tap(tester, key('website-block-$textId-visibility'));
       expect(find.descendant(of: key('website-custom-preview'), matching: find.text('Our day')), findsOneWidget);
+
+      await tap(tester, key('website-block-$dividerId-more'));
 
       await tap(tester, key('website-block-$dividerId-delete'));
       await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
       expect(editorBlocks(tester), hasLength(2), reason: 'cancelled');
+      await tap(tester, key('website-block-$dividerId-more'));
       await tap(tester, key('website-block-$dividerId-delete'));
       await tap(tester, key('website-block-delete-confirm'));
       expect(editorBlocks(tester), hasLength(1));
@@ -313,6 +319,7 @@ void main() {
         },
       ]);
       await open(tester, id);
+      await tap(tester, key('website-block-b_cols000001-more'));
       await tap(tester, key('website-block-b_cols000001-duplicate'));
       final blocks = editorBlocks(tester);
       expect(blocks, hasLength(2));
@@ -340,7 +347,11 @@ void main() {
       await open(tester, id);
       expect(key('website-block-b_future0001-locked'), findsOneWidget);
       expect(key('website-block-b_future0001-edit'), findsNothing);
+      await tap(tester, key('website-block-b_future0001-more'));
       expect(key('website-block-b_future0001-duplicate'), findsNothing);
+      expect(key('website-block-b_future0001-delete'), findsOneWidget, reason: 'an unsupported block can still be deleted');
+      await tester.tapAt(const Offset(2, 2));
+      await tester.pumpAndSettle();
       await tap(tester, key('website-block-b_text000001-edit'));
       await type(tester, 'website-block-b_text000001-heading-en', 'About us');
       await tap(tester, key('website-custom-save-draft'));

@@ -1,10 +1,11 @@
-import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import '../../../auth/models/app_user.dart';
+import '../../../public_website/content/blocks/block_limits.dart';
 import '../../../public_website/content/blocks/block_registry.dart';
 import '../../../public_website/content/blocks/website_block.dart';
 import '../../../public_website/content/built_in_pages.dart';
@@ -16,6 +17,10 @@ import '../../../public_website/content/website_page_style.dart';
 import '../../../public_website/content/website_languages.dart';
 import '../../../public_website/content/website_site_layout.dart';
 import 'website_image_processor.dart';
+import 'album_galleries.dart';
+import 'website_albums_service.dart';
+import 'website_templates_service.dart';
+import 'website_editor_settings.dart';
 
 class UnauthorizedWebsiteContentException implements Exception {
   UnauthorizedWebsiteContentException(this.role);
@@ -52,6 +57,53 @@ class PickedWebsiteImage {
   final Uint8List bytes;
 }
 
+/// One file chosen for a bulk upload: the image, or why it can't be
+/// uploaded ([problem]; each file is checked on its own).
+class PickedWebsiteFile {
+  const PickedWebsiteFile({required this.name, required this.size, this.image, this.problem});
+
+  final String name;
+  final int size;
+  final PickedWebsiteImage? image;
+  final String? problem;
+}
+
+/// What a bulk action did to one image.
+enum WebsiteBulkStatus {
+  /// Changed as asked.
+  done,
+
+  /// Already so; nothing to change.
+  unchanged,
+
+  /// Not changed: [WebsiteBulkOutcome.message] says why.
+  failed,
+}
+
+/// The actions the media library can apply to several images at once.
+/// Each is the single-image workflow, image by image, with its own checks.
+enum WebsiteBulkAction {
+  confirmConsent('Confirm consent'),
+  publish('Publish'),
+  unpublish('Unpublish'),
+  addToGallery('Add to gallery'),
+  removeFromGallery('Remove from gallery'),
+  delete('Delete');
+
+  const WebsiteBulkAction(this.label);
+  final String label;
+}
+
+/// One image's result of a bulk action.
+@immutable
+class WebsiteBulkOutcome {
+  const WebsiteBulkOutcome(this.mediaId, this.status, [this.message = '']);
+
+  final String mediaId;
+  final WebsiteBulkStatus status;
+  final String message;
+}
+
 /// Manages the website's media library and page content (Settings ->
 /// Website). Same shape as SchoolSettingsService: constructor-injected
 /// Firestore/Storage/FilePicker defaulting to the platform singletons, and
@@ -68,7 +120,9 @@ class WebsiteContentAdminService {
     FirebaseStorage? storage,
     FilePicker? filePicker,
     WebsiteImageProcessor? imageProcessor,
+    WebsiteEditorSettingsService? editorSettings,
   })  : _firestore = firestore ?? FirebaseFirestore.instance,
+        _editorSettings = editorSettings,
         _storage = storage ?? FirebaseStorage.instance,
         _filePicker = filePicker,
         _imageProcessor = imageProcessor ?? WebsiteImageProcessor();
@@ -94,6 +148,42 @@ class WebsiteContentAdminService {
   /// Uploaded files never change in place (a replacement is a new path), so
   /// browsers and the CDN may cache them for a long time.
   static const _cacheControl = 'public, max-age=31536000, immutable';
+
+  /// The school's Website editor settings (its page block limit).
+  late final WebsiteEditorSettingsService editorSettings = _editorSettings ?? WebsiteEditorSettingsService(firestore: _firestore);
+  final WebsiteEditorSettingsService? _editorSettings;
+
+  /// Why a page can't be saved with [count] blocks under the school's
+  /// limit [limit].
+  static String pageLimitMessage(int count, int limit) =>
+      'This page would have $count blocks, more than this school\'s limit of $limit blocks per page. '
+      'Remove blocks, or raise the limit in Website → Pages → Editor settings.';
+
+  /// The school's page limit, on save: a page may not grow past it. A page
+  /// that already had more ([saved], after the limit was lowered) may be
+  /// saved and published as long as it doesn't grow, so lowering the limit
+  /// never locks existing content. If the setting can't be read, only the
+  /// fixed safety ceiling applies ([BlockRegistry.validate]).
+  Future<void> _requireWithinPageLimit(List<WebsiteBlock> blocks, {List<WebsiteBlock>? saved}) async {
+    final count = BlockRegistry.flatten(blocks).length;
+    if (count <= BlockLimits.minPageMaxBlocks) return; // within any allowed setting
+    final int limit;
+    try {
+      limit = (await editorSettings.load()).maxBlocksPerPage;
+    } catch (_) {
+      return;
+    }
+    if (count <= limit) return;
+    final before = saved == null ? 0 : BlockRegistry.flatten(saved).length;
+    if (count <= before) return;
+    throw WebsiteContentException(pageLimitMessage(count, limit));
+  }
+
+  /// The school's template library (same database).
+  late final WebsiteTemplatesService templates = WebsiteTemplatesService(firestore: _firestore);
+
+  /// The media library's albums (same database).
+  late final WebsiteAlbumsService albums = WebsiteAlbumsService(firestore: _firestore);
 
   CollectionReference<Map<String, dynamic>> get _media => _firestore.collection(WebsiteCollections.media);
   CollectionReference<Map<String, dynamic>> get _drafts => _firestore.collection(WebsiteCollections.pageDrafts);
@@ -132,16 +222,48 @@ class WebsiteContentAdminService {
     return PickedWebsiteImage(name: file.name, bytes: bytes);
   }
 
+  /// Opens the file picker for several images at once; empty when
+  /// cancelled. Every file is checked on its own ([imageFileProblem]): one
+  /// that can't be uploaded is returned with its reason, never dropped.
+  Future<List<PickedWebsiteFile>> pickImages() async {
+    final picker = _filePicker ?? FilePicker.platform;
+    final result = await picker.pickFiles(withData: true, allowMultiple: true, type: FileType.custom, allowedExtensions: allowedExtensions);
+    if (result == null) return const [];
+    return [
+      for (final file in result.files)
+        () {
+          final bytes = file.bytes;
+          final problem = bytes == null ? 'The file could not be read.' : imageFileProblem(file.name, bytes.length);
+          return PickedWebsiteFile(
+            name: file.name,
+            size: bytes?.length ?? file.size,
+            image: problem == null ? PickedWebsiteImage(name: file.name, bytes: bytes!) : null,
+            problem: problem,
+          );
+        }(),
+    ];
+  }
+
+  /// Why [name] (of [length] bytes) can't be uploaded, or null: JPEG, PNG
+  /// or WebP only, not empty, at most [maxUploadBytes].
+  static String? imageFileProblem(String name, int length) {
+    final extension = name.contains('.') ? name.split('.').last.toLowerCase() : '';
+    if (!allowedExtensions.contains(extension)) return 'Choose a JPEG, PNG or WebP image.';
+    if (length == 0) return 'The selected file is empty.';
+    if (length > maxUploadBytes) return 'Choose an image smaller than 15 MB.';
+    return null;
+  }
+
   /// Throws [WebsiteContentException] unless [name] is a JPEG/PNG/WebP
   /// image no larger than [maxUploadBytes].
   static void validateImageFile(String name, int length) {
-    final extension = name.contains('.') ? name.split('.').last.toLowerCase() : '';
-    if (!allowedExtensions.contains(extension)) {
-      throw WebsiteContentException('Choose a JPEG, PNG or WebP image.');
-    }
-    if (length == 0) throw WebsiteContentException('The selected file is empty.');
-    if (length > maxUploadBytes) throw WebsiteContentException('Choose an image smaller than 15 MB.');
+    final problem = imageFileProblem(name, length);
+    if (problem != null) throw WebsiteContentException(problem);
   }
+
+  /// A new media id, reserved before uploading: uploading with it again
+  /// (a retry) never makes a second record ([uploadMedia]).
+  String newMediaId() => _media.doc().id;
 
   static String _contentTypeFor(String name) => switch (name.split('.').last.toLowerCase()) {
         'png' => 'image/png',
@@ -211,25 +333,38 @@ class WebsiteContentAdminService {
   }
 
   /// Adds [image] to the library as a draft (not on the website), last in
-  /// the gallery order.
+  /// the gallery order. [alt] defaults to [WebsiteMedia.defaultAlt] (an
+  /// explicit value, even empty, is kept as given); [decorative] marks an
+  /// image screen readers should skip. Consent is never confirmed here.
+  ///
+  /// With [mediaId] (from [newMediaId]) the upload is idempotent: when that
+  /// record already exists (an earlier attempt got that far) it is
+  /// returned as it is and nothing is uploaded again, so retrying or
+  /// submitting twice never makes a duplicate.
   Future<WebsiteMedia> uploadMedia({
     required String requesterRole,
     required AppUser actor,
     required PickedWebsiteImage image,
     GalleryCategory category = GalleryCategory.general,
-    LocalizedText alt = const LocalizedText(),
+    LocalizedText alt = const LocalizedText(en: WebsiteMedia.defaultAlt),
     LocalizedText caption = const LocalizedText(),
     bool inGallery = true,
+    bool decorative = false,
+    String? mediaId,
   }) async {
     _requireAdmin(requesterRole);
     _validateMediaText(alt, caption);
+    if (mediaId != null) {
+      final already = await _media.doc(mediaId).get();
+      if (already.exists && already.data() != null) return WebsiteMedia.fromMap(already.id, already.data()!);
+    }
     final existing = await _media.get();
     var nextOrder = 0;
     for (final doc in existing.docs) {
       final order = doc.data()['galleryOrder'];
       if (order is num && order.toInt() >= nextOrder) nextOrder = order.toInt() + 1;
     }
-    final doc = _media.doc();
+    final doc = mediaId == null ? _media.doc() : _media.doc(mediaId);
     final files = await _storeFiles(doc.id, image);
     try {
       await doc.set({
@@ -243,6 +378,7 @@ class WebsiteContentAdminService {
         'inGallery': inGallery,
         'galleryOrder': nextOrder,
         'consentConfirmed': false,
+        if (decorative) 'decorative': true,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -322,13 +458,11 @@ class WebsiteContentAdminService {
     required double focalX,
     required double focalY,
     required bool consentConfirmed,
+    bool? decorative,
   }) async {
     _requireAdmin(requesterRole);
     _validateMediaText(alt, caption);
     final current = await _requireMedia(mediaId);
-    if (current.isPublished && alt.en.trim().isEmpty) {
-      throw WebsiteContentException('A published image needs English alt text.');
-    }
     final withdrawn = current.consentConfirmed && !consentConfirmed;
     final unpublish = current.isPublished && !consentConfirmed;
     final affected = withdrawn ? await pagesUsing(requesterRole: requesterRole, mediaId: mediaId) : const <String>{};
@@ -340,6 +474,8 @@ class WebsiteContentAdminService {
       'focalX': focalX.clamp(0.0, 1.0),
       'focalY': focalY.clamp(0.0, 1.0),
       'consentConfirmed': consentConfirmed,
+      // Unset (null): kept as stored.
+      'decorative': ?decorative,
       if (unpublish) 'status': WebsiteMediaStatus.hidden.name,
       if (withdrawn) 'consentWithdrawnAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
@@ -357,7 +493,8 @@ class WebsiteContentAdminService {
   }
 
   /// Puts an image on the website (gallery, if listed there, and any live
-  /// page using it). Requires English alt text and consent confirmation.
+  /// page using it). Requires the file and consent confirmation; alt text
+  /// is optional.
   Future<void> publishMedia({required String requesterRole, required AppUser actor, required String mediaId}) async {
     _requireAdmin(requesterRole);
     final media = await _requireMedia(mediaId);
@@ -393,6 +530,10 @@ class WebsiteContentAdminService {
     _requireAdmin(requesterRole);
     final media = await _requireMedia(mediaId);
     final users = await pagesUsing(requesterRole: requesterRole, mediaId: mediaId);
+    // Never deleted while it might be in a template (fails closed).
+    if (users.contains(templatesUncheckedLabel)) {
+      throw WebsiteContentException('This image can’t be deleted now: the template library couldn’t be checked for it. Try again later; if this keeps happening, your account may not be set up for templates yet.');
+    }
     if (users.isNotEmpty) {
       throw WebsiteContentException('This image is used on ${users.join(', ')}. Choose a different image there first.');
     }
@@ -404,11 +545,123 @@ class WebsiteContentAdminService {
     batch.delete(_media.doc(mediaId));
     await batch.commit();
     await _deleteFiles([media.storagePath, media.thumbStoragePath]);
+    // Best effort: an album still listing it leaves it out.
+    try {
+      await albums.forgetMedia(requesterRole: requesterRole, mediaId: mediaId);
+    } catch (_) {}
+  }
+
+  /// [blocks] with every Photo gallery and Asymmetric gallery that takes
+  /// images from albums brought up to date ([AlbumGalleries]), as
+  /// publishing does: the page's own copy of the album images visitors may
+  /// see (published, consent confirmed), never the albums themselves. The
+  /// same list when no gallery uses albums (nothing is read). When the
+  /// albums can't be read, each gallery keeps the album images it has
+  /// (still only those visitors may see).
+  Future<List<WebsiteBlock>> updateAlbumGalleries({required String requesterRole, required List<WebsiteBlock> blocks}) async {
+    _requireAdmin(requesterRole);
+    if (!AlbumGalleries.anyUsesAlbums(blocks)) return blocks;
+    List<WebsiteAlbum>? albumList;
+    try {
+      albumList = await albums.list(requesterRole: requesterRole);
+    } catch (_) {
+      albumList = null;
+    }
+    final library = await listMedia(requesterRole: requesterRole);
+    return AlbumGalleries.updateAll(blocks, albums: albumList, library: library);
+  }
+
+  /// Lists the image in the public gallery (once published) or takes it
+  /// out; its publication, consent and the pages using it are unchanged.
+  Future<void> setInGallery({required String requesterRole, required AppUser actor, required String mediaId, required bool inGallery}) async {
+    _requireAdmin(requesterRole);
+    await _requireMedia(mediaId);
+    await _media.doc(mediaId).update({'inGallery': inGallery, 'updatedAt': FieldValue.serverTimestamp()});
+    await _audit(mediaId, inGallery ? 'gallery-added' : 'gallery-removed', actor);
+  }
+
+  /// Records that the admin confirmed the photograph is school-approved and
+  /// consent was obtained for any identifiable child ([bulk]: as one of
+  /// several, after the bulk warning). It doesn't publish anything.
+  Future<void> confirmConsent({required String requesterRole, required AppUser actor, required String mediaId, bool bulk = false}) async {
+    _requireAdmin(requesterRole);
+    await _requireMedia(mediaId);
+    await _media.doc(mediaId).update({'consentConfirmed': true, 'updatedAt': FieldValue.serverTimestamp()});
+    await _audit(mediaId, 'consent-confirmed', actor, {if (bulk) 'bulk': true});
+  }
+
+  /// [action] applied to each of [mediaIds] in turn through the
+  /// single-image workflow, with all of its checks (consent to publish,
+  /// pages showing an image before it is unpublished or deleted, the
+  /// template check before deleting). One image's failure never stops the
+  /// others, and every image gets an outcome: done, unchanged (already so,
+  /// with the reason) or failed (with the reason).
+  Future<List<WebsiteBulkOutcome>> applyBulk({
+    required String requesterRole,
+    required AppUser actor,
+    required WebsiteBulkAction action,
+    required List<String> mediaIds,
+  }) async {
+    _requireAdmin(requesterRole);
+    final outcomes = <WebsiteBulkOutcome>[];
+    for (final id in {...mediaIds}) {
+      try {
+        final media = await getMedia(requesterRole: requesterRole, mediaId: id);
+        if (media == null) {
+          outcomes.add(WebsiteBulkOutcome(id, WebsiteBulkStatus.failed, 'This image no longer exists.'));
+          continue;
+        }
+        String? unchanged;
+        switch (action) {
+          case WebsiteBulkAction.confirmConsent:
+            if (media.consentConfirmed) {
+              unchanged = 'Consent was already confirmed.';
+            } else {
+              await confirmConsent(requesterRole: requesterRole, actor: actor, mediaId: id, bulk: true);
+            }
+          case WebsiteBulkAction.publish:
+            if (media.isPublished) {
+              unchanged = 'Already published.';
+            } else {
+              await publishMedia(requesterRole: requesterRole, actor: actor, mediaId: id);
+            }
+          case WebsiteBulkAction.unpublish:
+            if (!media.isPublished) {
+              unchanged = 'Not published.';
+            } else {
+              await hideMedia(requesterRole: requesterRole, actor: actor, mediaId: id);
+            }
+          case WebsiteBulkAction.addToGallery:
+            if (media.inGallery) {
+              unchanged = 'Already in the gallery.';
+            } else {
+              await setInGallery(requesterRole: requesterRole, actor: actor, mediaId: id, inGallery: true);
+            }
+          case WebsiteBulkAction.removeFromGallery:
+            if (!media.inGallery) {
+              unchanged = 'Not in the gallery.';
+            } else {
+              await setInGallery(requesterRole: requesterRole, actor: actor, mediaId: id, inGallery: false);
+            }
+          case WebsiteBulkAction.delete:
+            await deleteMedia(requesterRole: requesterRole, actor: actor, mediaId: id);
+        }
+        outcomes.add(unchanged == null ? WebsiteBulkOutcome(id, WebsiteBulkStatus.done) : WebsiteBulkOutcome(id, WebsiteBulkStatus.unchanged, unchanged));
+      } on WebsiteContentException catch (e) {
+        outcomes.add(WebsiteBulkOutcome(id, WebsiteBulkStatus.failed, e.message));
+      } on UnauthorizedWebsiteContentException {
+        rethrow;
+      } catch (_) {
+        outcomes.add(WebsiteBulkOutcome(id, WebsiteBulkStatus.failed, 'It couldn’t be changed. Check your connection and try again.'));
+      }
+    }
+    return outcomes;
   }
 
   /// Labels of the pages (built-in or additional, draft or live) whose
   /// content uses [mediaId], of the events and announcements on the
-  /// website showing it, and of the website forms (any status) using it.
+  /// website showing it, of the website forms (any status) and of the
+  /// templates using it (so a template's images stay available to insert).
   Future<Set<String>> pagesUsing({required String requesterRole, required String mediaId}) async {
     _requireAdmin(requesterRole);
     final labels = <String>{};
@@ -417,6 +670,7 @@ class WebsiteContentAdminService {
     }
     labels.addAll((await _websiteItemsUsing(mediaId)).labels);
     labels.addAll(await _formsUsing(_formsCollection, mediaId));
+    labels.addAll(await _templatesUsing(mediaId));
     return labels;
   }
 
@@ -424,6 +678,28 @@ class WebsiteContentAdminService {
   // this service doesn't depend on the forms module.
   static const _formsCollection = 'website_forms';
   static const _publicFormsCollection = 'website_public_forms';
+
+  /// In [pagesUsing] when the templates couldn't be read (say, an admin
+  /// account without the school claim the rules need): deleting the image
+  /// is refused, and other uses of [pagesUsing] (withdrawing consent,
+  /// which must always work) go ahead.
+  static const templatesUncheckedLabel = 'the template library (it couldn’t be checked)';
+
+  /// The school's templates whose blocks or thumbnail use [mediaId]. By
+  /// school only (filtered here), so the query needs no composite index
+  /// and stays within the rules, which allow listing by school. Never
+  /// throws: when they can't be read, [templatesUncheckedLabel].
+  Future<Set<String>> _templatesUsing(String mediaId) async {
+    try {
+      final snapshot = await _firestore.collection(WebsiteCollections.templates).where('schoolId', isEqualTo: templates.schoolId).get();
+      return {
+        for (final doc in snapshot.docs)
+          if ((doc.data()['mediaIds'] as List?)?.contains(mediaId) ?? false) 'the “${doc.data()['name'] ?? 'untitled'}” template',
+      };
+    } catch (_) {
+      return {templatesUncheckedLabel};
+    }
+  }
 
   /// Website forms in [collection] whose cover or image blocks use
   /// [mediaId] (by their `mediaIds`).
@@ -708,12 +984,20 @@ class WebsiteContentAdminService {
     if (errors.isNotEmpty) throw WebsiteContentException(errors.first);
   }
 
+  /// What a draft may have but a published page can't: a gallery with no
+  /// image ([BlockRegistry.publishProblems]).
+  static void _requirePublishable(List<WebsiteBlock> blocks) {
+    final errors = BlockRegistry.publishProblems(blocks);
+    if (errors.isNotEmpty) throw WebsiteContentException(errors.first);
+  }
+
   /// [blocks] and [style] as fields of built-in page document [ref], with
   /// every image the document uses (its managed image too). The live page
-  /// leaves out hidden blocks ([BlockRegistry.withoutHidden]). A page
+  /// leaves out hidden blocks and galleries' empty image slots
+  /// ([BlockRegistry.forVisitors]). A page
   /// without its own look stores none (a stored one is removed).
   Future<Map<String, dynamic>> _builtInFields(DocumentReference<Map<String, dynamic>> ref, List<WebsiteBlock> all, PageStyle style, {bool live = false}) async {
-    final blocks = live ? BlockRegistry.withoutHidden(all) : all;
+    final blocks = live ? BlockRegistry.forVisitors(all) : all;
     final existing = (await ref.get()).data();
     final image = existing?['imageMediaId'];
     return {
@@ -741,6 +1025,7 @@ class WebsiteContentAdminService {
     _validateBlocks(blocks);
     _validatePageStyle(style);
     final ref = _drafts.doc(page.id);
+    await _requireWithinPageLimit(blocks, saved: builtInPageBlocks((await ref.get()).data()));
     final data = {
       ...await _builtInFields(ref, blocks, style),
       'updatedAt': FieldValue.serverTimestamp(),
@@ -756,8 +1041,10 @@ class WebsiteContentAdminService {
   /// can't be written, the error says so.
   Future<void> publishBuiltInPage({required String requesterRole, required AppUser actor, required BuiltInPage page, required List<WebsiteBlock> blocks, PageStyle style = const PageStyle()}) async {
     _requireAdmin(requesterRole);
+    blocks = await updateAlbumGalleries(requesterRole: requesterRole, blocks: blocks);
     _validateBlocks(blocks);
     _validatePageStyle(style);
+    _requirePublishable(blocks);
     _requireVisibleContent(blocks);
     await _requirePublishedMedia(BlockRegistry.referencedMedia(blocks));
     await saveBuiltInPageDraft(requesterRole: requesterRole, actor: actor, page: page, blocks: blocks, style: style);
@@ -886,6 +1173,7 @@ class WebsiteContentAdminService {
     final current = await getCustomPage(requesterRole: requesterRole, pageId: page.id);
     if (current == null) throw WebsiteContentException('This page no longer exists.');
     _validateCustomPage(page);
+    if (page.blocks case final blocks?) await _requireWithinPageLimit(blocks, saved: current.draft.blocks);
     await _requireAvailableSlug(page.slug.trim(), exceptPageId: page.id);
     await _drafts.doc(page.id).set({
       ...page.copyWith(navOrder: current.draft.navOrder).toContentMap(),
@@ -905,12 +1193,19 @@ class WebsiteContentAdminService {
   /// first.
   Future<void> publishCustomPage({required String requesterRole, required AppUser actor, required CustomPage page}) async {
     _requireAdmin(requesterRole);
+    if (page.blocks case final blocks?) {
+      final updated = await updateAlbumGalleries(requesterRole: requesterRole, blocks: blocks);
+      if (!identical(updated, blocks)) page = page.copyWith(blocks: () => updated);
+    }
     final current = await getCustomPage(requesterRole: requesterRole, pageId: page.id);
     if (current == null) throw WebsiteContentException('This page no longer exists.');
     if (current.draft.archived) throw WebsiteContentException('Restore this page before publishing it.');
     _validateCustomPage(page);
     // Pages made of sections (the older format) are unchanged.
-    if (page.blocks case final blocks?) _requireVisibleContent(blocks);
+    if (page.blocks case final blocks?) {
+      _requirePublishable(blocks);
+      _requireVisibleContent(blocks);
+    }
     await _requirePublishedMedia(page.referencedMedia);
     await saveCustomPageDraft(requesterRole: requesterRole, actor: actor, page: page);
     await _publishAfterDraft(() => _live.doc(page.id).set({

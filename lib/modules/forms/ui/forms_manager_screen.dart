@@ -392,12 +392,12 @@ class _LibraryTabState extends ConsumerState<_LibraryTab> {
     );
   }
 
-  /// A warning when the cover image is missing or can't be shown: the
-  /// active version's (visitors then see the form without it) first.
+  /// A warning when the chosen cover image can't be shown: the active
+  /// version's (visitors then see the form without it) first. No cover
+  /// image is fine (it is optional).
   String? _coverWarning(WebsiteForm form, PublicWebsiteForm? live) {
     WebsiteMedia? find(String? id) => _library.where((m) => m.id == id).firstOrNull;
     if (live?.coverMediaId case final id? when WebsiteFormsService.imageProblem(find(id)) != null) return 'Cover image not shown to visitors';
-    if (form.coverMediaId == null) return 'No cover image';
     if (WebsiteFormsService.imageProblem(find(form.coverMediaId)) != null) return 'Cover image unavailable';
     return null;
   }

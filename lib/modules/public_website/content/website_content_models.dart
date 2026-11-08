@@ -23,6 +23,12 @@ class WebsiteCollections {
   static const media = 'website_media';
   static const pageDrafts = 'website_page_drafts';
   static const livePages = 'website_pages';
+
+  /// Reusable sections and blocks (admin only, by school).
+  static const templates = 'website_templates';
+
+  /// Media library albums (admin only; see `WebsiteAlbumsService`).
+  static const albums = 'website_albums';
 }
 
 /// Text in English (the source language) and, optionally, other
@@ -205,6 +211,7 @@ class WebsiteMedia {
     this.inGallery = true,
     this.galleryOrder = 0,
     this.consentConfirmed = false,
+    this.decorative = false,
     this.updatedAt,
   });
 
@@ -231,6 +238,7 @@ class WebsiteMedia {
       inGallery: map['inGallery'] != false,
       galleryOrder: number(map['galleryOrder']),
       consentConfirmed: map['consentConfirmed'] == true,
+      decorative: map['decorative'] == true,
       updatedAt: updatedAt is Timestamp ? updatedAt.toDate() : null,
     );
   }
@@ -269,9 +277,23 @@ class WebsiteMedia {
   /// The admin confirmed the photograph is school-approved and that consent
   /// was obtained for any identifiable children. Required to publish.
   final bool consentConfirmed;
+
+  /// Marked decorative only: screen readers skip it (its alt text, if any,
+  /// is kept but not read). Alt text is optional; an image without it is
+  /// shown as usual.
+  final bool decorative;
   final DateTime? updatedAt;
 
   bool get isPublished => status == WebsiteMediaStatus.published;
+
+  /// The English alt text a newly uploaded image starts with (editable in
+  /// the library like any other). Only new uploads get it: images already
+  /// stored are never changed, and it says nothing about consent.
+  static const defaultAlt = '2D Montessori';
+
+  /// Whether visitors may see it: published, consent confirmed and with a
+  /// file (the public site's own filter, `publishedMedia`).
+  bool get visibleToVisitors => isPublished && consentConfirmed && url.isNotEmpty;
 
   /// This image with a different focal point (for previews while editing).
   WebsiteMedia withFocal(double x, double y) => WebsiteMedia(
@@ -293,6 +315,7 @@ class WebsiteMedia {
         inGallery: inGallery,
         galleryOrder: galleryOrder,
         consentConfirmed: consentConfirmed,
+        decorative: decorative,
         updatedAt: updatedAt,
       );
 
@@ -308,11 +331,15 @@ class WebsiteMedia {
     return url;
   }
 
-  /// Why this image can't be published yet, or null when it can.
+  /// Why this image can't be published yet, or null when it can: the file
+  /// is missing, or photo approval and consent (one confirmation,
+  /// [consentConfirmed]) aren't confirmed. Alt text is an accessibility
+  /// description, never a publishing condition.
+  static const consentNotConfirmed = 'Photo approval and consent not confirmed: confirm the photograph is approved by the school and consent has been obtained.';
+
   String? get publishBlocker {
     if (url.isEmpty) return 'The image file is missing.';
-    if (alt.en.trim().isEmpty) return 'Add English alt text describing the image.';
-    if (!consentConfirmed) return 'Confirm the photograph is approved and consent has been obtained.';
+    if (!consentConfirmed) return consentNotConfirmed;
     return null;
   }
 }

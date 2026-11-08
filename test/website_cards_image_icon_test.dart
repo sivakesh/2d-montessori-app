@@ -121,7 +121,10 @@ void main() {
         BlockRegistry.blockProblems(_block([_card('i_card00001'), _card('i_card00002', title: '', body: '', icon: 'none')])),
         ['Card 2: add an image, an icon, a title or some text'],
       );
-      expect(BlockRegistry.blockProblems(_block([_card('i_card00001', icon: 'rocket')])).single, contains('“rocket” is not a icon option'));
+      // Cards offer the shared library (WebsiteIcons): any of its icons; an
+      // id it doesn't know draws nothing; only a malformed one is reported.
+      expect(BlockRegistry.blockProblems(_block([_card('i_card00001', icon: 'rocket')])), isEmpty);
+      expect(BlockRegistry.blockProblems(_block([_card('i_card00001', icon: '<b>x</b>')])).single, contains('is not an icon name'));
     });
 
     test('an existing card (no image) saves exactly as stored; an absent icon is still the star; the image is stored only when chosen', () {
@@ -402,15 +405,15 @@ void main() {
       expect(((block.toMap()['cards'] as List).single as Map).containsKey('imageMediaId'), isFalse, reason: 'removed: stored as before');
       expect(BlockRegistry.blockProblems(block), isEmpty);
 
-      // Icon: "None" is offered, and chosen.
+      // Icon: the shared picker's field, with "Remove icon" for none.
       const icon = 'website-block-b_cards00001-cards-item-i_card00001-icon';
-      await tester.tap(key(icon));
-      await tester.pumpAndSettle();
-      expect(key('$icon-none'), findsWidgets);
-      await tester.tap(key('$icon-none').last);
+      expect(tester.widget<Text>(key('$icon-status')).data, 'Family');
+      await tester.ensureVisible(key('$icon-remove'));
+      await tester.tap(key('$icon-remove'));
       await tester.pumpAndSettle();
       expect(block.items('cards').single.string('icon'), 'none');
-      expect(find.text('None (no icon)'), findsOneWidget);
+      expect(tester.widget<Text>(key('$icon-status')).data, 'No icon');
+      expect(key('$icon-remove'), findsNothing);
       expect(BlockRegistry.blockProblems(block), isEmpty, reason: 'a title alone is enough');
     });
 
@@ -431,14 +434,6 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    Future<void> pick(WidgetTester tester, String dropdown, String option) async {
-      await tester.ensureVisible(find.byKey(Key(dropdown)));
-      await tester.tap(find.byKey(Key(dropdown)));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(Key('$dropdown-$option')).last);
-      await tester.pumpAndSettle();
-    }
-
     testWidgets('an added card starts with no icon; an icon chosen and then None is gone from the card', (tester) async {
       var block = _block([_card('i_card00001', icon: 'family')]);
       await pumpEditor(tester, () => block, (b) => block = b);
@@ -450,9 +445,20 @@ void main() {
       expect(((block.toMap()['cards'] as List).last as Map)['icon'], 'none');
 
       final icon = 'website-block-b_cards00001-cards-item-${added.id}-icon';
-      await pick(tester, icon, 'school');
+      expect(tester.widget<Text>(key('$icon-status')).data, 'No icon');
+      await tester.ensureVisible(key('$icon-choose'));
+      await tester.tap(key('$icon-choose'));
+      await tester.pumpAndSettle();
+      await tester.enterText(key('website-icon-picker-search'), 'graduation');
+      await tester.pumpAndSettle();
+      await tester.tap(key('website-icon-option-school'));
+      await tester.pumpAndSettle();
+      await tester.tap(key('website-icon-picker-choose'));
+      await tester.pumpAndSettle();
       expect(block.items('cards').last.string('icon'), 'school');
-      await pick(tester, icon, 'none');
+      await tester.ensureVisible(key('$icon-remove'));
+      await tester.tap(key('$icon-remove'));
+      await tester.pumpAndSettle();
       expect(block.items('cards').last.string('icon'), 'none');
 
       // On the page: the first card's icon, none on the added one.
@@ -481,7 +487,7 @@ void main() {
       expect(BlockRegistry.blockProblems(block), isEmpty);
     });
 
-    testWidgets('the Features block’s icons are unchanged (no “None” there)', (tester) async {
+    testWidgets('the Features block’s icons: the same picker, without “None”', (tester) async {
       final features = BlockRegistry.parse({
         'id': 'b_feat000001',
         'type': 'features',
@@ -490,7 +496,7 @@ void main() {
           {'id': 'i_feat000001', 'icon': 'none', 'title': {'en': 'Point'}},
         ],
       });
-      expect(BlockRegistry.blockProblems(features).single, contains('“none” is not a icon option'));
+      expect(BlockRegistry.blockProblems(features).single, contains('choose an icon'));
     });
   });
 }

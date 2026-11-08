@@ -148,8 +148,12 @@ void main() {
       expect(BlockRegistry.toMapList(blocks), page, reason: 'written back exactly');
       expect((BlockRegistry.parseList(BlockRegistry.toMapList(blocks))[5] as StructuredBlock).columns('columns').single.blocks.first.toMap()['heading'],
           {'en': 'Heading b_s000005t0', 'ta': 'தலைப்பு'});
-      expect(BlockRegistry.validate(_parse(_page(sections: 37, loose: 2))), isEmpty, reason: '150');
-      expect(BlockRegistry.validate(_parse(_page(sections: 37, loose: 3))), ['A page can have at most 150 blocks.']);
+      // The default page limit (the school's setting decides it when saved:
+      // WebsiteContentAdminService); validate() itself checks the safety
+      // ceiling unless given limits.
+      expect(BlockRegistry.validate(_parse(_page(sections: 37, loose: 2)), limits: BlockLimits.defaults), isEmpty, reason: '150');
+      expect(BlockRegistry.validate(_parse(_page(sections: 37, loose: 3)), limits: BlockLimits.defaults), ['A page can have at most 150 blocks.']);
+      expect(BlockRegistry.validate(_parse(_page(sections: 37, loose: 3))), isEmpty, reason: 'within the safety ceiling');
     });
   });
 
@@ -241,13 +245,19 @@ void main() {
       expect(BlockRegistry.validate(editorBlocks(tester)), isNot(contains(startsWith('A page can have'))), reason: 'within the limit when saved');
     });
 
-    testWidgets('a page stored over the limit still loads and can be edited down', (tester) async {
+    testWidgets('a page stored over the limit still loads, can be edited down, and saves without growing', (tester) async {
       final id = await pageWith(_page(sections: 38)); // 152
       await open(tester, id);
       expect(used(tester), startsWith('152 of 150'));
       expect(editorBlocks(tester), hasLength(38));
       expect(tester.widget<PopupMenuButton<BlockDefinition>>(key('website-blocks-add')).enabled, isFalse);
-      expect(BlockRegistry.validate(editorBlocks(tester)), ['A page can have at most 150 blocks.'], reason: 'saving explains it rather than failing silently');
+      expect(tester.widget<Text>(key('website-custom-blocks-limit')).data, contains('more than the limit of 150'));
+      // Over the school's limit is not an error in itself: it may be saved
+      // as long as it doesn't grow (the limit stops adding, not editing).
+      expect(BlockRegistry.validate(editorBlocks(tester)), isEmpty);
+      await tap(tester, key('website-custom-save-draft'));
+      final stored = (await firestore.collection(WebsiteCollections.pageDrafts).doc(id).get()).data()!['blocks'] as List;
+      expect(BlockRegistry.flatten(BlockRegistry.parseList(stored)).length, 152);
     });
   });
 

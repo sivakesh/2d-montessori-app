@@ -8,6 +8,7 @@ import '../../../public_website/content/built_in_pages.dart';
 import '../../../public_website/content/website_content_models.dart';
 import '../../../public_website/content/website_content_repository.dart';
 import '../../settings/ui/access_restricted_view.dart';
+import '../data/website_albums_service.dart';
 import '../data/website_content_admin_service.dart';
 import '../data/website_publishing_manager.dart';
 import '../../../public_website/content/website_custom_page.dart';
@@ -16,7 +17,9 @@ import '../../../public_website/content/website_site_layout.dart';
 import 'website_built_in_page_editor.dart';
 import 'website_content_editors.dart';
 import 'website_custom_page_editor.dart';
+import 'website_editor_settings_card.dart';
 import 'website_languages_editor.dart';
+import 'website_media_library.dart';
 import 'website_publishing_manager_screen.dart';
 import 'website_site_layout_editor.dart';
 
@@ -133,6 +136,8 @@ class _WebsiteContentBodyState extends ConsumerState<_WebsiteContentBody> with W
   ({SiteLanguageRegistry? draft, SiteLanguageRegistry? live, bool liveUnreadable})? _languages;
   Object? _loadError;
   bool _uploading = false;
+  List<WebsiteAlbum> _albums = const [];
+  String? _albumsError;
 
   @override
   void initState() {
@@ -153,6 +158,15 @@ class _WebsiteContentBodyState extends ConsumerState<_WebsiteContentBody> with W
       final customPages = await service.listCustomPages(requesterRole: role);
       final layout = await service.getSiteLayout(requesterRole: role);
       final languages = await service.getLanguageRegistry(requesterRole: role);
+      // Albums only organise the library: if they can't be read (say, the
+      // security rules don't allow them yet), the library still works.
+      List<WebsiteAlbum> albums = const [];
+      String? albumsError;
+      try {
+        albums = await service.albums.list(requesterRole: role);
+      } catch (_) {
+        albumsError = 'Albums couldn’t be loaded, so the album filter and album actions aren’t available right now.';
+      }
       if (!mounted) return;
       setState(() {
         _media = media;
@@ -160,6 +174,8 @@ class _WebsiteContentBodyState extends ConsumerState<_WebsiteContentBody> with W
         _customPages = customPages;
         _layout = layout;
         _languages = languages;
+        _albums = albums;
+        _albumsError = albumsError;
         _loadError = null;
       });
     } catch (e) {
@@ -167,24 +183,31 @@ class _WebsiteContentBodyState extends ConsumerState<_WebsiteContentBody> with W
     }
   }
 
+  /// Chooses one or more images, then the review step (shared defaults,
+  /// each image's own settings) and the upload. A single uploaded image
+  /// opens in its editor, as before.
   Future<void> _upload() async {
-    PickedWebsiteImage? picked;
+    if (_uploading) return;
+    setState(() => _uploading = true);
+    List<PickedWebsiteFile> files = const [];
     try {
-      picked = await service.pickImage();
-    } on WebsiteContentException catch (e) {
-      showMessage(e.message, error: true);
+      files = await service.pickImages();
+    } catch (_) {
+      showMessage('The files could not be read. Try again.', error: true);
+    }
+    if (!mounted) return;
+    if (files.isEmpty) {
+      setState(() => _uploading = false);
       return;
     }
-    if (picked == null) return;
-    setState(() => _uploading = true);
-    WebsiteMedia? created;
-    await attempt(() async {
-      created = await service.uploadMedia(requesterRole: role, actor: user, image: picked!);
-    });
+    final uploaded = await showBulkUpload(context, service: service, user: user, files: files, albums: _albums);
     if (!mounted) return;
     setState(() => _uploading = false);
     await _load();
-    if (created != null && mounted) await _openMedia(created!);
+    if (uploaded.length == 1 && files.length == 1 && mounted) {
+      final media = _media?.where((m) => m.id == uploaded.single).firstOrNull;
+      if (media != null) await _openMedia(media);
+    }
   }
 
   Future<void> _openMedia(WebsiteMedia media) async {
@@ -309,9 +332,24 @@ class _WebsiteContentBodyState extends ConsumerState<_WebsiteContentBody> with W
                 ? const Center(child: CircularProgressIndicator())
                 : TabBarView(
                     children: [
-                      _MediaLibraryTab(media: media, uploading: _uploading, onUpload: _upload, onOpen: _openMedia),
+                      WebsiteMediaLibraryTab(
+                        service: service,
+                        user: user,
+                        media: media,
+                        albums: _albums,
+                        albumsError: _albumsError,
+                        uploading: _uploading,
+                        onUpload: _upload,
+                        onOpen: _openMedia,
+                        note: const _PrivacyNote(),
+                        onChanged: ({bool publicChange = false}) async {
+                          if (publicChange) refreshPublicSite();
+                          await _load();
+                        },
+                      ),
                       _GalleryOrderTab(gallery: [for (final m in media) if (m.inGallery) m], onMove: _move),
                       _PagesTab(
+                        settings: WebsiteEditorSettingsCard(service: service.editorSettings, user: user),
                         pages: _pages,
                         customPages: _customPages,
                         media: media,
@@ -409,82 +447,6 @@ class WebsiteMediaThumb extends StatelessWidget {
               webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
               errorBuilder: (_, _, _) => fallback,
             ),
-    );
-  }
-}
-
-class _MediaLibraryTab extends StatelessWidget {
-  const _MediaLibraryTab({required this.media, required this.uploading, required this.onUpload, required this.onOpen});
-
-  final List<WebsiteMedia> media;
-  final bool uploading;
-  final VoidCallback onUpload;
-  final ValueChanged<WebsiteMedia> onOpen;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            FilledButton.icon(
-              key: const Key('website-upload'),
-              onPressed: uploading ? null : onUpload,
-              icon: uploading
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Icon(Icons.upload_outlined),
-              label: Text(uploading ? 'Uploading…' : 'Upload image'),
-              style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
-            ),
-            const Text('JPEG, PNG or WebP, up to 15 MB.', style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-          ],
-        ),
-        const SizedBox(height: 12),
-        const _PrivacyNote(),
-        const SizedBox(height: 16),
-        if (media.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 32),
-            child: Text('No images yet. Uploaded images stay private (draft) until you publish them.', textAlign: TextAlign.center),
-          )
-        else
-          for (final item in media)
-            Card(
-              key: Key('website-media-${item.id}'),
-              color: AppColors.card,
-              margin: const EdgeInsets.only(bottom: 10),
-              child: ListTile(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                leading: WebsiteMediaThumb(media: item),
-                title: Text(
-                  item.alt.en.isNotEmpty ? item.alt.en : 'No alt text yet',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontWeight: FontWeight.w600, color: item.alt.en.isNotEmpty ? AppColors.textPrimary : AppColors.textSecondary),
-                ),
-                subtitle: Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      WebsiteStatusChip.forMedia(item.status),
-                      Text(item.category.en, style: const TextStyle(fontSize: 12)),
-                      Text(item.inGallery ? 'In gallery' : 'Pages only', style: const TextStyle(fontSize: 12)),
-                      if (!item.consentConfirmed) const Text('Consent not confirmed', style: TextStyle(fontSize: 12, color: Color(0xFF8A6A33))),
-                    ],
-                  ),
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => onOpen(item),
-              ),
-            ),
-      ],
     );
   }
 }
@@ -605,6 +567,7 @@ class _GalleryOrderTab extends StatelessWidget {
 
 class _PagesTab extends StatelessWidget {
   const _PagesTab({
+    this.settings,
     required this.pages,
     required this.customPages,
     required this.media,
@@ -616,6 +579,8 @@ class _PagesTab extends StatelessWidget {
     this.layoutPublished = false,
   });
 
+  /// Editor settings (the page block limit), shown last.
+  final Widget? settings;
   final Map<WebsitePageSlot, ({WebsitePageContent? draft, WebsitePageContent? live})> pages;
   final List<({CustomPage draft, CustomPage? live})> customPages;
   final List<WebsiteMedia> media;
@@ -824,6 +789,12 @@ class _PagesTab extends StatelessWidget {
             ],
           ),
         ),
+        if (settings case final card?) ...[
+          const SizedBox(height: 20),
+          const Text('Editor settings', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          card,
+        ],
       ],
     );
   }

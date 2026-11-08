@@ -3,6 +3,7 @@ import 'dart:ui' show Rect;
 
 import 'package:flutter/foundation.dart';
 
+import 'album_source.dart';
 import 'field_spec.dart';
 import 'website_block.dart';
 
@@ -140,9 +141,11 @@ abstract final class AsymmetricGallery {
 
   static String? _badge(List<BlockItem> items, int index) {
     final marked = items.indexWhere((i) => i.value<bool>('feature') == true);
-    if (marked == index) return 'Feature image';
-    if (marked < 0 && index == 0) return 'Feature image (first, automatically)';
-    return null;
+    final album = AlbumSource.badge(items, index);
+    String? withAlbum(String role) => album == null ? role : '$role · $album';
+    if (marked == index) return withAlbum('Feature image');
+    if (marked < 0 && index == 0) return withAlbum('Feature image (first, automatically)');
+    return album;
   }
 
   static const _imageLook = 'Shape and appearance (this image)';
@@ -151,7 +154,9 @@ abstract final class AsymmetricGallery {
   static const _imageSpans = 'Size in a custom arrangement';
 
   static final List<FieldSpec> itemFields = [
-    const MediaFieldSpec('mediaId', 'Image', required: true),
+    // Checked with the gallery's images (AlbumSource.imageProblems).
+    const MediaFieldSpec('mediaId', 'Image'),
+    AlbumSource.itemField,
     const ToggleFieldSpec('feature', 'Feature image', exclusive: true, omitDefault: true),
     const TextFieldSpec('alt', 'Alt text (describes the image; replaces the Media library’s)', maxLength: 300, omitDefault: true),
     const ToggleFieldSpec('decorative', 'Decorative only (no alt text; screen readers skip it)', omitDefault: true),
@@ -230,7 +235,9 @@ abstract final class AsymmetricGallery {
   static final List<FieldSpec> fields = [
     const TextFieldSpec('heading', 'Heading', maxLength: 120, translationRequired: true, omitDefault: true),
     const TextFieldSpec('description', 'Description', maxLength: 600, multiline: true, omitDefault: true),
-    ItemsFieldSpec('images', 'Images', itemLabel: 'Image', minItems: 1, maxItems: maxImages, itemFields: itemFields, badge: _badge),
+    ...AlbumSource.blockFields,
+    // At least one image, by hand or from albums (in [problems]).
+    ItemsFieldSpec('images', 'Images', itemLabel: 'Image', newItems: 1, maxItems: maxImages, itemFields: itemFields, badge: _badge),
     for (final s in screens) ..._screenFields(s),
     const ChoiceFieldSpec('fit', 'Fit', options: ['cover', 'contain'], initial: 'cover', omitDefault: true, group: _look, optionLabels: {
       'cover': 'Cover (fill the shape, cropping the edges)',
@@ -285,7 +292,7 @@ abstract final class AsymmetricGallery {
   /// What can't be saved: two feature images, custom widths and shapes not
   /// filled in (or not a ratio), and a "follow the link" with no link.
   static List<String> problems(StructuredBlock block) {
-    final out = <String>[];
+    final out = <String>[...AlbumSource.imageProblems(block)];
     final items = block.items('images');
     if (items.where((i) => i.value<bool>('feature') == true).length > 1) out.add('only one image can be the feature image');
     String ratioProblem(String where) => '$where: enter a shape as width:height, such as 7:5 (from 4:1 to 1:4)';

@@ -918,7 +918,10 @@ service cloud.firestore {
 
       await tester.enterText(find.byKey(const Key('builder-title-en-1')), 'Open day sign-up');
       await tester.pump();
-      expect(find.textContaining('Choose the form’s cover image'), findsWidgets, reason: 'a cover image is required');
+      expect(find.textContaining('Choose the form’s cover image'), findsNothing, reason: 'a cover image is optional: no problem is reported');
+      expect(find.textContaining('Required before activating.'), findsOneWidget, reason: 'only the description still says so');
+      expect(find.text('Cover image (optional)'), findsOneWidget);
+      expect(find.text('No image chosen.'), findsOneWidget);
       await tap(tester, 'builder-cover-choose');
       await tap(tester, 'website-choose-$_coverId');
       expect(find.text('Visitors see this image (Children in the garden).'), findsOneWidget);

@@ -46,7 +46,10 @@ class SectionPreset {
       _child(BlockRegistry.text, {'heading': _en(heading), 'body': _en(body)}, style: style);
 
   static final all = [
-    SectionPreset._('blank', 'Blank section', 'An empty band to fill with blocks', () => _section('Section', '1', [[]])),
+    SectionPreset._('blank', 'Blank section', 'An empty band with one column to fill with blocks', () => _section('Section', '1', [[]])),
+    // Empty sections with columns side by side, each filled on its own.
+    for (final (n, word) in [(2, 'Two'), (3, 'Three'), (4, 'Four')])
+      SectionPreset._('columns_$n', '$word columns', 'An empty section with $n columns side by side (stacked on phones)', () => _section('Section', List.filled(n, '1').join(':'), [for (var i = 0; i < n; i++) []])),
     SectionPreset._(
       'hero',
       'Hero',

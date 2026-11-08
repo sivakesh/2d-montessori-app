@@ -520,6 +520,7 @@ void main() {
       await tap(tester, key('website-block-b_text000001-style-background-choose'));
       await tap(tester, key('website-block-b_text000001-style-background-legacy-white'));
       expect((editorBlocks(tester).first as StructuredBlock).style, {'background': 'white'}, reason: 'the explicit default is stored as chosen');
+      await tap(tester, key('website-block-lq3x9bbb__txt-more'));
       await tap(tester, key('website-block-lq3x9bbb__txt-visibility'));
       await tap(tester, key('website-custom-save-draft'));
 

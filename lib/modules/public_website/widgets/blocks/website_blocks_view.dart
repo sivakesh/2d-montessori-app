@@ -1,4 +1,9 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+
+import 'website_icon_view.dart';
+import '../../content/blocks/website_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../content/blocks/block_registry.dart';
@@ -40,26 +45,6 @@ Future<void> followBlockLink(BuildContext context, String target, {bool newTab =
   await launchUrl(Uri.parse(target), mode: newTab ? LaunchMode.externalApplication : LaunchMode.platformDefault, webOnlyWindowName: newTab ? null : '_self');
 }
 
-/// The icon a stored icon name stands for ([blockIconNames]).
-IconData blockIconData(String name) => switch (name) {
-      'family' => Icons.family_restroom_outlined,
-      'school' => Icons.school_outlined,
-      'spa' => Icons.spa_outlined,
-      'grid' => Icons.grid_view_outlined,
-      'care' => Icons.volunteer_activism_outlined,
-      'book' => Icons.menu_book_outlined,
-      'palette' => Icons.palette_outlined,
-      'nature' => Icons.park_outlined,
-      'heart' => Icons.favorite_border,
-      'calendar' => Icons.event_outlined,
-      'place' => Icons.place_outlined,
-      'phone' => Icons.phone_outlined,
-      'mail' => Icons.mail_outline,
-      'question' => Icons.help_outline,
-      'quote' => Icons.format_quote_outlined,
-      'check' => Icons.check_circle_outline,
-      _ => Icons.star_outline,
-    };
 
 /// How the page editor draws the blocks inside a section or columns block:
 /// [frame] wraps each one (with [rendered] null when visitors wouldn't see
@@ -329,6 +314,88 @@ class _BlockWidget extends StatelessWidget {
         ],
       );
 
+  /// A colour field's value ([ColorFieldSpec]): null for Automatic.
+  Color? _fieldColor(String key, SiteDesign design) => switch (block.string(key)) {
+        ColorFieldSpec.automatic || '' => null,
+        ColorFieldSpec.transparent => Colors.transparent,
+        final v => design.resolve(v),
+      };
+
+  /// A Text block's [text] with its icon (TextIcon), before, after or
+  /// above it, in the block's alignment. Without an icon turned on (or one
+  /// this version has) [text] is returned exactly as before.
+  Widget _withTextIcon(Widget text, _Look look) {
+    if (!TextIcon.showsIcon(block)) return text;
+    final gap = (block.values[TextIcon.gap] as int? ?? TextIcon.defaultGap).toDouble();
+    final icon = WebsiteIconView(
+      key: Key('public-block-${block.id}-icon'),
+      id: block.string(TextIcon.icon),
+      size: (block.values[TextIcon.size] as int? ?? TextIcon.defaultSize).toDouble(),
+      color: _fieldColor(TextIcon.color, look.design) ?? look.heading,
+    );
+    final position = block.string(TextIcon.position);
+    if (position == 'above') {
+      return Column(crossAxisAlignment: look.cross, mainAxisSize: MainAxisSize.min, children: [icon, SizedBox(height: gap), text]);
+    }
+    final space = SizedBox(width: gap);
+    return Row(
+      key: Key('public-block-${block.id}-icon-row'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: position == 'after' ? [Flexible(child: text), space, icon] : [icon, space, Flexible(child: text)],
+    );
+  }
+
+  /// A Divider with its own style, thickness, width, alignment or spacing
+  /// (DividerLine), drawn natively; decorative, so screen readers skip it.
+  Widget _divider(PublicLayout layout, _Look look) {
+    final screen = screenOf(layout);
+    final thickness = DividerLine.thicknessOn(block, screen);
+    final percent = DividerLine.widthOn(block, screen);
+    final color = look.design.resolve(block.style['lineColor']) ?? look.design.colorOf('line');
+    return ExcludeSemantics(
+      child: Padding(
+        key: Key('public-block-${block.id}-divider'),
+        padding: EdgeInsets.only(top: DividerLine.spaceAbove(block), bottom: DividerLine.spaceBelow(block)),
+        child: LayoutBuilder(
+          builder: (context, c) => Align(
+            alignment: switch (DividerLine.alignOf(block)) { 'start' => Alignment.centerLeft, 'end' => Alignment.centerRight, _ => Alignment.center },
+            child: SizedBox(
+              key: Key('public-block-${block.id}-line'),
+              width: c.maxWidth.isFinite ? c.maxWidth * percent / 100 : null,
+              height: thickness,
+              child: CustomPaint(painter: DividerLinePainter(style: DividerLine.styleOf(block), color: color)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The Icon block (IconBlock): its icon at its size on [layout], in the
+  /// block's alignment, linked when it has a safe link.
+  Widget _iconBlock(BuildContext context, PublicLayout layout, _Look look) {
+    final background = _fieldColor('iconBackground', look.design);
+    final target = block.string('link').trim();
+    final linked = target.isNotEmpty && SafeLinkTarget.validate(target) == null;
+    final ownPadding = block.values['iconPadding'] as int?;
+    final icon = WebsiteIconView(
+      key: Key('public-block-${block.id}-icon'),
+      id: block.string('icon'),
+      size: IconBlock.sizeOn(block, screenOf(layout)).toDouble(),
+      color: _fieldColor('color', look.design) ?? look.heading,
+      background: background,
+      padding: (ownPadding ?? (background == null ? 0 : IconBlock.defaultPaddingWithBackground)).toDouble(),
+      radius: (block.values['radius'] as int?)?.toDouble(),
+      semanticLabel: block.text('label').resolve(language),
+      onTap: linked && view.interactive ? () => followBlockLink(context, target) : null,
+    );
+    return Align(
+      alignment: switch (look.align) { 'center' => Alignment.topCenter, 'end' => Alignment.topRight, _ => Alignment.topLeft },
+      child: linked && view.interactive ? MouseRegion(cursor: SystemMouseCursors.click, child: icon) : icon,
+    );
+  }
+
   /// The block's safe buttons with a label, as visitors see them. A label
   /// is never shortened: one too long for the space wraps onto more lines
   /// (centred in a filled or outlined button) and the button grows.
@@ -434,9 +501,10 @@ class _BlockWidget extends StatelessWidget {
           look,
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 760),
-            child: _textBlock(block.text('heading').resolve(language), block.text('body').resolve(language), look),
+            child: _withTextIcon(_textBlock(block.text('heading').resolve(language), block.text('body').resolve(language), look), look),
           ),
         ),
+      IconBlock.type => _iconBlock(context, layout, look),
       'image' => _image(strings, look),
       'gallery' => _gallery(context, strings, layout, look),
       'asymmetric_gallery' => PublicAsymmetricGallery(
@@ -470,10 +538,13 @@ class _BlockWidget extends StatelessWidget {
         ),
       'buttons' => _buttons(block.items('buttons'), look, align: block.string('align') == 'center' ? WrapAlignment.center : WrapAlignment.start) ?? const SizedBox.shrink(),
       'columns' => _columns(context, layout, look),
-      'divider' => Padding(
+      rowType => _row(context, layout, look),
+      // Without the later settings, exactly as before.
+      'divider' when !DividerLine.customised(block) => Padding(
           padding: EdgeInsets.symmetric(vertical: switch (block.string('size')) { 'small' => 4.0, 'large' => 32.0, _ => 16.0 }),
           child: Divider(height: 1, thickness: 1, color: look.design.resolve(block.style['lineColor']) ?? look.design.colorOf('line')),
         ),
+      'divider' => _divider(layout, look),
       'hero' => _hero(strings, layout, look),
       'cards' => _cards(layout, look),
       'testimonials' => PublicTestimonials(
@@ -742,15 +813,19 @@ class _BlockWidget extends StatelessWidget {
   /// Style gap [key] (`columnGap`, `rowGap`) in px, or [fallback].
   double _gap(String key, double fallback) => BlockStyle.gaps.contains(block.style[key]) ? double.parse(block.style[key] as String) : fallback;
 
-  /// [children] (one widget per column) side by side from tablet width
-  /// (relative widths from the layout); stacked on mobile. Four columns
-  /// make two rows of two on tablets. Column and row gaps come from the
-  /// block's style (else 40 between columns and [stackGap] between rows).
-  Widget _columnsLayout(PublicLayout layout, List<Widget> children, {required CrossAxisAlignment cross, double stackGap = 24}) {
+  /// [children] (one widget per column), [ColumnsPerRow.on] this screen
+  /// size side by side: all of them with the layout's relative widths;
+  /// fewer in rows of equal widths (the last row keeps them); one stacked.
+  /// Automatic is as before these settings: all in a row on desktop, four
+  /// as two rows of two on tablets, stacked on mobile. Column and row gaps
+  /// come from the block's style (else 40 between columns and [stackGap]
+  /// between rows).
+  Widget _columnsLayout(PublicLayout layout, List<Widget> children, {required CrossAxisAlignment cross, double stackGap = 24, double columnGapFallback = 40}) {
     final widths = columnLayouts[block.string('layout')] ?? const [1, 1];
-    final columnGap = _gap('columnGap', 40);
+    final columnGap = _gap('columnGap', columnGapFallback);
     final rowGap = _gap('rowGap', stackGap);
-    if (layout.isMobile || children.length == 1) {
+    final perRow = children.isEmpty ? 1 : ColumnsPerRow.on(block, screenOf(layout)).clamp(1, children.length);
+    if (perRow == 1) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [for (final (i, c) in children.indexed) ...[if (i > 0) SizedBox(height: rowGap), c]],
@@ -765,13 +840,14 @@ class _BlockWidget extends StatelessWidget {
             ],
           ],
         );
-    if (layout == PublicLayout.tablet && children.length > 3) {
+    if (perRow < children.length) {
+      final equal = List.filled(perRow, 1);
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          for (var i = 0; i < children.length; i += 2) ...[
+          for (var i = 0; i < children.length; i += perRow) ...[
             if (i > 0) SizedBox(height: rowGap),
-            row([children[i], if (i + 1 < children.length) children[i + 1] else const SizedBox.shrink()], const [1, 1]),
+            row([for (var j = i; j < i + perRow; j++) j < children.length ? children[j] : const SizedBox.shrink()], equal),
           ],
         ],
       );
@@ -835,6 +911,29 @@ class _BlockWidget extends StatelessWidget {
         ),
     ];
     return _withLook(context, _columnsLayout(layout, children, cross: CrossAxisAlignment.center), look);
+  }
+
+  /// A Columns / Row inside a section's column: its inner columns laid out
+  /// exactly as a section's are ([_columnsLayout], [ColumnsPerRow] on this
+  /// screen size), each column's blocks spaced as in a section, lined up
+  /// at the top unless it sets otherwise; closer together (24 px) than a
+  /// section's columns unless it sets its own gaps.
+  Widget _row(BuildContext context, PublicLayout layout, _Look look) {
+    final mobile = layout.isMobile;
+    final cols = block.columns('columns');
+    final children = [
+      for (final (i, c) in cols.indexed)
+        Column(
+          key: Key('public-block-column-${c.id}'),
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: _columnChildren(context, c, i, (child) => WebsiteBlocksView.spaceInside(child, mobile: mobile, screen: screenOf(layout))),
+        ),
+    ];
+    final cross = switch (block.option('verticalAlign')) { 'center' => CrossAxisAlignment.center, 'bottom' => CrossAxisAlignment.end, _ => CrossAxisAlignment.start };
+    return KeyedSubtree(
+      key: Key('public-row-${block.id}'),
+      child: _withLook(context, _columnsLayout(layout, children, cross: cross, stackGap: 24, columnGapFallback: 24), look),
+    );
   }
 
   /// A band of the page: its background (edge to edge on a full-width
@@ -1001,7 +1100,11 @@ class _BlockWidget extends StatelessWidget {
                       errorLabel: PublicStrings.of(language).imageUnavailable,
                     ),
                   ),
-            icon: item.string('icon') == 'none' ? null : blockIconData(item.string('icon')),
+            // The shared library's glyph ('none', or an id this version
+            // doesn't know: no icon).
+            icon: WebsiteIcons.lookup(item.string('icon'))?.data,
+            iconSize: (block.values[ListIcons.size] as int?)?.toDouble(),
+            iconColor: _fieldColor(ListIcons.color, look.design),
             title: title,
             body: item.text('body').resolve(language),
             cta: safe ? item.text('linkLabel').resolve(language) : '',
@@ -1021,7 +1124,14 @@ class _BlockWidget extends StatelessWidget {
         if (_perRow(layout) case final perRow?)
           perRowGrid(cards, perRow, gap: 24, rowGap: layout.isMobile ? 16 : 24, stretch: true)
         else if (layout.isMobile)
-          Column(children: [for (final (i, c) in cards.indexed) ...[if (i > 0) const SizedBox(height: 16), c]])
+          // Stretched: every card the full width of the block (a centred
+          // Column would let each card shrink to its own text, so cards of
+          // different lengths had different widths and positions).
+          Column(
+            key: Key('public-cards-${block.id}-stack'),
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [for (final (i, c) in cards.indexed) ...[if (i > 0) const SizedBox(height: 16), c]],
+          )
         else
           IntrinsicHeight(
             child: Row(
@@ -1102,8 +1212,15 @@ class _BlockWidget extends StatelessWidget {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(blockIconData(item.string('icon')), color: look.design.colorOf('sage'), size: 28),
-            const SizedBox(height: 12),
+            if (WebsiteIcons.lookup(item.string('icon')) != null) ...[
+              WebsiteIconView(
+                key: Key('public-feature-${item.id}-icon'),
+                id: item.string('icon'),
+                size: (block.values[ListIcons.size] as int? ?? 28).toDouble(),
+                color: _fieldColor(ListIcons.color, look.design) ?? look.design.colorOf('sage'),
+              ),
+              const SizedBox(height: 12),
+            ],
             Text(item.text('title').resolve(language), style: look.titleStyle),
             if (item.text('body').resolve(language) case final body when body.isNotEmpty) ...[
               const SizedBox(height: 6),
@@ -1185,4 +1302,38 @@ class _BlockWidget extends StatelessWidget {
       },
     );
   }
+}
+
+/// Paints a Divider's line across its box: solid; dashed (dashes three
+/// times the thickness, gaps twice); or dotted (round dots one thickness
+/// apart), the same in the editor, the previews and the website.
+class DividerLinePainter extends CustomPainter {
+  const DividerLinePainter({required this.style, required this.color});
+
+  final String style;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final t = size.height;
+    final paint = Paint()..color = color;
+    if (style == 'dotted') {
+      final step = t * 2 + 1;
+      for (var x = t / 2; x <= size.width - t / 2 + 0.01; x += step) {
+        canvas.drawCircle(Offset(x, t / 2), t / 2, paint);
+      }
+      return;
+    }
+    if (style == 'dashed') {
+      final dash = math.max(6.0, t * 3), gap = math.max(4.0, t * 2);
+      for (var x = 0.0; x < size.width; x += dash + gap) {
+        canvas.drawRect(Rect.fromLTWH(x, 0, math.min(dash, size.width - x), t), paint);
+      }
+      return;
+    }
+    canvas.drawRect(Offset.zero & size, paint);
+  }
+
+  @override
+  bool shouldRepaint(DividerLinePainter old) => old.style != style || old.color != color;
 }

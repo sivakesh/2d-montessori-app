@@ -253,7 +253,9 @@ void main() {
       expect(errors, contains('Block 5 (Photo gallery): add at least 1 image.'));
       expect(errors, contains('Block 6 (Columns): it needs 3 columns for this layout.'));
       expect(errors, contains('Block 6 (Columns): columns can’t contain columns.'));
-      expect(errors, contains('blocks can be nested only 1 level deep'));
+      // The depth backstop (two levels by default: section › row › block);
+      // with one level, columns inside columns is stopped by it too.
+      expect(BlockRegistry.validate(blocks, limits: const BlockLimits(maxNestingDepth: 1)).join('\n'), contains('blocks can be nested only 1 level deep'));
       expect(errors, contains('the id “b_a” is used more than once'));
       expect(errors, contains('Block 8 (Divider): its id is not valid.'));
       expect(errors, contains('“neon” is not a background option'));
@@ -261,8 +263,13 @@ void main() {
       expect(errors, contains('the id “i_3” is used more than once'));
       expect(errors, contains('Button 2: Button label must be 120 characters or fewer.'), reason: 'every language is limited');
 
-      final many = [for (var i = 0; i <= BlockLimits.pageMaxBlocks; i++) BlockRegistry.create(BlockRegistry.divider)];
-      expect(BlockRegistry.validate(many), contains('A page can have at most ${BlockLimits.pageMaxBlocks} blocks.'));
+      // Saving checks the safety ceiling by default (the school's own page
+      // limit is checked by the admin service), or the limits given.
+      final many = [for (var i = 0; i <= BlockLimits.safetyMaxBlocks; i++) BlockRegistry.create(BlockRegistry.divider)];
+      expect(BlockRegistry.validate(many), contains('A page can have at most ${BlockLimits.safetyMaxBlocks} blocks.'));
+      expect(BlockRegistry.validate(many.take(BlockLimits.pageMaxBlocks + 1).toList()), isNot(contains(startsWith('A page can have at most'))));
+      expect(BlockRegistry.validate(many.take(BlockLimits.pageMaxBlocks + 1).toList(), limits: BlockLimits.defaults),
+          contains('A page can have at most ${BlockLimits.pageMaxBlocks} blocks.'));
       final big = [BlockRegistry.create(BlockRegistry.text).withValue('body', LocalizedText(en: 'x' * 2000))];
       expect(BlockRegistry.validate(big, limits: const BlockLimits(maxDocumentBytes: 1024)).last, contains('too large'));
     });

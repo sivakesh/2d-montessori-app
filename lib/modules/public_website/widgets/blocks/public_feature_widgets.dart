@@ -70,10 +70,16 @@ class PublicPathwayCard extends StatelessWidget {
     this.ctaColor,
     this.titleColor,
     this.bodyColor,
+    this.iconSize,
+    this.iconColor,
   });
 
   /// Null: no icon (nothing in its place).
   final IconData? icon;
+
+  /// The icon's size and colour (null: 24 px, in [accent]: as always).
+  final double? iconSize;
+  final Color? iconColor;
 
   /// Across the top of the card, edge to edge, above the icon and the
   /// text; null: none (no space).
@@ -112,7 +118,7 @@ class PublicPathwayCard extends StatelessWidget {
             width: 52,
             height: 52,
             decoration: BoxDecoration(color: accent.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(14)),
-            child: Icon(icon, color: accent),
+            child: Icon(icon, color: iconColor ?? accent, size: iconSize),
           ),
         if (title.isNotEmpty) ...[
           if (icon != null) const SizedBox(height: 20),

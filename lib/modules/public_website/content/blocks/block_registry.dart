@@ -6,6 +6,7 @@ import '../website_content_models.dart';
 import '../website_custom_page.dart';
 import '../website_design.dart';
 import 'accreditation_date.dart';
+import 'album_source.dart';
 import 'asymmetric_gallery.dart';
 import 'block_ids.dart';
 import 'block_spacing.dart';
@@ -15,6 +16,7 @@ import 'embed_providers.dart';
 import 'field_spec.dart';
 import 'testimonials.dart';
 import 'website_block.dart';
+import 'website_icons.dart';
 
 /// A block type: its stored name, schema version, admin label and fields,
 /// plus any rule its fields alone can't express. Everything generic —
@@ -137,7 +139,9 @@ const blockIconNames = [
   'family', 'school', 'spa', 'grid', 'care', 'star', 'book', 'palette', 'nature', 'heart', 'calendar', 'place', 'phone', 'mail', 'question', 'quote', 'check', //
 ];
 
-/// A card's icon choices: no icon, or one of [blockIconNames].
+/// A card's icon choices before the shared picker: no icon, or one of
+/// [blockIconNames] (kept for reference; cards now offer every icon of
+/// WebsiteIcons, with the same stored names).
 const cardIconOptions = ['none', ...blockIconNames];
 
 /// A card with nothing to show (its English title and text, the
@@ -192,9 +196,86 @@ const _perRowFields = [
   ChoiceFieldSpec('mobileColumns', 'Per row on phones', options: ['auto', '1', '2'], initial: 'auto', optionLabels: {'auto': 'Automatic (one per row)'}, omitDefault: true),
 ];
 
-/// Container types: they hold blocks in columns, and can't be nested in
-/// each other.
-const containerTypes = {'columns', 'section'};
+/// How many of a section's (or columns block's) columns sit side by side
+/// on each screen size. Its `layout` is the number of columns on every
+/// screen (and their widths); `desktopColumns`, `tabletColumns` and
+/// `mobileColumns` optionally show fewer per row on that screen, the rest
+/// wrapping onto further rows. Unset (`auto`, not stored) is how sections
+/// were always drawn: desktop all in one row; tablets as desktop, but four
+/// become two per row; phones one per row (stacked). Shared by the editor's
+/// canvas and the website, so both lay columns out alike.
+class ColumnsPerRow {
+  ColumnsPerRow._();
+
+  static const keys = {'desktop': 'desktopColumns', 'tablet': 'tabletColumns', 'mobile': 'mobileColumns'};
+  static const automatic = 'auto';
+  static const options = [automatic, '1', '2', '3', '4'];
+
+  /// The per-row setting [screen] (`desktop`, `tablet`, `mobile`) sets
+  /// itself, or null (Automatic).
+  static int? own(StructuredBlock b, String screen) => int.tryParse(b.option(keys[screen]!));
+
+  /// Columns per row on [screen]: its own setting, else Automatic; never
+  /// more than [b] has, never fewer than one.
+  static int on(StructuredBlock b, String screen) {
+    final count = b.columns('columns').length;
+    if (count <= 1) return 1;
+    final n = own(b, screen) ?? automaticOn(b, screen);
+    return n.clamp(1, count);
+  }
+
+  /// What Automatic is on [screen]: desktop all columns; tablets desktop's
+  /// (four or more become two); phones one.
+  static int automaticOn(StructuredBlock b, String screen) {
+    final count = b.columns('columns').length;
+    return switch (screen) {
+      'mobile' => 1,
+      'tablet' => () {
+          final desktop = on(b, 'desktop');
+          return desktop > 3 ? 2 : desktop;
+        }(),
+      _ => count,
+    };
+  }
+
+  /// [b] with every per-row setting at most [count] (after its columns
+  /// change), so none asks for more columns than it has.
+  static StructuredBlock clampedTo(StructuredBlock b, int count) {
+    var out = b;
+    for (final key in keys.values) {
+      final n = int.tryParse(b.option(key));
+      if (n != null && n > count) out = out.withValue(key, '$count');
+    }
+    return out;
+  }
+}
+
+/// Columns per row on each screen size, after the layout (see
+/// [ColumnsPerRow]); not stored while Automatic.
+const _columnsPerRowFields = [
+  ChoiceFieldSpec('desktopColumns', 'Desktop', options: ColumnsPerRow.options, initial: ColumnsPerRow.automatic, omitDefault: true),
+  ChoiceFieldSpec('tabletColumns', 'Tablet', options: ColumnsPerRow.options, initial: ColumnsPerRow.automatic, omitDefault: true),
+  ChoiceFieldSpec('mobileColumns', 'Phone', options: ColumnsPerRow.options, initial: ColumnsPerRow.automatic, omitDefault: true),
+];
+
+/// Container types: they hold blocks in columns. Three kinds, never
+/// nested further than this:
+/// * `section`: an outer band of the page, at the top level only; its
+///   columns hold content blocks and Columns / Row blocks.
+/// * `row` ("Columns / Row"): inner columns inside a section's column
+///   only; its columns hold content blocks only.
+/// * `columns`: the older top-level columns block; content blocks only.
+///
+/// So a page is at most section → row → content block, two levels deep.
+const containerTypes = {'columns', 'section', 'row'};
+
+/// The type of [BlockRegistry.row].
+const rowType = 'row';
+
+/// Whether a [parent] container's column may hold [child]: any content
+/// block, and in a section a Columns / Row block too.
+bool containerMayHold(String parent, WebsiteBlock child) =>
+    child is! StructuredBlock || !containerTypes.contains(child.type) || (parent == 'section' && child.type == rowType);
 
 List<String> _containerChecks(StructuredBlock b) {
   final widths = columnLayouts[b.string('layout')];
@@ -203,7 +284,7 @@ List<String> _containerChecks(StructuredBlock b) {
     if (widths != null && cols.length != widths.length) 'it needs ${widths.length} column${widths.length == 1 ? '' : 's'} for this layout',
     for (final c in cols)
       for (final child in c.blocks)
-        if (child is StructuredBlock && containerTypes.contains(child.type)) '${b.definition.label.toLowerCase()} can’t contain ${child.definition.label.toLowerCase()}',
+        if (!containerMayHold(b.type, child)) '${b.definition.label.toLowerCase()} can’t contain ${(child as StructuredBlock).definition.label.toLowerCase()}',
   ];
 }
 
@@ -220,8 +301,50 @@ class BlockRegistry {
     fields: const [
       TextFieldSpec('heading', 'Heading', maxLength: 120, translationRequired: true),
       TextFieldSpec('body', 'Text', maxLength: 3000, multiline: true),
+      // An optional icon (TextIcon): every setting is stored only when it
+      // differs from its default, so a Text block without an icon is
+      // stored, and drawn, exactly as before.
+      ToggleFieldSpec(TextIcon.show, 'Show an icon', omitDefault: true, group: 'Icon'),
+      IconFieldSpec(TextIcon.icon, 'Icon', initial: 'star', omitDefault: true, group: 'Icon', shownWhen: TextIcon.shown),
+      ChoiceFieldSpec(TextIcon.position, 'Icon position',
+          options: TextIcon.positions,
+          initial: 'before',
+          optionLabels: {'before': 'Before the text', 'after': 'After the text', 'above': 'Above the text'},
+          omitDefault: true,
+          group: 'Icon',
+          shownWhen: TextIcon.shown),
+      NumberFieldSpec(TextIcon.size, 'Icon size', min: 12, max: 160, unit: 'px', automaticLabel: 'Automatic (32 px)', group: 'Icon', shownWhen: TextIcon.shown),
+      ColorFieldSpec(TextIcon.color, 'Icon colour', automaticLabel: 'Automatic (the heading colour)', omitDefault: true, group: 'Icon', shownWhen: TextIcon.shown),
+      NumberFieldSpec(TextIcon.gap, 'Space between icon and text', min: 0, max: 64, unit: 'px', automaticLabel: 'Automatic (12 px)', group: 'Icon', shownWhen: TextIcon.shown),
     ],
     extraChecks: (b) => b.text('heading').en.trim().isEmpty && b.text('body').en.trim().isEmpty ? ['add a heading or some text'] : const [],
+  );
+
+  /// A single icon from the icon library (WebsiteIcons), at a size per
+  /// screen, optionally on a coloured background and linked. Its
+  /// accessibility label names it for screen readers; without one it is
+  /// decorative (and a linked icon needs one).
+  static final icon = BlockDefinition(
+    type: IconBlock.type,
+    version: 1,
+    label: 'Icon',
+    description: 'An icon from the icon library, optionally linked',
+    styleKeys: const ['background', 'spacing', 'align'],
+    fields: const [
+      IconFieldSpec('icon', 'Icon', initial: 'star'),
+      TextFieldSpec('label', 'Accessibility label', maxLength: 120, group: 'Accessibility'),
+      NumberFieldSpec('size', 'Size on desktop', min: 12, max: 160, unit: 'px', automaticLabel: 'Automatic (${IconBlock.defaultSize} px)', group: 'Size'),
+      NumberFieldSpec('tabletSize', 'Size on tablets', min: 12, max: 160, unit: 'px', automaticLabel: 'Automatic (as on desktop)', group: 'Size'),
+      NumberFieldSpec('mobileSize', 'Size on phones', min: 12, max: 160, unit: 'px', automaticLabel: 'Automatic (as on tablets)', group: 'Size'),
+      ColorFieldSpec('color', 'Icon colour', automaticLabel: 'Automatic (the heading colour)', omitDefault: true, group: 'Look'),
+      ColorFieldSpec('iconBackground', 'Background behind the icon', automaticLabel: 'None', omitDefault: true, group: 'Look'),
+      NumberFieldSpec('iconPadding', 'Space around the icon', min: 0, max: 80, unit: 'px', automaticLabel: 'Automatic (none; 16 px with a background)', group: 'Look'),
+      NumberFieldSpec('radius', 'Corner radius', min: 0, max: 100, unit: 'px', automaticLabel: 'Automatic (round)', group: 'Look'),
+      LinkFieldSpec('link', 'Link (optional)', omitDefault: true, group: 'Link'),
+    ],
+    extraChecks: (b) => b.string('link').trim().isNotEmpty && b.text('label').en.trim().isEmpty
+        ? ['add an accessibility label: a linked icon needs a name for screen readers']
+        : const [],
   );
 
   static const image = BlockDefinition(
@@ -245,7 +368,29 @@ class BlockRegistry {
     description: 'Blocks side by side',
     styleKeys: ['background', 'spacing', 'textColor', 'headingColor', 'borderColor', 'width', 'columnGap', 'rowGap'],
     fields: [
-      ChoiceFieldSpec('layout', 'Column widths', options: ['1:1', '1:2', '2:1', '1:1:1', '1:1:1:1'], initial: '1:1', optionLabels: columnLayoutLabels),
+      ChoiceFieldSpec('layout', 'Columns and widths (all devices)', options: ['1:1', '1:2', '2:1', '1:1:1', '1:1:1:1'], initial: '1:1', optionLabels: columnLayoutLabels),
+      ..._columnsPerRowFields,
+      ColumnsFieldSpec('columns', 'Columns'),
+    ],
+    extraChecks: _containerChecks,
+  );
+
+  /// "Columns / Row": one to four inner columns inside a section's column,
+  /// each holding its own content blocks, with its own widths, columns per
+  /// row on each screen size, gaps, alignment and background. Laid out
+  /// like a section's columns ([ColumnsPerRow]); never at the top level,
+  /// never inside another row or a columns block, never holding a row.
+  static const row = BlockDefinition(
+    type: rowType,
+    version: 1,
+    label: 'Columns / Row',
+    description: 'Inner columns in this column, each with its own blocks',
+    styleKeys: ['background', 'spacing', 'columnGap', 'rowGap', 'align', 'textColor', 'headingColor', 'buttonColor', 'buttonTextColor', 'borderColor', 'borderWidth'],
+    fields: [
+      TextFieldSpec('name', 'Row name (for the editor only)', maxLength: 60, translatable: false, omitDefault: true),
+      ChoiceFieldSpec('layout', 'Columns and widths (all devices)', options: ['1', '1:1', '1:2', '2:1', '1:1:1', '1:1:1:1'], initial: '1:1', optionLabels: columnLayoutLabels),
+      ..._columnsPerRowFields,
+      ChoiceFieldSpec('verticalAlign', 'Line the columns up at their', options: ['top', 'center', 'bottom'], initial: 'top', optionLabels: {'top': 'Top', 'center': 'Middle', 'bottom': 'Bottom'}, omitDefault: true),
       ColumnsFieldSpec('columns', 'Columns'),
     ],
     extraChecks: _containerChecks,
@@ -266,7 +411,8 @@ class BlockRegistry {
       TextFieldSpec('eyebrow', 'Small heading above the title', maxLength: 60, omitDefault: true),
       TextFieldSpec('heading', 'Section heading', maxLength: 160, translationRequired: true, omitDefault: true),
       TextFieldSpec('description', 'Section description', maxLength: 1000, multiline: true, omitDefault: true),
-      ChoiceFieldSpec('layout', 'Columns', options: ['1', '1:1', '1:2', '2:1', '1:1:1', '1:1:1:1'], initial: '1', optionLabels: columnLayoutLabels),
+      ChoiceFieldSpec('layout', 'Columns (all devices)', options: ['1', '1:1', '1:2', '2:1', '1:1:1', '1:1:1:1'], initial: '1', optionLabels: columnLayoutLabels),
+      ..._columnsPerRowFields,
       ColumnsFieldSpec('columns', 'Columns'),
     ],
     extraChecks: _containerChecks,
@@ -306,8 +452,11 @@ class BlockRegistry {
       // the star it always was, so saved cards look the same. The image was
       // added later and is stored only when chosen; it is drawn as a 2:1
       // banner (an image size saved by an earlier version is kept, unused).
+      NumberFieldSpec(ListIcons.size, 'Icon size', min: 12, max: 96, unit: 'px', automaticLabel: 'Automatic (24 px)', group: 'Icons'),
+      ColorFieldSpec(ListIcons.color, 'Icon colour', automaticLabel: 'Automatic (the card’s accent colour)', omitDefault: true, group: 'Icons'),
       ItemsFieldSpec('cards', 'Cards', itemLabel: 'Card', minItems: 1, maxItems: 8, itemFields: [
-        ChoiceFieldSpec('icon', 'Icon', options: cardIconOptions, initial: 'star', initialForNew: 'none', optionLabels: {'none': 'None (no icon)'}),
+        // The shared icon picker (WebsiteIcons); the same stored names.
+        IconFieldSpec('icon', 'Icon', initial: 'star', initialForNew: IconFieldSpec.none, allowNone: true),
         MediaFieldSpec('imageMediaId', 'Image (optional)', omitDefault: true, removable: true),
         TextFieldSpec('title', 'Title', maxLength: 80, translationRequired: true),
         TextFieldSpec('body', 'Text', maxLength: 400, multiline: true),
@@ -330,8 +479,10 @@ class BlockRegistry {
       TextFieldSpec('eyebrow', 'Small label', maxLength: 60),
       TextFieldSpec('heading', 'Heading', maxLength: 120, translationRequired: true),
       ..._perRowFields,
+      NumberFieldSpec(ListIcons.size, 'Icon size', min: 12, max: 96, unit: 'px', automaticLabel: 'Automatic (28 px)', group: 'Icons'),
+      ColorFieldSpec(ListIcons.color, 'Icon colour', automaticLabel: 'Automatic (sage)', omitDefault: true, group: 'Icons'),
       ItemsFieldSpec('items', 'Points', itemLabel: 'Point', minItems: 1, maxItems: 8, itemFields: [
-        ChoiceFieldSpec('icon', 'Icon', options: blockIconNames, initial: 'check'),
+        IconFieldSpec('icon', 'Icon', initial: 'check'),
         TextFieldSpec('title', 'Title', maxLength: 80, required: true, translationRequired: true),
         TextFieldSpec('body', 'Text', maxLength: 400, multiline: true),
       ]),
@@ -503,12 +654,17 @@ class BlockRegistry {
       }, omitDefault: true),
       ChoiceFieldSpec('limit', 'Images shown', options: ['all', '3', '4', '6', '8', '9', '12'], initial: 'all', optionLabels: {'all': 'All chosen images'}, omitDefault: true),
       ToggleFieldSpec('showCaptions', 'Show captions', initial: true, omitDefault: true),
-      ItemsFieldSpec('images', 'Images', itemLabel: 'Image', minItems: 1, maxItems: CustomPage.maxGridImages, itemFields: [
-        MediaFieldSpec('mediaId', 'Image', required: true),
+      ...AlbumSource.blockFields,
+      // At least one image, by hand or from albums; an empty slot beside
+      // them is unused (AlbumSource.imageProblems).
+      ItemsFieldSpec('images', 'Images', itemLabel: 'Image', newItems: 1, maxItems: CustomPage.maxGridImages, badge: AlbumSource.badge, itemFields: [
+        MediaFieldSpec('mediaId', 'Image'),
         TextFieldSpec('caption', 'Caption (optional, replaces the library’s)', maxLength: 300, omitDefault: true),
         LinkFieldSpec('target', 'Link (optional; otherwise the image opens larger)', omitDefault: true),
+        AlbumSource.itemField,
       ]),
     ],
+    extraChecks: AlbumSource.imageProblems,
   );
 
   /// An editorial composition of 1–12 photographs ([AsymmetricGallery]:
@@ -740,16 +896,41 @@ class BlockRegistry {
     type: 'divider',
     version: 1,
     label: 'Divider',
-    description: 'A thin line with space around it',
-    styleKeys: ['spacing', 'lineColor', 'width'],
-    fields: [ChoiceFieldSpec('size', 'Space', options: ['small', 'medium', 'large'], initial: 'medium')],
+    description: 'A line between content: solid, dashed or dotted',
+    // Its colour is the Design panel's line colour; its horizontal padding
+    // the Design panel's padding (as every block's).
+    styleKeys: ['spacing', 'lineColor', 'width', 'align'],
+    fields: [
+      ChoiceFieldSpec('size', 'Space', options: ['small', 'medium', 'large'], initial: 'medium'),
+      // Every setting below was added later and is stored only when set: a
+      // divider without them is drawn exactly as before (DividerLine).
+      ChoiceFieldSpec(DividerLine.style, 'Style',
+          options: DividerLine.styles, initial: 'solid', optionLabels: {'solid': 'Solid', 'dashed': 'Dashed', 'dotted': 'Dotted'}, omitDefault: true, group: 'Line'),
+      NumberFieldSpec('thickness', 'Thickness on desktop', min: 1, max: 16, unit: 'px', automaticLabel: 'Automatic (1 px)', group: 'Line'),
+      NumberFieldSpec('tabletThickness', 'Thickness on tablets', min: 1, max: 16, unit: 'px', automaticLabel: 'Automatic (as on desktop)', group: 'Line'),
+      NumberFieldSpec('mobileThickness', 'Thickness on phones', min: 1, max: 16, unit: 'px', automaticLabel: 'Automatic (as on tablets)', group: 'Line'),
+      NumberFieldSpec('lineWidth', 'Width on desktop', min: 5, max: 100, unit: '%', automaticLabel: 'Automatic (full width)', group: 'Line'),
+      NumberFieldSpec('tabletLineWidth', 'Width on tablets', min: 5, max: 100, unit: '%', automaticLabel: 'Automatic (as on desktop)', group: 'Line'),
+      NumberFieldSpec('mobileLineWidth', 'Width on phones', min: 5, max: 100, unit: '%', automaticLabel: 'Automatic (as on tablets)', group: 'Line'),
+      NumberFieldSpec('spaceAbove', 'Space above', min: 0, max: 200, unit: 'px', automaticLabel: 'Automatic (from Space)', group: 'Spacing'),
+      NumberFieldSpec('spaceBelow', 'Space below', min: 0, max: 200, unit: 'px', automaticLabel: 'Automatic (from Space)', group: 'Spacing'),
+    ],
   );
 
   /// Every known block type, in the order the "Add block" menus show.
-  static final List<BlockDefinition> all = [text, image, columns, cta, buttons, gallery, asymmetricGallery, divider, section, hero, cards, features, pageHeader, notice, galleryFeed, eventsFeed, announcementsFeed, form, map, accreditations, testimonials, html, embed];
+  static final List<BlockDefinition> all = [text, icon, image, columns, cta, buttons, gallery, asymmetricGallery, divider, section, hero, cards, features, pageHeader, notice, galleryFeed, eventsFeed, announcementsFeed, form, map, accreditations, testimonials, html, embed, row];
 
-  /// The block types that can go inside a section or columns.
+  /// Every block type the page's own "Add block" menus offer (a Columns /
+  /// Row goes only inside a section's column).
+  static List<BlockDefinition> get topLevel => [for (final d in all) if (d.type != rowType) d];
+
+  /// The content block types: those that can go inside any container's
+  /// column.
   static List<BlockDefinition> get nestable => [for (final d in all) if (!containerTypes.contains(d.type)) d];
+
+  /// The block types a column of a [container] (type) can take: Columns /
+  /// Row first in a section's column, then the content blocks.
+  static List<BlockDefinition> nestableIn(String container) => [if (container == 'section') row, ...nestable];
 
   static BlockDefinition? definition(String type) {
     for (final d in all) {
@@ -808,7 +989,7 @@ class BlockRegistry {
     for (final f in definition.fields) {
       if (f is ItemsFieldSpec) {
         values[f.key] = [
-          for (var i = 0; i < f.minItems; i++) BlockItem(id: BlockIds.item(), values: {for (final g in f.itemFields) g.key: g.newValue}),
+          for (var i = 0; i < f.newItems; i++) BlockItem(id: BlockIds.item(), values: {for (final g in f.itemFields) g.key: g.newValue}),
         ];
       }
       if (f is ColumnsFieldSpec) {
@@ -875,6 +1056,75 @@ class BlockRegistry {
       values[f.key] = [for (final c in block.columns(f.key)) c.copyWith(blocks: withoutHidden(c.blocks))];
     }
     return block.copyWith(values: values);
+  }
+
+  /// What a published page stores: [blocks] [withoutHidden], and each
+  /// Photo gallery's and Asymmetric gallery's empty image slots (no image
+  /// chosen; they show nothing) left out, at every depth. The images left
+  /// keep their order, ids and settings; album choices are unchanged. The
+  /// draft keeps everything, [blocks] are not changed.
+  static List<WebsiteBlock> forVisitors(List<WebsiteBlock> blocks) => [for (final b in withoutHidden(blocks)) _withoutEmptySlots(b)];
+
+  static WebsiteBlock _withoutEmptySlots(WebsiteBlock block) {
+    if (block is! StructuredBlock) return block;
+    var out = block;
+    if (AlbumSource.appliesTo(block.type)) {
+      final items = block.items('images');
+      final kept = [for (final i in items) if (!AlbumSource.isBlank(i)) i];
+      if (kept.length != items.length && _sameImageOrder(block.type, items, kept)) {
+        out = out.withValue('images', List<BlockItem>.unmodifiable(kept));
+      }
+    }
+    final containers = out.definition.fields.whereType<ColumnsFieldSpec>();
+    if (containers.isEmpty) return out;
+    final values = Map<String, Object?>.of(out.values);
+    for (final f in containers) {
+      values[f.key] = [for (final c in out.columns(f.key)) c.copyWith(blocks: [for (final b in c.blocks) _withoutEmptySlots(b)])];
+    }
+    return out.copyWith(values: values);
+  }
+
+  /// Whether the images of [all] are in the same order with the empty
+  /// slots taken out ([kept]) on every screen. The Photo gallery shows its
+  /// list in order; an Asymmetric gallery image with no position of its own
+  /// takes its place in the list, which an empty slot before it moves (rare:
+  /// only beside images with positions set). Then the slots are kept: they
+  /// still show nothing.
+  static bool _sameImageOrder(String type, List<BlockItem> all, List<BlockItem> kept) {
+    if (type != AsymmetricGallery.type) return true;
+    List<String> order(List<BlockItem> items, String screen) {
+      final list = [for (final (i, item) in items.indexed) if (!AlbumSource.isBlank(item)) (item: item, index: i)];
+      list.sort((a, b) {
+        final byOrder = AsymmetricGallery.orderOf(a.item, screen, a.index).compareTo(AsymmetricGallery.orderOf(b.item, screen, b.index));
+        return byOrder != 0 ? byOrder : a.index.compareTo(b.index);
+      });
+      return [for (final e in list) e.item.id];
+    }
+
+    return AsymmetricGallery.screens.every((s) => listEquals(order(all, s), order(kept, s)));
+  }
+
+  /// What stops [blocks] (brought up to date from their albums) being
+  /// published beyond [validate]: each shown Photo gallery or Asymmetric
+  /// gallery with no image ([AlbumSource.publishProblem]), located as
+  /// [validate] does. Hidden blocks aren't published, so aren't checked.
+  static List<String> publishProblems(List<WebsiteBlock> blocks) {
+    final errors = <String>[];
+    void walk(List<WebsiteBlock> list, String prefix) {
+      for (final (i, block) in list.indexed) {
+        if (block is! StructuredBlock || block.hidden) continue;
+        final where = '$prefix${prefix.isEmpty ? 'Block' : 'block'} ${i + 1} (${block.definition.label})';
+        if (AlbumSource.publishProblem(block) case final p?) errors.add('$where: $p.');
+        for (final f in block.definition.fields.whereType<ColumnsFieldSpec>()) {
+          for (final (ci, c) in block.columns(f.key).indexed) {
+            walk(c.blocks, '$where, column ${ci + 1}, ');
+          }
+        }
+      }
+    }
+
+    walk(blocks, '');
+    return errors;
   }
 
   /// Every image id [blocks] use (for the library's usage and publishing
@@ -944,11 +1194,23 @@ class BlockRegistry {
         return [if (!field.options.contains(value)) '“$value” is not a ${label.toLowerCase()} option'];
       case ToggleFieldSpec():
         return const [];
+      case IconFieldSpec():
+        // A well-formed id this version doesn't know is kept (drawn as nothing).
+        final id = value as String? ?? '';
+        if (id == IconFieldSpec.none) return [if (!field.allowNone) 'choose ${label.toLowerCase() == 'icon' ? 'an icon' : label.toLowerCase()}'];
+        return [if (!WebsiteIcons.isWellFormed(id)) '“$id” is not an icon name'];
       case NumberFieldSpec():
         final n = value as int?;
         return [if (n != null && !field.allows(n)) '${label[0].toLowerCase()}${label.substring(1)} must be from ${field.min} to ${field.max}${field.unit.isEmpty ? '' : ' ${field.unit}'}'];
       case ColorFieldSpec():
         return [if (!ColorFieldSpec.isValid(value)) '“$value” is not a ${label.toLowerCase()} option'];
+      case IdListFieldSpec():
+        final ids = value as List<String>? ?? const [];
+        return [
+          if (ids.length > field.maxIds) 'at most ${field.maxIds} ${label.toLowerCase()}',
+          if (ids.any((id) => !IdListFieldSpec.idPattern.hasMatch(id))) '${label.toLowerCase()}: an id can’t be read',
+          if (ids.toSet().length != ids.length) '${label.toLowerCase()}: one is listed twice',
+        ];
       case FormRefFieldSpec():
         final id = (value as String? ?? '').trim();
         if (id.isEmpty) return [if (field.required) 'choose a form'];
@@ -978,8 +1240,12 @@ class BlockRegistry {
   /// Every problem that would stop [blocks] being saved, each starting with
   /// where it is ("Block 3 (Text): …", "Block 2 (Columns), column 1, block
   /// 1 (Image): …"): each block's fields, ids unique across the page
-  /// (blocks, items and columns), nesting depth, counts and size.
-  static List<String> validate(List<WebsiteBlock> blocks, {BlockLimits limits = BlockLimits.defaults}) {
+  /// (blocks, items and columns), nesting depth, counts and size. By
+  /// default against [BlockLimits.safety], the ceiling every page is held
+  /// to; the school's own page limit is checked where pages are saved
+  /// (WebsiteContentAdminService), since a page that already exceeds a
+  /// lowered limit may still be saved as long as it doesn't grow.
+  static List<String> validate(List<WebsiteBlock> blocks, {BlockLimits limits = BlockLimits.safety}) {
     final errors = <String>[];
     final ids = <String>{};
     var count = 0;
@@ -996,6 +1262,7 @@ class BlockRegistry {
         final where = '$prefix${prefix.isEmpty ? 'Block' : 'block'} ${i + 1} ($label)';
         claim(block.id, where);
         if (block is! StructuredBlock) continue;
+        if (depth == 0 && block.type == rowType) errors.add('$where: a Columns / Row block goes inside a section’s column.');
         for (final p in blockProblems(block)) {
           errors.add('$where: $p.');
         }
@@ -1026,4 +1293,89 @@ class BlockRegistry {
     if (bytes > limits.maxDocumentBytes) errors.add('This page is too large (${(bytes / 1024).ceil()} KB; at most ${limits.maxDocumentBytes ~/ 1024} KB). Split it into more pages.');
     return errors;
   }
+}
+
+/// A Text block's optional icon: its stored keys and how they are read.
+abstract final class TextIcon {
+  static const show = 'showIcon';
+  static const icon = 'icon';
+  static const position = 'iconPosition';
+  static const size = 'iconSize';
+  static const color = 'iconColor';
+  static const gap = 'iconGap';
+  static const positions = ['before', 'after', 'above'];
+  static const defaultSize = 32;
+  static const defaultGap = 12;
+
+  /// The icon settings are shown once the icon is turned on.
+  static bool shown(Map<String, Object?> values, Map<String, Object?> block) => values[show] == true;
+
+  /// Whether [block] (a Text block) shows an icon visitors can see: turned
+  /// on, with an icon this version has.
+  static bool showsIcon(StructuredBlock block) => block.flag(show) && WebsiteIcons.lookup(block.string(icon)) != null;
+}
+
+/// The Icon block's type and defaults.
+abstract final class IconBlock {
+  static const type = 'icon';
+  static const defaultSize = 48;
+  static const defaultPaddingWithBackground = 16;
+
+  /// Its size on [screen] (`desktop`, `tablet`, `mobile`): a screen without
+  /// its own size follows the larger one (phones the tablet, tablets
+  /// desktop).
+  static int sizeOn(StructuredBlock block, String screen) {
+    int? n(String key) => block.values[key] as int?;
+    final desktop = n('size') ?? defaultSize;
+    final tablet = n('tabletSize') ?? desktop;
+    return switch (screen) { 'mobile' => n('mobileSize') ?? tablet, 'tablet' => tablet, _ => desktop };
+  }
+}
+
+/// The block-wide icon size and colour of a Cards or Features block (each
+/// optional: unset, the icons look as they always did).
+abstract final class ListIcons {
+  static const size = 'iconSize';
+  static const color = 'iconColor';
+}
+
+/// The Divider block's line: how its settings are read. Every value is
+/// clamped to its range, an unknown style is solid, so a malformed one
+/// still draws a sensible line.
+abstract final class DividerLine {
+  static const style = 'lineStyle';
+  static const styles = ['solid', 'dashed', 'dotted'];
+  static const _keys = ['thickness', 'tabletThickness', 'mobileThickness', 'lineWidth', 'tabletLineWidth', 'mobileLineWidth', 'spaceAbove', 'spaceBelow'];
+
+  /// Whether [block] uses any setting added after the first version (or an
+  /// alignment): otherwise it is drawn exactly as before.
+  static bool customised(StructuredBlock block) =>
+      block.values.containsKey(style) && block.values[style] != 'solid' || _keys.any((k) => block.values[k] != null) || block.style['align'] != null;
+
+  static String styleOf(StructuredBlock block) => styles.contains(block.values[style]) ? block.values[style] as String : 'solid';
+
+  /// The space its `size` gives above and below (as before).
+  static double sizeSpace(StructuredBlock block) => switch (block.string('size')) { 'small' => 4.0, 'large' => 32.0, _ => 16.0 };
+
+  static int? _n(StructuredBlock b, String k) => b.values[k] is int ? b.values[k] as int : null;
+
+  /// Thickness (px) on [screen]: a screen without its own follows the larger one.
+  static double thicknessOn(StructuredBlock b, String screen) {
+    final desktop = _n(b, 'thickness') ?? 1;
+    final tablet = _n(b, 'tabletThickness') ?? desktop;
+    return (switch (screen) { 'mobile' => _n(b, 'mobileThickness') ?? tablet, 'tablet' => tablet, _ => desktop }).clamp(1, 16).toDouble();
+  }
+
+  /// Width (% of the space) on [screen], as [thicknessOn].
+  static double widthOn(StructuredBlock b, String screen) {
+    final desktop = _n(b, 'lineWidth') ?? 100;
+    final tablet = _n(b, 'tabletLineWidth') ?? desktop;
+    return (switch (screen) { 'mobile' => _n(b, 'mobileLineWidth') ?? tablet, 'tablet' => tablet, _ => desktop }).clamp(5, 100).toDouble();
+  }
+
+  static double spaceAbove(StructuredBlock b) => (_n(b, 'spaceAbove')?.clamp(0, 200).toDouble()) ?? sizeSpace(b);
+  static double spaceBelow(StructuredBlock b) => (_n(b, 'spaceBelow')?.clamp(0, 200).toDouble()) ?? sizeSpace(b);
+
+  /// Its alignment: its own, else centred.
+  static String alignOf(StructuredBlock b) => switch (b.style['align']) { 'start' => 'start', 'end' => 'end', _ => 'center' };
 }

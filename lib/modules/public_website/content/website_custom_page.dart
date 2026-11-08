@@ -256,10 +256,14 @@ class CustomPage {
 
   String get route => PublicRoutes.customPage(slug);
 
-  /// Every image the page shows.
+  /// Every image the page shows. A page made of blocks counts its blocks
+  /// only: its stored sections are just a copy of them for older versions
+  /// of the app (rewritten from the blocks on every save), which can be out
+  /// of date while the blocks are being edited.
   List<String> get referencedMedia => {
         ?heroMediaId,
-        for (final s in sections) ...s.referencedMedia,
+        if (blocks == null)
+          for (final s in sections) ...s.referencedMedia,
         ...BlockRegistry.referencedMedia(blocks ?? const []),
       }.toList();
 
@@ -314,9 +318,10 @@ class CustomPage {
   /// Same visible content as [other] (ignores timestamps and archiving).
   bool sameContentAs(CustomPage? other) => other != null && jsonEncode(toContentMap()) == jsonEncode(other.toContentMap());
 
-  /// What publishing this page stores: its hidden blocks left out
-  /// ([BlockRegistry.withoutHidden]); the draft keeps them.
-  CustomPage get forVisitors => blocks == null ? this : copyWith(blocks: () => BlockRegistry.withoutHidden(blocks!));
+  /// What publishing this page stores: its hidden blocks and galleries'
+  /// empty image slots left out ([BlockRegistry.forVisitors]); the draft
+  /// keeps them.
+  CustomPage get forVisitors => blocks == null ? this : copyWith(blocks: () => BlockRegistry.forVisitors(blocks!));
 
   /// Whether publishing this draft would leave [live] as it is.
   bool samePublishedContentAs(CustomPage? live) => forVisitors.sameContentAs(live?.forVisitors);

@@ -237,6 +237,42 @@ final class ToggleFieldSpec extends FieldSpec {
   Object? serialize(Object? value) => value as bool? ?? initial;
 }
 
+/// An icon of the website's icon library (`WebsiteIcons`), stored as its
+/// stable id (never drawn SVG or HTML). An id this version doesn't know
+/// but that is well formed (a newer app's icon) is kept as stored and
+/// drawn as nothing; only a malformed one is reported.
+final class IconFieldSpec extends FieldSpec {
+  const IconFieldSpec(super.key, super.label, {required this.initial, this.initialForNew, this.allowNone = false, super.omitDefault, super.group, super.shownWhen});
+
+  /// The stored value meaning "no icon" ([allowNone]).
+  static const none = 'none';
+
+  /// The value when absent.
+  final String initial;
+
+  /// What a newly added block or item starts with, when it differs from
+  /// [initial] (which stays the value of those saved without the field).
+  final String? initialForNew;
+
+  /// Whether "no icon" ([none]: nothing drawn) can be chosen.
+  final bool allowNone;
+
+  @override
+  Object? get defaultValue => initial;
+
+  @override
+  Object? get newValue => initialForNew ?? initial;
+
+  @override
+  bool accepts(Object? raw) => raw is String;
+
+  @override
+  Object? parse(Object? raw) => raw as String;
+
+  @override
+  Object? serialize(Object? value) => (value as String? ?? initial).trim();
+}
+
 /// A colour chosen for one thing (an accreditation's card): [automatic]
 /// (the block's own look; not stored when [omitDefault]), [transparent]
 /// (whatever is behind it shows), a palette colour (`token:<id>`, which
@@ -270,10 +306,43 @@ final class ColorFieldSpec extends FieldSpec {
   Object? serialize(Object? value) => value as String? ?? automatic;
 }
 
+/// A list of ids (for example the albums a gallery takes images from):
+/// plain strings, in order, without repeats. Never shown in the generic
+/// form (it has its own editor); not stored while empty.
+final class IdListFieldSpec extends FieldSpec {
+  const IdListFieldSpec(super.key, super.label, {required this.maxIds}) : super(omitDefault: true, shownWhen: _never);
+
+  static bool _never(Map<String, Object?> values, Map<String, Object?> block) => false;
+
+  /// The most ids it may hold.
+  final int maxIds;
+
+  /// What an id may look like (Firestore's automatic ids and this app's).
+  static final idPattern = RegExp(r'^[A-Za-z0-9_-]{1,64}$');
+
+  @override
+  Object? get defaultValue => const <String>[];
+
+  /// A list of strings only: anything else is kept as stored, untouched.
+  @override
+  bool accepts(Object? raw) => raw is List && raw.every((e) => e is String);
+
+  @override
+  Object? parse(Object? raw) => List<String>.unmodifiable((raw as List).cast<String>());
+
+  @override
+  Object? serialize(Object? value) => [...?(value as List<String>?)];
+}
+
 /// A list of items (buttons, gallery images, cards …), each with a stable
 /// id and its own [itemFields].
 final class ItemsFieldSpec extends FieldSpec {
-  const ItemsFieldSpec(super.key, super.label, {required this.itemLabel, required this.itemFields, this.minItems = 0, required this.maxItems, this.badge});
+  const ItemsFieldSpec(super.key, super.label, {required this.itemLabel, required this.itemFields, this.minItems = 0, required this.maxItems, this.badge, int? newItems}) : _newItems = newItems;
+
+  final int? _newItems;
+
+  /// How many empty items a new block starts with ([minItems] unless set).
+  int get newItems => _newItems ?? minItems;
 
   /// A short mark the editor shows beside item [index] of [items] (its
   /// role, e.g. "Feature image"), if any.

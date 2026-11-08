@@ -65,7 +65,7 @@ class _Gateway implements FormSubmissionGateway {
 void main() {
   Finder key(String k) => find.byKey(Key(k));
 
-  Future<_Gateway> pump(WidgetTester tester, PublicWebsiteForm form, {double width = 900, bool interactive = true}) async {
+  Future<_Gateway> pump(WidgetTester tester, PublicWebsiteForm form, {double width = 900, bool interactive = true, Map<String, WebsiteMedia> media = const {}}) async {
     final gateway = _Gateway();
     tester.view.physicalSize = Size(width, 3000);
     tester.view.devicePixelRatio = 1;
@@ -79,7 +79,7 @@ void main() {
       child: MaterialApp(
         home: Scaffold(
           body: SingleChildScrollView(
-            child: Padding(padding: const EdgeInsets.all(16), child: PublicWebsiteFormView(form: form, language: PublicLanguage.english, interactive: interactive, media: const {})),
+            child: Padding(padding: const EdgeInsets.all(16), child: PublicWebsiteFormView(form: form, language: PublicLanguage.english, interactive: interactive, media: media)),
           ),
         ),
       ),
@@ -176,6 +176,56 @@ void main() {
   });
 
   // ------------------------------------------------------------ public form
+  group('cover image (optional)', () {
+    const coverId = 'media_cover_0001';
+    final cover = WebsiteMedia.fromMap(coverId, {
+      'status': 'published',
+      'consentConfirmed': true,
+      'url': 'https://storage.example.test/m.jpg',
+      'alt': {'en': 'Children reading'},
+    });
+    PublicWebsiteForm described({String? coverMediaId}) => PublicWebsiteForm.tryParse({
+          ..._form([_field('f_name0001', FormFieldType.shortText, 'Name')]).toMap(),
+          'description': {'en': 'Tell us about your child.', 'ta': ''},
+          'coverMediaId': ?coverMediaId,
+        })!;
+
+    for (final (screen, width) in [('desktop', 1280.0), ('tablet', 800.0), ('phone', 390.0)]) {
+      testWidgets('$screen: without one, the title and description come first, with no image or blank space', (tester) async {
+        await pump(tester, described(), width: width);
+        expect(key('website-form-cover'), findsNothing);
+        expect(key('website-form-cover-missing'), findsNothing);
+        expect(find.byType(Image), findsNothing, reason: 'no empty or broken image');
+        final view = tester.getRect(find.byType(PublicWebsiteFormView));
+        final title = tester.getRect(key('website-form-title'));
+        final description = tester.getRect(key('website-form-description'));
+        expect(title.top - view.top, lessThan(1), reason: 'nothing above the title');
+        expect(description.top, greaterThanOrEqualTo(title.bottom));
+        expect(description.top - title.bottom, lessThanOrEqualTo(8), reason: 'the usual gap only');
+        expect(tester.takeException(), isNull);
+      });
+
+      testWidgets('$screen: with one, the image is shown above the title, as before', (tester) async {
+        await pump(tester, described(coverMediaId: coverId), width: width, media: {coverId: cover});
+        expect(key('website-form-cover'), findsOneWidget);
+        final view = tester.getRect(find.byType(PublicWebsiteFormView));
+        final image = tester.getRect(key('website-form-cover'));
+        final title = tester.getRect(key('website-form-title'));
+        expect((image.left, image.right), (view.left, view.right), reason: 'full width');
+        expect(image.height, moreOrLessEquals(image.width * 7 / 16, epsilon: 1), reason: '16:7, unchanged');
+        expect(title.top - image.bottom, moreOrLessEquals(16, epsilon: 1), reason: 'the same gap above the title');
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('a chosen cover that visitors can’t see: no placeholder on the website, title first', (tester) async {
+      await pump(tester, described(coverMediaId: coverId), width: 390);
+      expect(key('website-form-cover'), findsNothing);
+      expect(key('website-form-cover-missing'), findsNothing, reason: 'the placeholder is for the builder only');
+      expect(tester.getRect(key('website-form-title')).top - tester.getRect(find.byType(PublicWebsiteFormView)).top, lessThan(1));
+    });
+  });
+
   group('long text', () {
     testWidgets('a growing answer box reaches 10 rows, as before, or its own rows if more', (tester) async {
       final plain = _field('f_plain001', FormFieldType.longText, 'Message');

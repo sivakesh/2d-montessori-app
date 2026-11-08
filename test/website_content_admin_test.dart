@@ -6,7 +6,7 @@
 //   (no original file name, no uploader identity on the publicly readable
 //   record; who did what goes to the admin-only audit subcollection), with
 //   a display image and a thumbnail and long-lived cache headers.
-// - Publishing needs English alt text and consent; withdrawing consent or
+// - Publishing needs consent (alt text is optional); withdrawing consent or
 //   replacing the file takes an image off the site; an image a live page
 //   shows can't be hidden or deleted.
 // - Page drafts are never public; publishing copies only the visitor-facing
@@ -225,16 +225,17 @@ void main() {
   });
 
   group('publish, hide, consent', () {
-    test('publishing needs English alt text and consent', () async {
-      final noAlt = await upload(alt: '');
-      await expectLater(service.publishMedia(requesterRole: 'admin', actor: _admin, mediaId: noAlt.id), throwsA(isA<WebsiteContentException>()));
+    test('publishing needs consent; alt text is optional', () async {
       final noConsent = await upload(consent: false);
       await expectLater(service.publishMedia(requesterRole: 'admin', actor: _admin, mediaId: noConsent.id), throwsA(isA<WebsiteContentException>()));
       expect(await publicRepository().publishedMedia(), isEmpty);
 
+      // Alt text is optional (the media library upgrade); consent still isn't.
+      final noAlt = await upload(alt: '');
+      await service.publishMedia(requesterRole: 'admin', actor: _admin, mediaId: noAlt.id);
       final ok = await upload(publish: true);
       expect(ok.status, WebsiteMediaStatus.published);
-      expect((await publicRepository().publishedMedia()).map((m) => m.id), [ok.id]);
+      expect((await publicRepository().publishedMedia()).map((m) => m.id).toSet(), {noAlt.id, ok.id});
     });
 
     test('hiding takes an image off the website; it can be published again', () async {
@@ -266,10 +267,9 @@ void main() {
       expect(await publicRepository().publishedMedia(), isEmpty);
     });
 
-    test('a published image keeps English alt text', () async {
+    test('a published image’s alt text can be cleared (optional); it stays published', () async {
       final media = await upload(publish: true);
-      await expectLater(
-        service.updateMediaDetails(
+      await service.updateMediaDetails(
           requesterRole: 'admin',
           actor: _admin,
           mediaId: media.id,
@@ -280,9 +280,10 @@ void main() {
           focalX: 0.5,
           focalY: 0.5,
           consentConfirmed: true,
-        ),
-        throwsA(isA<WebsiteContentException>()),
-      );
+        );
+      final saved = (await service.getMedia(requesterRole: 'admin', mediaId: media.id))!;
+      expect(saved.status, WebsiteMediaStatus.published);
+      expect(saved.alt.en, isEmpty);
     });
 
     test('replacing the file keeps the id, needs fresh consent, unpublishes and removes the old files', () async {

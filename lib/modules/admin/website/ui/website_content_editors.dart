@@ -110,6 +110,7 @@ class _WebsiteMediaEditorScreenState extends ConsumerState<WebsiteMediaEditorScr
   late GalleryCategory _category = _media.category;
   late bool _inGallery = _media.inGallery;
   late bool _consent = _media.consentConfirmed;
+  late bool _decorative = _media.decorative;
   late double _focalX = _media.focalX;
   late double _focalY = _media.focalY;
   bool _busy = false;
@@ -131,6 +132,7 @@ class _WebsiteMediaEditorScreenState extends ConsumerState<WebsiteMediaEditorScr
     _category = media.category;
     _inGallery = media.inGallery;
     _consent = media.consentConfirmed;
+    _decorative = media.decorative;
     _focalX = media.focalX;
     _focalY = media.focalY;
   }
@@ -160,6 +162,7 @@ class _WebsiteMediaEditorScreenState extends ConsumerState<WebsiteMediaEditorScr
         focalX: _focalX,
         focalY: _focalY,
         consentConfirmed: _consent,
+        decorative: _decorative,
       );
 
   /// Saves the details; when this unticks consent, first confirms what that
@@ -309,8 +312,17 @@ class _WebsiteMediaEditorScreenState extends ConsumerState<WebsiteMediaEditorScr
           key: const Key('website-media-alt-en'),
           controller: _altEn,
           maxLength: WebsiteContentAdminService.maxAltLength,
-          decoration: websiteField('Alt text (English) — required to publish',
-              helper: 'Describe what the photograph shows for people using screen readers, e.g. “Children arranging coloured beads on a mat”. Do not include names.'),
+          decoration: websiteField('Alt text (English, optional, recommended)',
+              helper: 'Describe what the photograph shows for people using screen readers, e.g. “Children arranging coloured beads on a mat”. Do not include names. '
+                  'Leave it empty only if the image is decorative or described by the text around it.'),
+        ),
+        SwitchListTile(
+          key: const Key('website-media-decorative'),
+          contentPadding: EdgeInsets.zero,
+          value: _decorative,
+          onChanged: (value) => setState(() => _decorative = value),
+          title: const Text('Decorative image'),
+          subtitle: const Text('Screen readers skip it. Any alt text is kept but not read. The image is shown as usual.'),
         ),
         const SizedBox(height: 8),
         if (multilingualEditing)

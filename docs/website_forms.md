@@ -74,11 +74,12 @@ There are four starter templates: **Admission Enquiry**, **General Enquiry**, **
 - **Version history:** each activation of a changed form writes a record in `website_form_versions`. The builder's Form settings list them (version, title, number of questions, when and by whom).
 - **Delete** (see [Deleting a form](#deleting-a-form)).
 
-### Required title, description and cover image
+### Required title and description; optional cover image
 
 - **Drafts may be incomplete.** Saving refuses only malformed data: unknown types, unreadable settings, IDs that aren't IDs, and anything over the limits.
-- **Activation needs all three**, in English: a title, a description (shown under the title), and a cover image.
-- **Every image the form uses must be eligible:** the cover and every image block. It must exist in the media library, be published with consent confirmed and a file, and have English alt text (`WebsiteFormsService.imageProblem`). Otherwise activation is refused, with the reason.
+- **Activation needs a title and a description** (shown under the title), in English.
+- **The cover image is optional.** Forms can be saved, previewed, activated and shown on the website without one; the visitor copy then has an empty `coverMediaId`. Without a cover, the form starts with its title and description: no image box, broken-image icon or blank space. With one, it is shown above the title as before (full width, 16:7). Choose, change or remove it in Form settings (*Cover image (optional)*). Existing cover images are kept, and the library card no longer warns about forms without one.
+- **Every image the form uses must be eligible:** the cover (when one is chosen) and every image block. It must exist in the media library, be published with consent confirmed and a file, and have English alt text (`WebsiteFormsService.imageProblem`). Otherwise activation is refused, with the reason.
 - **A previously eligible image later hidden, deleted or with consent withdrawn:**
   - Visitors see the form without that image; the public site only resolves published, consented images.
   - The library card warns "Cover image not shown to visitors", and the builder names the problem.
@@ -489,8 +490,8 @@ These aren't implemented. Each fits the current model without a migration.
 ### Visual builder, metadata, attachments and deletion
 
 11. Open a form in the builder at desktop width, then below 840 px. Check the three panels, and the Form / Structure / Edit tabs.
-12. Clear the description and cover image, and check that activation is blocked with the reasons.
-13. Choose a cover image. Try a draft, hidden or consent-withdrawn image: each is named as not visible. Activate with a published one.
+12. Clear the description and check that activation is blocked with the reason. Remove the cover image and check that the form still activates, and that the website shows the title and description first with no empty image space (desktop, tablet and phone).
+13. Choose a cover image. Try a draft, hidden or consent-withdrawn image: each is named as not visible. Activate with a published one, and check it shows above the title.
 14. Add a section heading, a text, an image and a divider between questions. Drag them, and use Move up, Move down, Duplicate and Remove. Check the canvas updates live.
 15. Set help text, a custom error message, a minimum length, a number range and a date range. Preview, and check each message.
 16. Add a document upload field. Choose file types, the size and the count. On the website it is disabled, with the "not available yet" note.

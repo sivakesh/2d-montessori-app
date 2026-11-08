@@ -8,7 +8,6 @@ import '../../../../../core/theme/app_colors.dart';
 import '../../../../public_website/content/blocks/asymmetric_gallery.dart';
 import '../../../../public_website/content/blocks/testimonials.dart';
 import '../../../../public_website/content/blocks/block_ids.dart';
-import '../../../../public_website/content/blocks/block_limits.dart';
 import '../../../../public_website/content/blocks/block_spacing.dart';
 import '../../../../public_website/content/blocks/block_registry.dart';
 import '../../../../public_website/content/blocks/custom_html.dart';
@@ -26,9 +25,15 @@ import '../../../../forms/models/website_form.dart';
 import '../../../../forms/public/public_forms_repository.dart';
 import '../website_content_editors.dart';
 import '../website_content_screen.dart';
+import '../../../../public_website/content/blocks/album_source.dart';
+import '../../data/album_galleries.dart';
+import '../../data/website_albums_service.dart';
 import 'block_list_ops.dart';
+import '../../../../public_website/content/blocks/website_icons.dart';
 import 'website_color_field.dart';
+import 'website_gallery_albums.dart';
 import 'website_size_field.dart';
+import 'website_icon_picker.dart';
 import 'website_spacing_field.dart';
 
 /// What a page with no blocks shows: what to do first, and buttons for the
@@ -122,6 +127,11 @@ String blockSummary(WebsiteBlock block) {
   return switch (block.type) {
     'image' => block.string('mediaId').isEmpty ? 'No image chosen' : 'Image',
     'columns' => '${block.columns('columns').length} columns (${block.string('layout')})',
+    'row' => () {
+        final n = block.columns('columns').length;
+        final name = block.text('name').en.trim();
+        return '${name.isEmpty ? '' : '$name · '}$n inner column${n == 1 ? '' : 's'}, ${_blocksCount(BlockRegistry.flatten([block]).length - 1)} inside';
+      }(),
     'buttons' => '${block.items('buttons').length} button(s)',
     'gallery' => '${block.items('images').length} image(s)',
     'asymmetric_gallery' =>
@@ -137,7 +147,8 @@ String blockSummary(WebsiteBlock block) {
         '' => 'No HTML yet',
         final t => t.length > 60 ? '${t.substring(0, 60)}…' : t,
       },
-    'divider' => 'Space: ${block.string('size')}',
+    'divider' => '${switch (DividerLine.styleOf(block)) { 'dashed' => 'Dashed', 'dotted' => 'Dotted', _ => 'Solid' }} line · Space: ${block.string('size')}',
+    'icon' => WebsiteIcons.lookup(block.string('icon'))?.label ?? 'Icon “${block.string('icon')}” isn’t available',
     _ => '',
   };
 }
@@ -145,8 +156,10 @@ String blockSummary(WebsiteBlock block) {
 /// An icon for a block type (unsupported blocks get a lock).
 IconData blockIcon(WebsiteBlock block) => switch (block is StructuredBlock ? block.type : '') {
       'text' => Icons.notes,
+      'icon' => Icons.emoji_symbols_outlined,
       'image' => Icons.image_outlined,
       'columns' => Icons.view_column_outlined,
+      'row' => Icons.view_week_outlined,
       'cta' => Icons.campaign_outlined,
       'buttons' => Icons.smart_button_outlined,
       'gallery' => Icons.photo_library_outlined,
@@ -189,8 +202,22 @@ class WebsiteBlockForm extends StatelessWidget {
     required this.generation,
     required this.onChanged,
     this.onSelectNested,
+    this.onAddToColumn,
+    this.screen = 'desktop',
     this.design = SiteDesign.defaults,
+    this.albums,
   });
+
+  /// The school's albums, for a gallery's image source (null: they
+  /// couldn't be read, or aren't offered here).
+  final List<WebsiteAlbum>? albums;
+
+  /// Adds a new block of a type to column [column] of this section or
+  /// columns block (the page editor checks the page's limits).
+  final void Function(int column, BlockDefinition definition)? onAddToColumn;
+
+  /// The screen size being previewed (`desktop`, `tablet`, `mobile`).
+  final String screen;
 
   final StructuredBlock block;
 
@@ -207,10 +234,30 @@ class WebsiteBlockForm extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final prefix = 'website-block-${block.id}';
+    final container = containerTypes.contains(block.type);
+    final gallery = AlbumSource.appliesTo(block.type);
+    // A gallery remembers the album images an edit removes, so updating
+    // from its albums doesn't bring them back.
+    void emit(WebsiteBlock b) => onChanged(gallery && b is StructuredBlock ? AlbumGalleries.rememberRemovals(block, b) : b);
+    // A container's columns are edited together, first (_ColumnsPanel).
+    final panelKeys = container ? {'layout', ...ColumnsPerRow.keys.values, for (final f in block.definition.fields) if (f is ColumnsFieldSpec) f.key} : const <String>{};
+    Widget editor(FieldSpec field) => _FieldEditor(
+          keyPrefix: '$prefix-${field.key}',
+          field: field,
+          value: block.values[field.key],
+          library: library,
+          generation: generation,
+          onChanged: (v) => emit(block.withValue(field.key, v)),
+          owner: block,
+          onBlockChanged: emit,
+          onSelectNested: onSelectNested,
+          onAddToColumn: onAddToColumn,
+          design: design,
+        );
     final entries = <(FieldSpec, Widget)>[
       for (final field in block.definition.fields)
         // A setting of a feature that is off isn't offered (its value is kept).
-        if (field.shownWhen?.call(block.values, block.values) ?? true)
+        if (!panelKeys.contains(field.key) && (field.shownWhen?.call(block.values, block.values) ?? true))
         (
           field,
           Column(
@@ -239,9 +286,9 @@ class WebsiteBlockForm extends StatelessWidget {
                   value: block.values[field.key],
                   library: library,
                   generation: generation,
-                  onChanged: (v) => onChanged(block.withValue(field.key, v)),
+                  onChanged: (v) => emit(block.withValue(field.key, v)),
                   owner: block,
-                  onBlockChanged: onChanged,
+                  onBlockChanged: emit,
                   onSelectNested: onSelectNested,
                   design: design,
                 ),
@@ -253,6 +300,18 @@ class WebsiteBlockForm extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (container)
+          _ColumnsPanel(
+            prefix: prefix,
+            block: block,
+            screen: screen,
+            fields: {
+              'count': _ColumnCount(prefix: prefix, block: block, onChanged: onChanged),
+              for (final field in block.definition.fields)
+                if (panelKeys.contains(field.key)) (field is ColumnsFieldSpec ? 'columns' : field.key): editor(field),
+            },
+          ),
+        if (gallery) GalleryAlbumsPanel(prefix: prefix, block: block, albums: albums, library: library, onChanged: onChanged),
         ...groupedFields(prefix, entries),
         if (block.type == BlockRegistry.html.type) _CustomHtmlNotes(block: block, design: design),
         if (block.type == BlockRegistry.embed.type) _EmbedNotes(block: block),
@@ -669,8 +728,11 @@ class _FieldEditor extends StatelessWidget {
     this.owner,
     this.onBlockChanged,
     this.onSelectNested,
+    this.onAddToColumn,
     this.design = SiteDesign.defaults,
   });
+
+  final void Function(int column, BlockDefinition definition)? onAddToColumn;
 
   final String keyPrefix;
   final FieldSpec field;
@@ -771,11 +833,67 @@ class _FieldEditor extends StatelessWidget {
         if (owner != null && containerTypes.contains(owner!.type) && f.key == 'layout') {
           return _LayoutChoice(keyPrefix: keyPrefix, field: f, block: owner!, onChanged: onBlockChanged!);
         }
+        // Columns per row on one screen size, with what Automatic is there.
+        if (owner != null && containerTypes.contains(owner!.type) && ColumnsPerRow.keys.containsValue(f.key)) {
+          return _ColumnsPerRowChoice(keyPrefix: keyPrefix, field: f, block: owner!, onChanged: onChanged);
+        }
         return _choice(context, keyPrefix, f.label, f.options, value as String? ?? f.initial, onChanged, labels: f.optionLabels);
+      // Edited by its own panel (a gallery's albums), never in the form.
+      case IdListFieldSpec():
+        return const SizedBox.shrink();
       case FormRefFieldSpec():
         return _FormChoice(keyPrefix: keyPrefix, label: f.label, value: value as String? ?? '', onChanged: onChanged);
       case NumberFieldSpec():
         return _NumberField(key: ValueKey('$keyPrefix-$generation'), fieldKey: keyPrefix, field: f, value: value as int?, onChanged: onChanged);
+      case IconFieldSpec():
+        final id = value as String? ?? f.initial;
+        final icon = WebsiteIcons.lookup(id);
+        final none = f.allowNone && id == IconFieldSpec.none;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(f.label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.06), borderRadius: BorderRadius.circular(10)),
+                  child: none
+                      ? const Icon(Icons.block, color: AppColors.textSecondary)
+                      : icon == null
+                          ? const Icon(Icons.help_outline, color: Color(0xFF8A6A33))
+                          : Icon(icon.data, size: 30, color: AppColors.primary),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    none
+                        ? 'No icon'
+                        : icon == null
+                            ? '“$id” isn’t available in this version, so nothing is shown. Choose another icon.'
+                            : icon.label,
+                    key: Key('$keyPrefix-status'),
+                    maxLines: 3,
+                    style: TextStyle(fontSize: 13, color: icon == null && !none ? const Color(0xFF8A6A33) : null),
+                  ),
+                ),
+                TextButton(
+                  key: Key('$keyPrefix-choose'),
+                  onPressed: () async {
+                    final chosen = await showWebsiteIconPicker(context, selected: id);
+                    if (chosen != null) onChanged(chosen);
+                  },
+                  child: Text(none ? 'Choose' : 'Change'),
+                ),
+                if (f.allowNone && !none)
+                  TextButton(key: Key('$keyPrefix-remove'), onPressed: () => onChanged(IconFieldSpec.none), child: const Text('Remove icon')),
+              ],
+            ),
+          ],
+        );
       case ToggleFieldSpec():
         return SwitchListTile(key: Key(keyPrefix), contentPadding: EdgeInsets.zero, title: Text(f.label), value: value as bool? ?? f.initial, onChanged: onChanged);
       case ItemsFieldSpec():
@@ -814,6 +932,7 @@ class _FieldEditor extends StatelessWidget {
           block: owner!,
           onChanged: onBlockChanged!,
           onSelectNested: onSelectNested,
+          onAddToColumn: onAddToColumn,
         );
     }
   }
@@ -1042,6 +1161,240 @@ class _FormChoice extends ConsumerWidget {
 
 String _blocksCount(int n) => '$n block${n == 1 ? '' : 's'}';
 
+/// [block] with layout [layout]. When that removes columns holding
+/// blocks, asks first which remaining column takes them (in order, at its
+/// end; only columns with room are offered; nothing is deleted). Null
+/// when cancelled, or when no column has room.
+Future<StructuredBlock?> changeColumnLayout(BuildContext context, StructuredBlock block, String layout) async {
+  final moved = ColumnOps.blocksRemovedBy(block, layout);
+  if (moved == 0) return ColumnOps.withLayout(block, layout);
+  final count = columnLayouts[layout]!.length;
+  final into = await showDialog<int>(
+    context: context,
+    builder: (context) => _MoveBlocksDialog(moved: moved, keep: count, from: block.columns('columns').length, targets: ColumnOps.movableInto(block, layout)),
+  );
+  return into == null ? null : ColumnOps.withLayout(block, layout, moveBlocks: true, moveInto: into);
+}
+
+/// Asks how many inner columns (1 to 4) a new Columns / Row has: null
+/// when cancelled.
+Future<int?> chooseRowColumns(BuildContext context) => showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        key: const Key('website-row-columns-dialog'),
+        title: const Text('Add Columns / Row'),
+        content: SizedBox(
+          width: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('How many inner columns? Each column gets its own Add block. You can change this, and how many sit side by side on each screen size, later.'),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (var n = 1; n <= 4; n++)
+                    OutlinedButton(
+                      key: Key('website-row-columns-$n'),
+                      onPressed: () => Navigator.pop(context, n),
+                      child: Text('$n column${n == 1 ? '' : 's'}'),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        actions: [TextButton(key: const Key('website-row-columns-cancel'), onPressed: () => Navigator.pop(context), child: const Text('Cancel'))],
+      ),
+    );
+
+/// Fewer columns: which remaining column takes the removed columns'
+/// blocks (pops its index, or null).
+class _MoveBlocksDialog extends StatefulWidget {
+  const _MoveBlocksDialog({required this.moved, required this.keep, required this.from, required this.targets});
+
+  final int moved;
+  final int keep;
+  final int from;
+  final List<int> targets;
+
+  @override
+  State<_MoveBlocksDialog> createState() => _MoveBlocksDialogState();
+}
+
+class _MoveBlocksDialogState extends State<_MoveBlocksDialog> {
+  late int? _into = widget.targets.isEmpty ? null : widget.targets.last;
+
+  @override
+  Widget build(BuildContext context) {
+    final removed = [for (var i = widget.keep; i < widget.from; i++) '${i + 1}'];
+    final which = removed.length == 1 ? 'Column ${removed.single}' : 'Columns ${removed.join(' and ')}';
+    return AlertDialog(
+      key: const Key('website-columns-layout-dialog'),
+      title: const Text('Fewer columns'),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.targets.isEmpty
+                  ? '$which ${removed.length == 1 ? 'holds' : 'hold'} ${_blocksCount(widget.moved)}, more than any remaining column has room for. Move or delete some blocks first.'
+                  : '$which ${removed.length == 1 ? 'holds' : 'hold'} ${_blocksCount(widget.moved)}. Choose the column to move them to (in order, at its end). Nothing is deleted.',
+            ),
+            if (widget.targets.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              RadioGroup<int>(
+                groupValue: _into,
+                onChanged: (v) => setState(() => _into = v),
+                child: Column(
+                  children: [
+                    for (final i in widget.targets)
+                      RadioListTile<int>(key: Key('website-columns-layout-into-$i'), contentPadding: EdgeInsets.zero, dense: true, value: i, title: Text('Column ${i + 1}')),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(key: const Key('website-columns-layout-cancel'), onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        if (_into != null)
+          FilledButton(key: const Key('website-columns-layout-move'), onPressed: () => Navigator.pop(context, _into), child: Text('Move blocks to column ${_into! + 1}')),
+      ],
+    );
+  }
+}
+
+const _screenLabels = {'desktop': 'Desktop', 'tablet': 'Tablet', 'mobile': 'Phone'};
+
+/// A section's (or columns block's) columns, first in its properties: whose
+/// they are, how many (1 to 4, the same content on every screen), what
+/// the screen being previewed shows, the widths, how many sit side by side
+/// on each screen size (the previewed one marked), and each column's
+/// blocks with an Add for each.
+class _ColumnsPanel extends StatelessWidget {
+  const _ColumnsPanel({required this.prefix, required this.block, required this.screen, required this.fields});
+
+  final String prefix;
+  final StructuredBlock block;
+
+  /// The screen size being previewed (`desktop`, `tablet`, `mobile`).
+  final String screen;
+
+  /// The layout, per-screen and columns editors, by field key.
+  final Map<String, Widget> fields;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = block.columns('columns').length;
+    final name = block.type == 'section' || block.type == rowType ? block.text('name').en.trim() : '';
+    final row = block.type == rowType;
+    final whose = row
+        ? (name.isEmpty ? 'Inner columns of this row' : 'Inner columns of row “$name”')
+        : 'Columns of ${name.isEmpty ? 'this ${block.definition.label.toLowerCase()}' : 'section “$name”'}';
+    final own = ColumnsPerRow.own(block, screen) != null;
+    return Container(
+      key: Key('$prefix-columns-panel'),
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+      decoration: BoxDecoration(border: Border.all(color: AppColors.primary.withValues(alpha: 0.35)), borderRadius: BorderRadius.circular(10)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            const Icon(Icons.view_column_outlined, size: 18, color: AppColors.primary),
+            const SizedBox(width: 8),
+            Expanded(child: Text(whose, key: Key('$prefix-columns-panel-title'), style: const TextStyle(fontWeight: FontWeight.w700))),
+          ]),
+          if (row)
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Text('A Columns / Row sits inside its section’s column; its columns hold their own blocks. It is laid out like a section’s columns.',
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+            ),
+          const SizedBox(height: 10),
+          fields['count']!,
+          const SizedBox(height: 6),
+          Text(
+            count <= 1
+                ? 'One column on every screen.'
+                : '${_screenLabels[screen]} (previewing): ${ColumnsPerRow.on(block, screen)} of $count per row, ${own ? 'set for this screen' : 'Automatic'}.',
+            key: Key('$prefix-columns-current'),
+            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 10),
+          ?fields['layout'],
+          const SizedBox(height: 12),
+          Column(
+            key: Key('$prefix-screens-heading'),
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: const [
+              Text('Columns on each screen size', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+              SizedBox(height: 2),
+              Text('How many columns sit side by side; the rest wrap onto the next row. Automatic follows the screen above it.',
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+              SizedBox(height: 8),
+            ],
+          ),
+          for (final s in ColumnsPerRow.keys.keys)
+            if (fields[ColumnsPerRow.keys[s]] case final w?)
+              Container(
+                key: s == screen ? Key('$prefix-${ColumnsPerRow.keys[s]}-previewing') : null,
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.only(left: 8),
+                decoration: BoxDecoration(border: Border(left: BorderSide(width: 3, color: s == screen ? AppColors.primary : Colors.transparent))),
+                child: w,
+              ),
+          const SizedBox(height: 4),
+          const Text('Columns and their blocks', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+          const SizedBox(height: 6),
+          ?fields['columns'],
+        ],
+      ),
+    );
+  }
+}
+
+/// The number of columns (the block's range), as buttons: a choice that
+/// removes columns holding blocks asks first ([changeColumnLayout]).
+class _ColumnCount extends StatelessWidget {
+  const _ColumnCount({required this.prefix, required this.block, required this.onChanged});
+
+  final String prefix;
+  final StructuredBlock block;
+  final ValueChanged<WebsiteBlock> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final (fewest, most) = ColumnOps.range(block);
+    final count = block.columns('columns').length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Number of columns (all screens)', style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary)),
+        const SizedBox(height: 4),
+        SegmentedButton<int>(
+          key: Key('$prefix-column-count'),
+          showSelectedIcon: false,
+          segments: [for (var n = fewest; n <= most; n++) ButtonSegment(value: n, label: Text('$n', key: Key('$prefix-column-count-$n')), tooltip: '$n column${n == 1 ? '' : 's'}')],
+          selected: {count.clamp(fewest, most)},
+          onSelectionChanged: (s) async {
+            final n = s.single;
+            if (n == count) return;
+            final changed = await changeColumnLayout(context, block, ColumnOps.layoutFor(block, n));
+            if (changed != null) onChanged(changed);
+          },
+        ),
+      ],
+    );
+  }
+}
+
 /// A section's or columns block's layout. A layout with fewer columns
 /// that would remove columns holding blocks first asks to move those
 /// blocks into the last column kept; cancelled, the choice goes back.
@@ -1062,29 +1415,10 @@ class _LayoutChoiceState extends State<_LayoutChoice> {
   int _reset = 0;
 
   Future<void> _choose(String layout) async {
-    final block = widget.block;
-    final moved = ColumnOps.blocksRemovedBy(block, layout);
-    if (moved == 0) return widget.onChanged(ColumnOps.withLayout(block, layout));
-    final count = columnLayouts[layout]!.length;
-    final last = block.columns('columns')[count - 1];
-    final fits = last.blocks.length + moved <= BlockLimits.defaults.maxColumnBlocks;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Fewer columns'),
-        content: Text(fits
-            ? 'The columns this layout removes hold ${_blocksCount(moved)}. They will be moved to the end of column $count. Nothing is deleted.'
-            : 'The columns this layout removes hold ${_blocksCount(moved)}, more than column $count has room for. Move or delete some blocks first.'),
-        actions: [
-          TextButton(key: const Key('website-columns-layout-cancel'), onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          if (fits)
-            FilledButton(key: const Key('website-columns-layout-move'), onPressed: () => Navigator.pop(context, true), child: Text('Move blocks to column $count')),
-        ],
-      ),
-    );
+    final changed = await changeColumnLayout(context, widget.block, layout);
     if (!mounted) return;
-    if (confirmed == true) {
-      widget.onChanged(ColumnOps.withLayout(block, layout, moveBlocks: true));
+    if (changed != null) {
+      widget.onChanged(changed);
     } else {
       setState(() => _reset++);
     }
@@ -1093,11 +1427,71 @@ class _LayoutChoiceState extends State<_LayoutChoice> {
   @override
   Widget build(BuildContext context) {
     final f = widget.field;
-    return KeyedSubtree(
-      key: ValueKey(_reset),
-      child: _choice(context, widget.keyPrefix, f.label, f.options, widget.block.string(f.key), (v) {
-        if (v != widget.block.string(f.key)) _choose(v);
-      }, labels: f.optionLabels),
+    final b = widget.block;
+    String screen(String s) => '${ColumnsPerRow.on(b, s)}${ColumnsPerRow.own(b, s) == null ? '' : ' (set)'}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        KeyedSubtree(
+          key: ValueKey(_reset),
+          child: _choice(context, widget.keyPrefix, f.label, f.options, b.string(f.key), (v) {
+            if (v != b.string(f.key)) _choose(v);
+          }, labels: f.optionLabels),
+        ),
+        if (b.columns('columns').length > 1)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'Per row: desktop ${screen('desktop')} · tablet ${screen('tablet')} · phone ${screen('mobile')}',
+              key: Key('${widget.keyPrefix}-screens'),
+              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Columns per row on one screen size ([ColumnsPerRow]): Automatic (what
+/// it is here, and where it comes from) or 1 to the number of columns;
+/// below it, whether this screen follows Automatic or has its own.
+class _ColumnsPerRowChoice extends StatelessWidget {
+  const _ColumnsPerRowChoice({required this.keyPrefix, required this.field, required this.block, required this.onChanged});
+
+  final String keyPrefix;
+  final ChoiceFieldSpec field;
+  final StructuredBlock block;
+  final ValueChanged<Object?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final screen = ColumnsPerRow.keys.entries.firstWhere((e) => e.value == field.key).key;
+    final count = block.columns('columns').length;
+    final own = ColumnsPerRow.own(block, screen);
+    final automatic = ColumnsPerRow.automaticOn(block, screen).clamp(1, count < 1 ? 1 : count);
+    final from = switch (screen) { 'tablet' => ', from desktop', 'mobile' => ', stacked', _ => '' };
+    final options = [ColumnsPerRow.automatic, for (var n = 1; n <= count; n++) '$n'];
+    final value = own == null ? ColumnsPerRow.automatic : '${own.clamp(1, count < 1 ? 1 : count)}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Rebuilt when the columns or the value change (the choices follow).
+        KeyedSubtree(
+          key: ValueKey('$count-$value-$automatic'),
+          child: _choice(context, keyPrefix, field.label, options, value, onChanged, labels: {
+            ColumnsPerRow.automatic: 'Automatic ($automatic per row$from)',
+            for (var n = 1; n <= count; n++) '$n': n == 1 ? '1 per row (stacked)' : '$n per row',
+          }),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text(
+            own == null ? 'Automatic: $automatic per row' : 'Set for this screen: ${ColumnsPerRow.on(block, screen)} per row',
+            key: Key('$keyPrefix-status'),
+            style: TextStyle(fontSize: 12, color: own == null ? AppColors.textSecondary : AppColors.primary, fontWeight: own == null ? null : FontWeight.w600),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1107,7 +1501,10 @@ class _LayoutChoiceState extends State<_LayoutChoice> {
 /// Removing a column that holds blocks asks whether to move them into a
 /// neighbouring column or delete them with it.
 class _ColumnsEditor extends StatelessWidget {
-  const _ColumnsEditor({required this.keyPrefix, required this.block, required this.onChanged, this.onSelectNested});
+  const _ColumnsEditor({required this.keyPrefix, required this.block, required this.onChanged, this.onSelectNested, this.onAddToColumn});
+
+  /// Adds a block of a type to a column (null: added in the structure).
+  final void Function(int column, BlockDefinition definition)? onAddToColumn;
 
   final String keyPrefix;
   final StructuredBlock block;
@@ -1186,9 +1583,10 @@ class _ColumnsEditor extends StatelessWidget {
                   ],
                 ),
                 if (c.blocks.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 2),
-                    child: Text('Empty column. Add blocks to it in the page structure.', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(onAddToColumn == null ? 'Empty column. Add blocks to it in the page structure.' : 'Empty column.',
+                        style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                   ),
                 for (final (j, child) in c.blocks.indexed)
                   Align(
@@ -1201,6 +1599,27 @@ class _ColumnsEditor extends StatelessWidget {
                         '${child is StructuredBlock ? child.definition.label : 'Unsupported block'}: ${blockSummary(child)}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                if (onAddToColumn != null)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: PopupMenuButton<BlockDefinition>(
+                      key: Key('website-column-${c.id}-panel-add'),
+                      tooltip: 'Add a block to column ${i + 1}',
+                      onSelected: (d) => onAddToColumn!(i, d),
+                      itemBuilder: (context) => [
+                        for (final d in BlockRegistry.nestableIn(block.type))
+                          PopupMenuItem(key: Key('website-column-${c.id}-panel-add-${d.type}'), value: d, child: Text(d.label)),
+                      ],
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.add, size: 18, color: AppColors.primary),
+                          const SizedBox(width: 4),
+                          Flexible(child: Text('Add block to column ${i + 1}', overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600))),
+                        ]),
                       ),
                     ),
                   ),
@@ -1351,7 +1770,7 @@ class _AsymmetricGalleryNotes extends StatelessWidget {
         continue;
       }
       if (!media.isPublished) notes.add('$where isn’t published: visitors won’t see it until it is.');
-      if (item.value<bool>('decorative') != true && item.text('alt').en.trim().isEmpty && media.alt.en.trim().isEmpty) {
+      if (item.value<bool>('decorative') != true && !media.decorative && item.text('alt').en.trim().isEmpty && media.alt.en.trim().isEmpty) {
         notes.add('$where has no alt text: describe it here or in the Media library, or mark it decorative only.');
       }
     }

@@ -37,20 +37,49 @@ them.
 | `thumbUrl`, `thumbStoragePath` | Download URL and path of the thumbnail |
 | `contentType`, `sizeBytes`, `width`, `height` | Of the display image |
 | `focalX`, `focalY` | Point to keep in view when cropping, as 0–1 fractions (0.5, 0.5 is the centre) |
-| `alt` `{en, ta}` | Alt text. English is required to publish. |
+| `alt` `{en, ta}` | Alt text: the accessibility description. New uploads start with `en: "2D Montessori"` (Tamil empty), editable at once and later; never taken from the file name, and never written to an existing image. Not a publishing condition, and says nothing about approval or consent (see *Alt text, photo approval, consent and publishing*). |
+| `decorative` | Optional, `true` when marked decorative: screen readers skip it; any alt text is kept but not read. Absent on earlier records (not decorative). |
 | `caption` `{en, ta}` | Optional; shown in the gallery and lightbox |
 | `category` | `general`, `classroom`, `materials`, `outdoors`, `events`, `teacher_training` or `campus` |
 | `inGallery` | Whether the image is listed in the gallery. An image can be used only on pages. |
 | `galleryOrder` | Integer sort order |
 | `status` | `draft`, `published` or `hidden`. Only `published` is ever shown. |
-| `consentConfirmed` | The admin confirmed the photo is school-approved and that consent was obtained for every identifiable child. Required to publish. |
+| `consentConfirmed` | One combined attestation: the admin confirmed the photo is **school-approved** and that **consent** was obtained for every identifiable person. Required to publish. `false` on every upload unless the admin confirms it (see below). |
 | `createdAt`, `updatedAt`, `publishedAt` | Timestamps |
 
 - A published media document is meant to be publicly readable. For that
   reason it holds **no uploader or editor identity**. User ids in this app
   are phone numbers.
 - Changes are recorded in **`website_media/{mediaId}/audit/{entryId}`**
-  (`action`, `byId`, `byName`, `at`), which is admin only.
+  (`action`, `byId`, `byName`, `at`), which is admin only. Bulk actions
+  record each image on its own (`consent-confirmed` from the bulk action has
+  `bulk: true`; also `gallery-added`, `gallery-removed`).
+- Album membership is **never** on the media record (see below), so
+  albums aren't visible to visitors and editing an image can't lose them.
+
+### Firestore: `website_albums/{albumId}` (media library albums, admin only)
+
+| Field | Notes |
+|---|---|
+| `schoolId` | The school (`default_school`), as for templates. Listing filters on it. |
+| `schemaVersion` | 1 |
+| `name` | Required, 1–80 characters |
+| `description` | Optional, at most 300; not stored while empty |
+| `mediaIds` | The images' ids, in the order added (at most 2,000). An image may be in several albums, or none. Changed with `arrayUnion` / `arrayRemove`. |
+| `createdAt`, `createdById`, `createdByName`, `updatedAt`, `updatedById`, `updatedByName` | Admin-only record, so editor identity is fine here |
+
+- Albums only organise the library. Adding or removing an image never
+  changes its publication, consent or gallery visibility. Deleting an
+  album leaves its images as they are.
+- A deleted image is taken out of its albums (best effort). An id that is
+  still listed is left out of counts and filters (`WebsiteAlbum.availableIn`).
+- Photo galleries and Asymmetric galleries can take images from albums
+  (docs/website_visual_site_editor.md, "Albums as an image source"). Publishing
+  copies the album images visitors may see into the page itself, so this
+  record is never public and no public album collection exists.
+- **The security rules don't allow this collection yet** (see "Pending rule
+  changes"). Until they do, the library shows that albums couldn't be
+  loaded, and everything else works.
 
 ### Firestore: page content
 
@@ -255,8 +284,64 @@ language are described in `docs/website_multilingual.md`.
 - Staff and parents see the locked view.
 
 **Uploading and publishing**
-- An upload is a draft.
-- Publishing requires English alt text and consent confirmation.
+- An upload is a draft. Its approval and consent are confirmed only if the
+  admin confirmed them for that image in the review (below); otherwise it
+  stays unconfirmed.
+- **Several at once:** *Upload images* opens the picker for several files.
+  Each is checked on its own (JPEG, PNG or WebP, not empty, at most 15 MB);
+  a file that can't be uploaded is listed with its reason, never dropped.
+  The review step sets shared defaults (category, caption, gallery,
+  decorative, albums) and lets each image have its own alt text, caption,
+  category and decorative setting. Files then upload one at a time, each
+  with its progress and result. Failed or cancelled files can be retried,
+  alone or together; uploaded ones are never sent again. Every file has a
+  media id reserved before uploading (`newMediaId`), and `uploadMedia`
+  with that id returns the existing record instead of making another, so a
+  retry or a second tap never creates a duplicate. *Stop* finishes the
+  image in progress and marks the rest cancelled. The original file name
+  is shown in the review only, never stored.
+- **Review of each image:** thumbnail, file name, alt text (prefilled
+  "2D Montessori") and one checkbox, *Photo approved by the school and
+  consent obtained*, unticked to start. The shared settings show how many
+  images are confirmed and how many are not; each unconfirmed image says
+  so in red.
+- **Confirm for all:** *Apply approval and consent confirmation to all
+  selected images* first shows: "I confirm that all selected photographs
+  are approved by the school and that the required consent has been
+  obtained." Only *Confirm for N images* ticks them; *Cancel* changes
+  nothing. It applies to this upload's images only (not those left out,
+  already uploaded or elsewhere in the library). Any image can be unticked,
+  or ticked again, afterwards.
+- **Saved with each image:** after each file uploads, a ticked image is
+  confirmed through `confirmConsent`, the same method (and the same
+  `consent-confirmed` audit entry) as the library's own confirmation;
+  confirmed with the "all" action, the entry has `bulk: true`. An
+  unticked image keeps `consentConfirmed: false`. Each file's result says
+  which it is; if the confirmation can't be saved, the result says so and
+  the image stays unconfirmed. No security rule changes are needed: the
+  upload creates the record exactly as before, then updates it.
+- **One image** (the image section of events and announcements) uploads
+  with the default alt text and unconfirmed, then opens in the library
+  for its alt text and confirmation.
+- Publishing requires the file and consent confirmation (see below).
+
+**Bulk actions** (Media library: select images one by one, or all shown
+with the current album filter; *Clear selection*; the count is shown).
+Each action goes image by image through the single-image method, with all
+its checks, and reports every image: done, unchanged (already so, and
+why) or failed (and why). One failure never stops the others.
+
+| Action | Uses | Checks kept |
+|---|---|---|
+| Confirm consent… | `confirmConsent` | Asks first, naming the responsibility for every image; recorded in each image's audit with `bulk: true`. Publishes nothing. |
+| Publish | `publishMedia` | Consent confirmed and a file, per image |
+| Unpublish | `hideMedia` | Refused while a published page, event, announcement or active form shows the image |
+| Add to / Remove from gallery | `setInGallery` | Changes `inGallery` only |
+| Delete… | `deleteMedia` | Asks first; refused for an image used on a page (draft or live), form, event, announcement or template, or when templates can't be checked |
+| Add to / Remove from album… | `WebsiteAlbumsService` | Images unchanged |
+
+The menu says beforehand how many images each action applies to and why
+the others can't be changed.
 
 **Taking an image off the website.** There are three ways, deliberately
 different:
@@ -284,6 +369,50 @@ banners, sections) from one list: media with `status == 'published'` *and*
 **Limits**
 - Files: JPEG, PNG or WebP, up to 15 MB.
 - Alt text: 250 characters. Caption: 300. Heading: 120. Introduction: 600.
+
+## Alt text, photo approval, consent and publishing
+
+These are separate things; none implies another.
+
+1. **Alt text (accessibility).** Describes the image for screen readers
+   and when the image can't be shown. New uploads default to
+   "2D Montessori"; replace it with a meaningful description (who or what
+   is shown) wherever you can. Images marked decorative are skipped by
+   screen readers. Alt text never establishes approval or consent, and an
+   image without it can still be published by the app.
+2. **Photo approval.** The school approves the photograph for use on the
+   website.
+3. **Consent.** The required consent has been obtained for every
+   identifiable person in the photograph, where applicable.
+
+   The data model records 2 and 3 as **one** confirmation
+   (`consentConfirmed`), so the library has one control for both. An
+   authorised administrator must tick it: uploading, writing alt text,
+   choosing a category or adding to an album never sets it.
+4. **Publishing eligibility.** An image can be published only when it has
+   its file **and** `consentConfirmed` is true. Otherwise publishing is
+   refused, one by one or in bulk, with the real reason: "The image file is
+   missing." or "Photo approval and consent not confirmed: …". Bulk results
+   name each image by its alt text (or caption), and the reason is shown
+   under it. Visitors see an image only while it is published *and*
+   confirmed.
+
+The confirmation, single or for all, is the administrator's **attestation**
+and is recorded in the image's audit trail. The app does not, and cannot,
+verify that consent exists. Withdrawing it (untick and save) removes the
+image from the website at once.
+
+**Workflows.**
+- *One image:* upload, open it in the library, check the alt text, tick
+  approval and consent, then *Publish*.
+- *Several images:* *Upload images*, choose the files, review each image
+  (alt text, and approval and consent, ticked one by one or with *Apply
+  approval and consent confirmation to all selected images* and then
+  unticked where needed), then *Upload*. Publish in the library, one by
+  one or with the bulk *Publish*, which publishes only the confirmed ones
+  and lists why the others weren't.
+- *Existing images* keep their alt text and confirmation exactly as stored;
+  change them in the image's details.
 
 ## Proposed security rules (not applied, emulator-tested)
 
@@ -315,6 +444,26 @@ Auth account, set with the Admin SDK. Nothing in the app sets it yet.
 - An alternative is an allowlist document `website_admins/{uid}`, which the
   rules would check with `exists(...)`.
 
+### Pending rule changes (media library upgrade; not made, need approval)
+
+The media library upgrade's app code needs two rule changes that haven't
+been made to the proposal or the deployed rules:
+
+1. **Optional alt text.** `isValidMedia` still requires English alt text on
+   a published record. Against rules like that, publishing an image
+   without alt text is refused by Firestore (the app shows the error).
+   Change: drop the `alt.en` condition, keeping `consentConfirmed == true`.
+   Until then, new uploads meet it through their default alt text
+   ("2D Montessori"); images stored without alt text, or whose alt text an
+   admin cleared, are still refused on publish by such rules.
+2. **Albums.** There is no rule for `website_albums`, so its reads and
+   writes are denied. Proposed: like `website_templates`, admin with the
+   matching `schoolId` claim only (never public): `get, list` when
+   `isSchoolAdmin(resource.data.schoolId)`; `create` and `update` when
+   `isSchoolAdmin(...)`, `schoolId` unchanged, `name` a string of 1–80,
+   `description` (if present) at most 300, `mediaIds` a list of at most
+   2,000; `delete` when `isSchoolAdmin(resource.data.schoolId)`.
+
 ### What the Firestore rules enforce
 
 - **`website_media`**
@@ -324,7 +473,8 @@ Auth account, set with the Admin SDK. Nothing in the app sets it yet.
     - has a known status;
     - holds none of the private fields (`fileName`, `updatedBy`,
       `updatedByName`, `updatedById`, `uploadedBy`, `createdBy`);
-    - if `published`, has `consentConfirmed == true` and English alt text.
+    - if `published`, has `consentConfirmed == true` and English alt text
+      (the app no longer requires alt text: see "Pending rule changes").
   - Admins may delete.
 - **`website_media/{id}/audit`**
   - Admins may read, create and delete entries. Nobody may edit one.

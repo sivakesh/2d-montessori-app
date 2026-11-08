@@ -29,8 +29,15 @@ class PublicWebsiteImage extends StatelessWidget {
   final WebsiteMedia? media;
   final double aspectRatio;
 
-  /// Alt text read by screen readers.
+  /// Alt text read by screen readers. Empty, or the library's own alt
+  /// text of an image marked decorative, and screen readers skip the image
+  /// (it is drawn the same either way).
   final String semanticLabel;
+
+  /// Whether screen readers skip it: no alt text, or a decorative image
+  /// with no description of its own for this use.
+  static bool skipsSemantics(WebsiteMedia media, String label) =>
+      label.trim().isEmpty || (media.decorative && media.alt.values.values.any((t) => t.trim() == label.trim()));
   final Widget? placeholder;
   final double borderRadius;
 
@@ -69,7 +76,8 @@ class PublicWebsiteImage extends StatelessWidget {
                     width: double.infinity,
                     height: double.infinity,
                     cacheWidth: decodeWidth,
-                    semanticLabel: semanticLabel,
+                    semanticLabel: skipsSemantics(media, semanticLabel) ? null : semanticLabel,
+                    excludeFromSemantics: skipsSemantics(media, semanticLabel),
                     // Storage serves images cross-origin; if the bucket's CORS
                     // ever blocks canvas decoding, fall back to an <img> element.
                     webHtmlElementStrategy: WebHtmlElementStrategy.fallback,

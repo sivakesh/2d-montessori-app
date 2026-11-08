@@ -16,6 +16,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:montessori_app/main.dart';
 import 'package:montessori_app/modules/admin/website/data/website_content_admin_service.dart';
 import 'package:montessori_app/modules/admin/website/ui/page_builder/block_list_ops.dart';
+import 'package:montessori_app/modules/public_website/content/blocks/block_limits.dart';
 import 'package:montessori_app/modules/admin/website/ui/page_builder/website_block_editor.dart';
 import 'package:montessori_app/modules/auth/models/app_user.dart';
 import 'package:montessori_app/modules/auth/providers/auth_state_provider.dart';
@@ -288,11 +289,17 @@ void main() {
       expect(ColumnOps.withColumnRemoved(_section('1', blocksPerColumn: [0]), 0), isNull, reason: 'a section keeps one column');
     });
 
-    test('a move that would overfill a column is refused', () {
+    test('a move that would overfill a column is refused (when columns have a limit of their own)', () {
+      // Columns have no limit of their own by default (the page limit
+      // bounds them); one given explicitly is still enforced.
+      const six = BlockLimits(maxColumnBlocks: 6);
       final b = _section('1:1', blocksPerColumn: [4, 3]);
-      expect(ColumnOps.canMerge(b, 1, 0), isFalse);
-      expect(() => ColumnOps.withColumnRemoved(b, 1, moveInto: 0), throwsStateError);
-      expect(() => ColumnOps.withLayout(b, '1', moveBlocks: true), throwsStateError);
+      expect(ColumnOps.canMerge(b, 1, 0, limits: six), isFalse);
+      expect(() => ColumnOps.withColumnRemoved(b, 1, moveInto: 0, limits: six), throwsStateError);
+      expect(() => ColumnOps.withLayout(b, '1', moveBlocks: true, limits: six), throwsStateError);
+      // By default the seven blocks fit in one column.
+      expect(ColumnOps.canMerge(b, 1, 0), isTrue);
+      expect(BlockListOps.columnsOf(ColumnOps.withLayout(b, '1', moveBlocks: true)).single.blocks, hasLength(7));
     });
 
     test('reorder: columns move with their blocks and widths', () {

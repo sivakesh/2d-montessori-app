@@ -1,4 +1,4 @@
-// The visual Forms Manager: required title, description and cover image,
+// The visual Forms Manager: required title and description, optional cover image,
 // content blocks (headings, text, images, dividers) anywhere in a form,
 // field settings, document attachment fields (configurable, never
 // uploadable yet), duplicate with fresh ids, version history, safe
@@ -95,8 +95,8 @@ class _Harness {
 Matcher _refusedWith(String text) => throwsA(isA<FormsException>().having((e) => e.message, 'message', contains(text)));
 
 void main() {
-  group('required title, description and cover image', () {
-    test('drafts may be incomplete; activation needs all three', () async {
+  group('required title and description; optional cover image', () {
+    test('drafts may be incomplete; activation needs a title and description, not a cover image', () async {
       final h = _Harness();
       final form = await h.forms.createFromTemplate(requesterRole: 'admin', actor: _admin, templateId: 'custom');
       final saved = await h.save(form.copyWith(title: const LocalizedText(), description: const LocalizedText()));
@@ -105,14 +105,41 @@ void main() {
       await h.save(saved.copyWith(title: const LocalizedText(en: 'Open day')));
       await expectLater(h.activate(form.id), _refusedWith('description'));
       await h.save((await h.stored(form.id)).copyWith(description: const LocalizedText(en: 'Join us on Saturday.')));
-      await expectLater(h.activate(form.id), _refusedWith('cover image'));
+      expect((await h.stored(form.id)).problems(complete: true), isEmpty, reason: 'no cover image is not a problem');
+      final plain = await h.activate(form.id);
+      expect((plain.title.en, plain.description.en, plain.coverMediaId), ('Open day', 'Join us on Saturday.', null), reason: 'activated without a cover image');
+      final plainDoc = (await h.doc(FormCollections.publicForms, form.id))!;
+      expect(PublicWebsiteForm.tryParse(plainDoc)?.coverMediaId, isNull, reason: 'the website reads it as having none');
+
+      // Choosing one later: kept, and shown from the next version.
       await h.image(_cover);
       await h.save((await h.stored(form.id)).copyWith(coverMediaId: () => _cover));
       final live = await h.activate(form.id);
-      expect((live.title.en, live.description.en, live.coverMediaId), ('Open day', 'Join us on Saturday.', _cover));
+      expect((live.version, live.coverMediaId), (plain.version + 1, _cover));
       final doc = (await h.doc(FormCollections.publicForms, form.id))!;
       expect(doc['coverMediaId'], _cover, reason: 'an id only, never a URL');
       expect(doc.toString(), isNot(contains('storage.example.test')));
+      expect((await h.stored(form.id)).coverMediaId, _cover, reason: 'a saved cover image stays');
+
+      // Removing it again: the next version has none.
+      await h.save((await h.stored(form.id)).copyWith(coverMediaId: () => null));
+      expect((await h.activate(form.id)).coverMediaId, isNull);
+    });
+
+    test('other activation requirements are unchanged', () async {
+      final h = _Harness();
+      final form = await h.forms.createFromTemplate(requesterRole: 'admin', actor: _admin, templateId: 'custom');
+      final ready = form.copyWith(title: const LocalizedText(en: 'Open day'), description: const LocalizedText(en: 'Join us.'));
+      expect(ready.problems(complete: true), isEmpty);
+      for (final (name, broken, expected) in <(String, WebsiteForm, String)>[
+        ('no title', ready.copyWith(title: const LocalizedText()), 'title'),
+        ('no description', ready.copyWith(description: const LocalizedText()), 'description'),
+        ('no success message', ready.copyWith(successMessage: const LocalizedText()), 'success message'),
+        ('no questions', ready.copyWith(items: const []), 'at least one field'),
+        ('a cover image that isn’t an id', ready.copyWith(coverMediaId: () => 'not an id/../x'), 'can’t be identified'),
+      ]) {
+        expect(broken.problems(complete: true).join(' '), contains(expected), reason: name);
+      }
     });
 
     test('only an image visitors may see can be used', () async {
@@ -124,7 +151,6 @@ void main() {
         ('hidden', () => h.image(_photo, status: 'hidden'), 'isn’t published'),
         ('consent withdrawn', () => h.image(_photo, consent: false), 'consent'),
         ('no file', () => h.image(_photo, url: ''), 'isn’t published'),
-        ('no alt text', () => h.image(_photo, alt: ''), 'alt text'),
       ]) {
         await setUp();
         await h.save(form.copyWith(coverMediaId: () => _photo));
@@ -132,11 +158,18 @@ void main() {
       }
       expect(await h.doc(FormCollections.publicForms, form.id), isNull);
       // An image block is checked the same way.
+      await h.image(_photo, consent: false);
       final block = FormContentBlock.create(FormBlockType.image).copyWith(mediaId: _photo);
       await h.save(form.copyWith(coverMediaId: () => _cover, items: [...form.items, block]));
-      await expectLater(h.activate(form.id), _refusedWith('alt text'));
+      await expectLater(h.activate(form.id), _refusedWith('consent'));
       await h.save((await h.stored(form.id)).copyWith(items: form.items));
       await expectLater(h.save(form.copyWith(coverMediaId: () => 'not an id/../x')), _refusedWith('can’t be identified'), reason: 'ids only, never paths or URLs');
+      // Alt text is optional in the media library: a published, consented
+      // image without it can be used.
+      await h.image(_photo, alt: '');
+      await h.save((await h.stored(form.id)).copyWith(coverMediaId: () => _photo));
+      await h.activate(form.id);
+      expect(await h.doc(FormCollections.publicForms, form.id), isNotNull);
     });
 
     test('a published image that later disappears: visitors see the form without it, and the admin is warned', () async {

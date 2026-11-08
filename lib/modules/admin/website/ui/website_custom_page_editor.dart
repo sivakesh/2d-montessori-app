@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/models/app_user.dart';
+import '../../../public_website/content/blocks/album_source.dart';
 import '../../../public_website/content/blocks/block_registry.dart';
 import '../../../public_website/content/blocks/legacy_sections.dart';
 import '../../../public_website/content/blocks/website_block.dart';
@@ -16,6 +17,8 @@ import '../../../public_website/public_website_theme.dart';
 import '../../../public_website/ui/public_custom_page.dart';
 import '../../../public_website/widgets/blocks/website_blocks_view.dart';
 import '../data/website_content_admin_service.dart';
+import '../data/album_galleries.dart';
+import '../data/website_albums_service.dart';
 import '../../../public_website/content/website_site_layout.dart';
 import '../../../public_website/widgets/public_scaffold.dart';
 import 'page_builder/website_chrome_scope.dart';
@@ -203,6 +206,9 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
   CustomPage? _draft;
   CustomPage? _live;
   List<WebsiteMedia> _library = const [];
+
+  /// The school's albums (null: they couldn't be read).
+  List<WebsiteAlbum>? _albums;
   bool _loading = true;
   bool _loadFailed = false;
   bool _busy = false;
@@ -263,6 +269,13 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
     final ok = await attempt(() async {
       final page = await service.getCustomPage(requesterRole: role, pageId: widget.pageId);
       final library = await service.listMedia(requesterRole: role);
+      // Albums only feed galleries: if they can't be read, the page still opens.
+      List<WebsiteAlbum>? albums;
+      try {
+        albums = await service.albums.list(requesterRole: role);
+      } catch (_) {
+        albums = null;
+      }
       final layout = await service.getSiteLayout(requesterRole: role);
       final languages = (await service.editorLanguageRegistry(requesterRole: role)).editorLanguages;
       final publishedPages = await service.publishedCustomPages(requesterRole: role);
@@ -279,6 +292,7 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
         _draft = page.draft;
         _live = page.live;
         _library = library;
+        _albums = albums;
         _fill(page.draft);
       });
     });
@@ -454,7 +468,9 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
     final hidden = flat.whereType<StructuredBlock>().where((b) => b.hidden).length;
     final unsupported = flat.whereType<UnsupportedBlock>().length;
     final noCopy = blocks.where((b) => LegacySections.toSection(b) == null && !(b is StructuredBlock && b.hidden)).length;
+    final noImages = BlockRegistry.flatten(BlockRegistry.withoutHidden(blocks)).whereType<StructuredBlock>().where((b) => AlbumSource.imageWarning(b) != null).length;
     return [
+      if (noImages > 0) '$noImages gallery(ies) with albums have no image visitors may see yet: the draft can be saved, but publishing is refused until each has one.',
       if (unpublished.isNotEmpty) '${unpublished.length} image(s) used here aren’t published: visitors don’t see them, and publishing the page is refused until they are.',
       if (hidden > 0) '$hidden block(s) hidden: kept, but not shown to visitors.',
       if (unsupported > 0) '$unsupported unsupported block(s): kept unchanged and not shown to visitors.',
@@ -647,6 +663,15 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
   /// Publishes [page]; over a published page, only once confirmed.
   Future<void> _publish(CustomPage page) async {
     if (_live != null && !await confirmReplacePublished(const Key('website-custom-publish-confirm'))) return;
+    // Publishing brings album galleries up to date (the service does too);
+    // the editor shows what is published.
+    if (page.blocks case final blocks? when AlbumGalleries.anyUsesAlbums(blocks)) {
+      final updated = AlbumGalleries.updateAll(blocks, albums: _albums, library: _library);
+      if (!identical(updated, blocks)) {
+        setState(() => _blocks = updated);
+        page = page.copyWith(blocks: () => updated);
+      }
+    }
     await _run(() => service.publishCustomPage(requesterRole: role, actor: user, page: page), 'Published at ${page.route}.');
   }
 
@@ -845,6 +870,9 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
             const Divider(height: 1),
             Expanded(
               child: WebsiteVisualEditor(
+            templates: widget.service.templates,
+            user: widget.user,
+            editorSettings: widget.service.editorSettings,
                 key: const Key('website-custom-blocks'),
                 blocks: _blocks!,
                 pageHeader: PublicCustomPageBody(page: page.copyWith(blocks: () => const []), media: published, language: _previewLanguage, interactive: false),
@@ -855,6 +883,7 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
                 siteChromeInfo: (part) => openSiteDesignButton(context, service: service, user: user, onReturn: _reloadSiteLayout),
                 onChanged: (list) => setState(() => _blocks = list),
                 library: _library,
+                albums: _albums,
                 media: published,
                 language: _previewLanguage,
                 generation: _generation,

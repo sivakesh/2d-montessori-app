@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/models/app_user.dart';
 import '../../../auth/providers/auth_state_provider.dart';
+import '../../../public_website/content/blocks/album_source.dart';
 import '../../../public_website/content/blocks/block_registry.dart';
 import '../../../public_website/content/blocks/website_block.dart';
 import '../../../public_website/content/built_in_pages.dart';
@@ -21,6 +22,8 @@ import '../../../public_website/ui/public_home_page.dart';
 import '../../../public_website/ui/public_section_page.dart';
 import '../../../public_website/widgets/public_scaffold.dart';
 import '../data/website_content_admin_service.dart';
+import '../data/album_galleries.dart';
+import '../data/website_albums_service.dart';
 import 'page_builder/website_chrome_scope.dart';
 import 'page_builder/website_visual_editor.dart';
 import 'website_content_editors.dart';
@@ -175,6 +178,9 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
   /// published; null when nothing is published (or for Contact).
   WebsitePageContent? _liveContent;
   List<WebsiteMedia> _library = const [];
+
+  /// The school's albums (null: they couldn't be read).
+  List<WebsiteAlbum>? _albums;
   List<PublicLanguage> _languages = PublicLanguage.builtIn;
   SiteLayout? _siteLayout;
   List<CustomPage> _publishedPages = const [];
@@ -200,6 +206,13 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
     final ok = await attempt(() async {
       final page = await service.getBuiltInPage(requesterRole: role, page: _pageId);
       final library = await service.listMedia(requesterRole: role);
+      // Albums only feed galleries: if they can't be read, the page still opens.
+      List<WebsiteAlbum>? albums;
+      try {
+        albums = await service.albums.list(requesterRole: role);
+      } catch (_) {
+        albums = null;
+      }
       final layout = await service.getSiteLayout(requesterRole: role);
       final languages = (await service.editorLanguageRegistry(requesterRole: role)).editorLanguages;
       final publishedPages = await service.publishedCustomPages(requesterRole: role);
@@ -214,6 +227,7 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
         _content = page.content;
         _liveContent = page.liveContent;
         _library = library;
+        _albums = albums;
         _languages = languages;
         _siteLayout = layout.draft ?? layout.live;
         _publishedPages = publishedPages;
@@ -263,7 +277,7 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
   /// The published blocks or look aren't what publishing the saved draft
   /// would store (hidden blocks are never published).
   bool get _draftUnpublished =>
-      _liveBlocks != null && _draftBlocks != null && (_encode(_liveBlocks) != _encode(BlockRegistry.withoutHidden(_draftBlocks!)) || _liveStyle != _draftStyle);
+      _liveBlocks != null && _draftBlocks != null && (_encode(_liveBlocks) != _encode(BlockRegistry.forVisitors(_draftBlocks!)) || _liveStyle != _draftStyle);
 
   /// Runs [action]; whether it succeeded. Afterwards — even when it
   /// failed part-way — the saved draft and published blocks are read
@@ -339,6 +353,13 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
   /// Publishes [blocks]; over a published version, only once confirmed.
   Future<void> _publish(List<WebsiteBlock> blocks) async {
     if (_hasPublishedVersion && !await confirmReplacePublished(const Key('website-builtin-publish-confirm'))) return;
+    // Publishing brings album galleries up to date (the service does too);
+    // the editor shows what is published.
+    if (AlbumGalleries.anyUsesAlbums(blocks)) {
+      final updated = AlbumGalleries.updateAll(blocks, albums: _albums, library: _library);
+      if (!identical(updated, blocks)) setState(() => _blocks = updated);
+      blocks = updated;
+    }
     await _run(() => service.publishBuiltInPage(requesterRole: role, actor: user, page: _pageId, blocks: blocks, style: _pageStyle), 'Published at ${_pageId.route}.');
   }
 
@@ -395,7 +416,9 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
     ];
     final hidden = BlockRegistry.flatten(blocks).whereType<StructuredBlock>().where((b) => b.hidden).length;
     final unsupported = BlockRegistry.flatten(blocks).whereType<UnsupportedBlock>().length;
+    final noImages = BlockRegistry.flatten(BlockRegistry.withoutHidden(blocks)).whereType<StructuredBlock>().where((b) => AlbumSource.imageWarning(b) != null).length;
     return [
+      if (noImages > 0) '$noImages gallery(ies) with albums have no image visitors may see yet: the draft can be saved, but publishing is refused until each has one.',
       if (unpublished.isNotEmpty) '${unpublished.length} image(s) used here aren’t published: visitors don’t see them, and publishing the page is refused until they are.',
       if (hidden > 0) '$hidden block(s) hidden: kept, but not shown to visitors.',
       if (unsupported > 0) '$unsupported unsupported block(s): kept unchanged and not shown to visitors.',
@@ -601,10 +624,14 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
         const Divider(height: 1),
         Expanded(
           child: WebsiteVisualEditor(
+            templates: widget.service.templates,
+            user: widget.user,
+            editorSettings: widget.service.editorSettings,
             key: const Key('website-builtin-blocks'),
             blocks: blocks,
             onChanged: (list) => setState(() => _blocks = list),
             library: _library,
+            albums: _albums,
             media: published,
             language: _language,
             generation: _generation,

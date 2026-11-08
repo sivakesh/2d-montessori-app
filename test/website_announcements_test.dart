@@ -459,14 +459,15 @@ void main() {
       expect(stored, isNot(contains('https://')));
     });
 
-    test('upload, alt text and consent, publish, then associate; missing alt text or consent blocks publishing the image', () async {
+    test('upload, alt text and consent, publish, then associate; missing consent blocks publishing the image (alt text is optional)', () async {
       await seed('n1', _notice());
       final noAlt = await uploadAndPublish(alt: false, publish: false);
-      await expectLater(media.publishMedia(requesterRole: 'admin', actor: _admin, mediaId: noAlt.id), throwsA(isA<WebsiteContentException>().having((e) => e.message, 'message', 'Add English alt text describing the image.')));
+      await media.publishMedia(requesterRole: 'admin', actor: _admin, mediaId: noAlt.id);
+      expect((await show('n1', image: () => noAlt.id)).imageMediaId, noAlt.id, reason: 'an image without alt text can be shown');
       final noConsent = await uploadAndPublish(consent: false, publish: false);
       await expectLater(
         media.publishMedia(requesterRole: 'admin', actor: _admin, mediaId: noConsent.id),
-        throwsA(isA<WebsiteContentException>().having((e) => e.message, 'message', 'Confirm the photograph is approved and consent has been obtained.')),
+        throwsA(isA<WebsiteContentException>().having((e) => e.message, 'message', WebsiteMedia.consentNotConfirmed)),
       );
       await expectLater(show('n1', image: () => noConsent.id), throwsA(isA<WebsiteContentException>()), reason: 'not publishable, so not attachable');
 
