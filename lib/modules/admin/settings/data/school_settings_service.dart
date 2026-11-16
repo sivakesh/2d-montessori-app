@@ -79,7 +79,7 @@ class SchoolSettingsService {
   /// updates that exact same document on every subsequent call — always a
   /// merge-set on the fixed `schoolId` doc id, never `.add()`/a new id, so
   /// repeated saves can never produce duplicate settings documents.
-  /// Validates [name]/[email]/[website] (the same functions the form's own
+  /// Validates [name]/[email]/[website]/[gstin]/[pinCode] (the same functions the form's own
   /// fields validate with) before writing anything, so a direct call can
   /// never persist an invalid record even if a UI slip skipped its own
   /// validation. [phone] is intentionally never format-validated — normal
@@ -95,6 +95,12 @@ class SchoolSettingsService {
     String email = '',
     String website = '',
     String description = '',
+    String? gstin,
+    String? addressLine2,
+    String? locality,
+    String? city,
+    String? state,
+    String? pinCode,
     required String updatedBy,
     required String updatedByName,
   }) async {
@@ -106,6 +112,10 @@ class SchoolSettingsService {
     if (emailError != null) throw ArgumentError(emailError);
     final websiteError = SchoolSettingsValidation.validateWebsite(website);
     if (websiteError != null) throw ArgumentError(websiteError);
+    final gstinError = SchoolSettingsValidation.validateGstin(gstin);
+    if (gstinError != null) throw ArgumentError(gstinError);
+    final pinError = SchoolSettingsValidation.validatePinCode(pinCode);
+    if (pinError != null) throw ArgumentError(pinError);
 
     final data = <String, dynamic>{
       'schoolId': schoolId,
@@ -120,6 +130,14 @@ class SchoolSettingsService {
       'updatedByName': updatedByName,
     };
     if (logoUrl != null) data['logoUrl'] = logoUrl;
+    // Null: left as it is (a caller that doesn't edit it never clears it);
+    // '' clears it.
+    if (gstin != null) data['gstin'] = SchoolSettingsValidation.normalizeGstin(gstin);
+    // The rest of the address: likewise only when given.
+    for (final (key, value) in [('addressLine2', addressLine2), ('locality', locality), ('city', city), ('state', state)]) {
+      if (value != null) data[key] = value.trim();
+    }
+    if (pinCode != null) data['pinCode'] = pinCode.replaceAll(' ', '');
 
     await _settings.doc(schoolId).set(data, SetOptions(merge: true));
   }

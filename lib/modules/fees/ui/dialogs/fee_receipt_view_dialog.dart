@@ -4,10 +4,20 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../models/fee_month.dart';
 import '../../models/fee_receipt_model.dart';
+import '../../services/fee_receipt_regeneration.dart';
 import '../../services/fee_service.dart';
+import 'fee_receipt_regenerate_dialog.dart';
 
 class FeeReceiptViewDialog extends StatefulWidget {
-  const FeeReceiptViewDialog({super.key, required this.receipt, this.service, this.voided = false});
+  const FeeReceiptViewDialog({
+    super.key,
+    required this.receipt,
+    this.service,
+    this.voided = false,
+    this.loadSchool = loadSchoolProfile,
+    this.loadLogo = loadSchoolLogo,
+    this.saveRegeneratedPdf = shareReceiptPdf,
+  });
   final FeeReceiptModel receipt;
 
   /// The service used to refresh the receipt and generate its PDF;
@@ -17,6 +27,12 @@ class FeeReceiptViewDialog extends StatefulWidget {
   /// A voided (cancelled) payment's receipt, opened from Collection
   /// Details: marked as voided, and no new PDF can be generated for it.
   final bool voided;
+
+  /// Regenerate PDF (FeeReceiptRegenerateDialog): the school's profile and
+  /// logo, and how the regenerated copy reaches the administrator.
+  final SchoolProfileLoader loadSchool;
+  final SchoolLogoLoader loadLogo;
+  final ReceiptPdfSaver saveRegeneratedPdf;
 
   @override
   State<FeeReceiptViewDialog> createState() => _FeeReceiptViewDialogState();
@@ -73,6 +89,29 @@ class _FeeReceiptViewDialogState extends State<FeeReceiptViewDialog> {
         const SnackBar(content: Text('Could not generate receipt PDF. Please try again.')),
       );
     }
+  }
+
+  /// Regenerate PDF (it already has one): the professional copy with the
+  /// options chosen, downloaded separately; this receipt, its stored
+  /// PDF and every record are left as they are. Generate PDF (none yet)
+  /// stays the default receipt ([_generatePdf]).
+  Future<void> _regeneratePdf() async {
+    final done = await showDialog<bool>(
+      context: context,
+      builder: (_) => FeeReceiptRegenerateDialog(
+        receipt: _receipt,
+        service: _service,
+        loadSchool: widget.loadSchool,
+        loadLogo: widget.loadLogo,
+        savePdf: widget.saveRegeneratedPdf,
+      ),
+    );
+    if (done != true || !mounted) return;
+    setState(() {
+      _pdfStatusMessage = 'Receipt PDF regenerated';
+      _pdfErrorMessage = null;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Receipt PDF regenerated')));
   }
 
   @override
@@ -190,7 +229,7 @@ class _FeeReceiptViewDialogState extends State<FeeReceiptViewDialog> {
                   ),
                   const SizedBox(width: 12),
                   TextButton(
-                    onPressed: _isGeneratingPdf || widget.voided ? null : _generatePdf,
+                    onPressed: _isGeneratingPdf || widget.voided ? null : (hasPdf ? _regeneratePdf : _generatePdf),
                     child: Text(_isGeneratingPdf ? 'Generating...' : (hasPdf ? 'Regenerate PDF' : 'Generate PDF')),
                   ),
                 ],

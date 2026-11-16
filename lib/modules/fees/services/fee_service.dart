@@ -261,6 +261,13 @@ class FeeService {
     return snap.docs;
   }
 
+  /// Fee structure [id] (active or not), or null.
+  Future<FeeStructureModel?> getFeeStructureById(String id) async {
+    if (id.isEmpty) return null;
+    final data = (await _structures.doc(id).get()).data();
+    return data == null ? null : FeeStructureModel.fromMap(id, data);
+  }
+
   Future<List<FeeStructureModel>> getActiveStructuresForClass(String classId) async {
     final all = await getFeeStructures();
     return all.where((s) => s.isActive).toList();

@@ -48,6 +48,12 @@ class _SchoolSettingsBodyState extends ConsumerState<_SchoolSettingsBody> {
   late final _emailController = TextEditingController();
   late final _websiteController = TextEditingController();
   late final _descriptionController = TextEditingController();
+  late final _gstinController = TextEditingController();
+  late final _addressLine2Controller = TextEditingController();
+  late final _localityController = TextEditingController();
+  late final _cityController = TextEditingController();
+  late final _stateController = TextEditingController();
+  late final _pinCodeController = TextEditingController();
 
   bool _loading = true;
   bool _saving = false;
@@ -87,6 +93,12 @@ class _SchoolSettingsBodyState extends ConsumerState<_SchoolSettingsBody> {
     _emailController.dispose();
     _websiteController.dispose();
     _descriptionController.dispose();
+    _gstinController.dispose();
+    _addressLine2Controller.dispose();
+    _localityController.dispose();
+    _cityController.dispose();
+    _stateController.dispose();
+    _pinCodeController.dispose();
     super.dispose();
   }
 
@@ -104,6 +116,12 @@ class _SchoolSettingsBodyState extends ConsumerState<_SchoolSettingsBody> {
       _emailController.text = settings?.email ?? '';
       _websiteController.text = settings?.website ?? '';
       _descriptionController.text = settings?.description ?? '';
+      _gstinController.text = settings?.gstin ?? '';
+      _addressLine2Controller.text = settings?.addressLine2 ?? '';
+      _localityController.text = settings?.locality ?? '';
+      _cityController.text = settings?.city ?? '';
+      _stateController.text = settings?.state ?? '';
+      _pinCodeController.text = settings?.pinCode ?? '';
       _currentLogoUrl = settings?.logoUrl ?? '';
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -178,6 +196,12 @@ class _SchoolSettingsBodyState extends ConsumerState<_SchoolSettingsBody> {
         email: _emailController.text,
         website: _websiteController.text,
         description: _descriptionController.text,
+        gstin: _gstinController.text,
+        addressLine2: _addressLine2Controller.text,
+        locality: _localityController.text,
+        city: _cityController.text,
+        state: _stateController.text,
+        pinCode: _pinCodeController.text,
         updatedBy: user?.id ?? '',
         updatedByName: user?.name ?? '',
       );
@@ -248,6 +272,7 @@ class _SchoolSettingsBodyState extends ConsumerState<_SchoolSettingsBody> {
                           ),
                           const SizedBox(height: 16),
                           TextFormField(
+                            key: const Key('school-settings-name'),
                             controller: _nameController,
                             decoration: const InputDecoration(labelText: 'School Name *'),
                             validator: SchoolSettingsValidation.validateName,
@@ -264,7 +289,38 @@ class _SchoolSettingsBodyState extends ConsumerState<_SchoolSettingsBody> {
                         phoneController: _phoneController,
                         emailController: _emailController,
                         websiteController: _websiteController,
-                        addressController: _addressController,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    _SettingsSectionCard(
+                      icon: Icons.location_on_outlined,
+                      title: 'School Address',
+                      subtitle: 'Optional — printed on regenerated fee receipts',
+                      child: _AddressFields(
+                        line1: _addressController,
+                        line2: _addressLine2Controller,
+                        locality: _localityController,
+                        city: _cityController,
+                        state: _stateController,
+                        pinCode: _pinCodeController,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    _SettingsSectionCard(
+                      icon: Icons.receipt_long_outlined,
+                      title: 'Tax Registration',
+                      subtitle: 'Optional — shown only on a regenerated fee receipt when you choose to include it',
+                      child: TextFormField(
+                        key: const Key('school-settings-gstin'),
+                        controller: _gstinController,
+                        textCapitalization: TextCapitalization.characters,
+                        maxLength: 20,
+                        decoration: const InputDecoration(
+                          labelText: 'GSTIN',
+                          helperText: 'The school\'s 15-character GST identification number. It does not add GST to any fee.',
+                          counterText: '',
+                        ),
+                        validator: SchoolSettingsValidation.validateGstin,
                       ),
                     ),
                     const SizedBox(height: 20),
@@ -381,13 +437,11 @@ class _ContactFields extends StatelessWidget {
     required this.phoneController,
     required this.emailController,
     required this.websiteController,
-    required this.addressController,
   });
 
   final TextEditingController phoneController;
   final TextEditingController emailController;
   final TextEditingController websiteController;
-  final TextEditingController addressController;
 
   @override
   Widget build(BuildContext context) {
@@ -409,6 +463,7 @@ class _ContactFields extends StatelessWidget {
                 SizedBox(
                   width: fieldWidth,
                   child: TextFormField(
+                    key: const Key('school-settings-phone'),
                     controller: phoneController,
                     keyboardType: TextInputType.phone,
                     decoration: const InputDecoration(labelText: 'Phone'),
@@ -417,6 +472,7 @@ class _ContactFields extends StatelessWidget {
                 SizedBox(
                   width: fieldWidth,
                   child: TextFormField(
+                    key: const Key('school-settings-email'),
                     controller: emailController,
                     keyboardType: TextInputType.emailAddress,
                     decoration: const InputDecoration(labelText: 'Email'),
@@ -426,6 +482,7 @@ class _ContactFields extends StatelessWidget {
                 SizedBox(
                   width: fieldWidth,
                   child: TextFormField(
+                    key: const Key('school-settings-website'),
                     controller: websiteController,
                     keyboardType: TextInputType.url,
                     decoration: const InputDecoration(labelText: 'Website'),
@@ -434,12 +491,55 @@ class _ContactFields extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: spacing),
-            TextFormField(
-              controller: addressController,
-              maxLines: 2,
-              decoration: const InputDecoration(labelText: 'Address'),
-            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// The school's postal address, field by field. Line 1 is the original
+/// single `address` field (an address saved before keeps showing there).
+class _AddressFields extends StatelessWidget {
+  const _AddressFields({
+    required this.line1,
+    required this.line2,
+    required this.locality,
+    required this.city,
+    required this.state,
+    required this.pinCode,
+  });
+
+  final TextEditingController line1, line2, locality, city, state, pinCode;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = 16.0;
+        final columns = constraints.maxWidth >= 640 ? 3 : (constraints.maxWidth >= 420 ? 2 : 1);
+        final fieldWidth = columns == 1 ? double.infinity : (constraints.maxWidth - spacing * (columns - 1)) / columns;
+        Widget field(String key, String label, TextEditingController c, {FormFieldValidator<String>? validator, TextInputType? type, double? width}) => SizedBox(
+              width: width ?? fieldWidth,
+              child: TextFormField(
+                key: Key(key),
+                controller: c,
+                keyboardType: type,
+                maxLines: 1,
+                decoration: InputDecoration(labelText: label),
+                validator: validator,
+              ),
+            );
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            field('school-settings-address-line1', 'Address Line 1', line1, width: double.infinity),
+            field('school-settings-address-line2', 'Address Line 2', line2, width: double.infinity),
+            field('school-settings-locality', 'Area / Locality', locality),
+            field('school-settings-city', 'City', city),
+            field('school-settings-state', 'State', state),
+            field('school-settings-pin-code', 'PIN Code', pinCode, type: TextInputType.number, validator: SchoolSettingsValidation.validatePinCode),
           ],
         );
       },
