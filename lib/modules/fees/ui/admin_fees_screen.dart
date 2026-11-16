@@ -16,6 +16,7 @@ import '../../admin/settings/models/school_settings_model.dart' show kDefaultSch
 import '../../admin/settings/providers/academic_year_provider.dart';
 import '../../admin/ui/admin_fab.dart';
 import '../../admin/ui/admin_layout.dart';
+import '../bill_issuance/fee_bill_issuance_page.dart';
 import '../models/fee_due_date.dart';
 import '../models/fee_list_filter.dart';
 import '../models/fee_month.dart';
@@ -820,7 +821,22 @@ class _AdminFeesScreenState extends ConsumerState<AdminFeesScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Fees', style: Theme.of(context).textTheme.headlineSmall),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text('Fees', style: Theme.of(context).textTheme.headlineSmall),
+                      // Fee Bill Issuance: its own page and records; it
+                      // never changes anything on this screen.
+                      OutlinedButton.icon(
+                        key: const Key('fees-open-bill-issuance'),
+                        onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const FeeBillIssuancePage())),
+                        icon: const Icon(Icons.request_quote_outlined, size: 18),
+                        label: const Text(FeeBillIssuancePage.title),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 24),
                   _buildFilterBar(),
                   _buildOverview(),
