@@ -7,6 +7,7 @@ import 'package:pdf/pdf.dart';
 
 import '../../admin/students/models/admission_date.dart';
 import '../models/fee_admission.dart';
+import '../models/fee_amount_revision.dart';
 import '../models/fee_collection_record.dart';
 import '../models/fee_component_model.dart';
 import '../models/fee_discount.dart';
@@ -717,6 +718,95 @@ class FeeService {
     }, SetOptions(merge: true));
   }
 
+  static const revisionReasonMessage = 'Enter the reason for revising this fee.';
+  static const revisionUnchangedMessage = 'The fee amount and discount are unchanged: there is nothing to revise.';
+
+  /// Revises the fee amount (and, without a student discount, the manual
+  /// discount) of an existing assignment, unpaid, partially or fully paid:
+  /// the explicit correction after a fee structure changes, or any other.
+  /// The rules are FeeRevision's: collected (`paidAmount`) is kept, payable,
+  /// outstanding and status follow, an excess over the revised payable is a
+  /// credit held (never refunded), and a student discount is recalculated
+  /// from its own terms.
+  ///
+  /// In one transaction: the assignment is re-read and must still be as
+  /// [expected] (the one the administrator reviewed: same revision,
+  /// collected, gross, discount, student and structure), else nothing is
+  /// written ([FeeRevision.concurrentMessage]), so a collection, edit or
+  /// other revision made meanwhile is never overwritten; then its amounts,
+  /// revision counter and audit record (`feeRevisions`) are written
+  /// together. No receipt, fee transaction or Finance entry is read or
+  /// written, and nothing else on the assignment changes.
+  ///
+  /// [source]: FeeRevision.fromStructure when the revised gross is the fee
+  /// structure's current amount ([structureAmount], recorded), else
+  /// FeeRevision.entered. [reason] is required.
+  Future<FeeAmountRevision> reviseAssignmentFee({
+    required StudentFeeAssignmentModel expected,
+    required double totalFee,
+    double? manualDiscount,
+    required String reason,
+    String source = FeeRevision.entered,
+    double? structureAmount,
+  }) async {
+    final why = reason.trim();
+    if (why.isEmpty) throw StateError(revisionReasonMessage);
+    if (why.length > 500) throw StateError('The reason must be 500 characters or fewer.');
+    final ref = _assignments.doc(expected.id);
+    // For allocating a recalculated student discount only (as when applied).
+    final components = expected.studentDiscount == null ? const <FeeComponentModel>[] : await _componentsOf(expected.feeStructureId);
+    final user = _auth.currentUser;
+    return _firestore.runTransaction((txn) async {
+      final snap = await txn.get(ref);
+      final data = snap.data();
+      if (!snap.exists || data == null || data['isDeleted'] == true) throw StateError('Assignment not found');
+      final a = StudentFeeAssignmentModel.fromMap(snap.id, data);
+      if (a.feeRevision != expected.feeRevision ||
+          _paise(a.paidAmount) != _paise(expected.paidAmount) ||
+          _paise(a.totalFee) != _paise(expected.totalFee) ||
+          _paise(a.discountAmount) != _paise(expected.discountAmount) ||
+          a.studentId != expected.studentId ||
+          a.feeStructureId != expected.feeStructureId) {
+        throw StateError(FeeRevision.concurrentMessage);
+      }
+      final f = FeeRevision.figures(a, totalFee: totalFee, manualDiscount: manualDiscount, components: components);
+      if (f.error case final e?) throw StateError(e);
+      if (!FeeRevision.changes(a, f)) throw StateError(revisionUnchangedMessage);
+      final revision = FeeAmountRevision(
+        revision: a.feeRevision + 1,
+        previousTotalFee: a.totalFee,
+        newTotalFee: f.totalFee,
+        previousDiscount: a.discountAmount,
+        newDiscount: f.discount,
+        previousPayable: a.payableAmount,
+        newPayable: f.payable,
+        collected: f.collected,
+        previousStatus: a.status,
+        newStatus: f.status,
+        excess: f.excess,
+        source: source == FeeRevision.fromStructure ? FeeRevision.fromStructure : FeeRevision.entered,
+        structureAmount: source == FeeRevision.fromStructure ? structureAmount : null,
+        reason: why,
+        revisedBy: user?.uid ?? 'admin',
+        revisedByName: user?.displayName ?? user?.email ?? 'Admin',
+        revisedAt: _clock(),
+      );
+      txn.update(ref, {
+        'totalFee': f.totalFee,
+        'discountAmount': f.discount,
+        'payableAmount': f.payable,
+        'balanceAmount': f.outstanding,
+        'status': f.status,
+        if (f.snapshot case final s?) FeeDiscountSnapshot.field: s.toMap(),
+        FeeRevision.revisionField: revision.revision,
+        FeeRevision.historyField: [...(data[FeeRevision.historyField] as List? ?? const []), revision.toMap()],
+        'lastRevisedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      return revision;
+    });
+  }
+
   /// An assignment with a student discount: its snapshot was calculated for
   /// this student, fee structure, academic year, gross fee and period, so
   /// none of those, nor the class (`classId`, locked in the edit dialog
@@ -1112,6 +1202,10 @@ class FeeService {
           if (discount.snapshot case final snap?) ..._discountedAmounts(totalFee, snap),
         });
         created++;
+      } else if (((existing.data()[FeeRevision.revisionField] as num?) ?? 0) > 0) {
+        // Its fee was revised by an administrator (FeeRevision): that
+        // amount stands until revised again; counted as skipped.
+        skipped++;
       } else if (existing.data()[FeeDiscountSnapshot.field] != null && _paise((existing['totalFee'] as num?)?.toDouble() ?? 0) != _paise(totalFee)) {
         // Its student discount was calculated on the old fee: left as it
         // is (never recalculated or doubled); counted as skipped.

@@ -420,6 +420,42 @@ class FeeDiscountSnapshot {
         'previous': ?previous,
       };
 
+  /// This snapshot's discount recalculated on a revised gross fee [gross]
+  /// (an explicit fee revision, FeeRevision): its own terms, never the
+  /// student's current configuration. A percentage follows the gross; a
+  /// fixed amount stays, capped at the gross. Allocated over [components]
+  /// as when it was applied. Everything else (terms, period, source, when
+  /// and by whom it was applied, the earlier figures) is kept.
+  FeeDiscountSnapshot recalculatedFor(double gross, List<FeeComponentModel> components) {
+    final grossP = _paise(gross);
+    final discountP = grossP <= 0
+        ? 0
+        : switch (type) {
+            FeeDiscountType.percentage => (grossP * value / 100).round(),
+            FeeDiscountType.fixed => _paise(value),
+            // Unrecognised terms: the amount recorded, as it was.
+            null => _paise(amount),
+          }
+            .clamp(0, grossP < 0 ? 0 : grossP);
+    return FeeDiscountSnapshot(
+      configId: configId,
+      type: type,
+      value: value,
+      effectiveFrom: effectiveFrom,
+      effectiveUntil: effectiveUntil,
+      reason: reason,
+      periodReference: periodReference,
+      gross: _rupees(grossP),
+      amount: _rupees(discountP),
+      allocation: grossP <= 0 ? const [] : FeeDiscountCalculator.allocate(discountP, grossP, components),
+      source: source,
+      appliedAt: appliedAt,
+      appliedBy: appliedBy,
+      operationId: operationId,
+      previous: previous,
+    );
+  }
+
   /// "Student discount 10% (₹500)" / "Student discount ₹500 per fee period (₹500)".
   String get label {
     final terms = switch (type) {

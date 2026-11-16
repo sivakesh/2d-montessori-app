@@ -8,6 +8,7 @@ import '../../../admin/settings/models/school_settings_model.dart' show kDefault
 import '../../../admin/settings/providers/academic_year_provider.dart';
 import '../../../admin/students/models/admission_date.dart';
 import '../../models/fee_admission.dart';
+import '../../models/fee_amount_revision.dart';
 import '../../models/fee_discount.dart';
 import '../../models/fee_due_date.dart';
 import '../../models/fee_month.dart';
@@ -48,6 +49,15 @@ class _ResolvedStructureYear {
 class _FeeAssignmentDialogState extends ConsumerState<FeeAssignmentDialog> {
   late final _service = widget.service ?? FeeService();
   final _discount = TextEditingController(text: '0');
+
+  /// Editing: the assignment's gross fee (its saved amount until revised
+  /// here) and the reason for a revision (FeeRevision).
+  final _fee = TextEditingController();
+  final _reason = TextEditingController();
+
+  /// Where the fee amount came from: entered, or the structure's current
+  /// amount (Use the fee structure's current amount).
+  String _feeSource = FeeRevision.entered;
   final _formKey = GlobalKey<FormState>();
   String _mode = 'single';
   List<dynamic> _classes = [];
@@ -103,7 +113,8 @@ class _FeeAssignmentDialogState extends ConsumerState<FeeAssignmentDialog> {
     final a = widget.assignment;
     if (a != null) {
       _mode = 'single';
-      _discount.text = a.discountAmount.toStringAsFixed(0);
+      _discount.text = a.studentDiscount != null ? a.discountAmount.toStringAsFixed(0) : _plain(a.manualDiscountAmount);
+      _fee.text = _plain(a.totalFee);
       _classId = a.classId;
       _studentId = a.studentId;
       _structureId = a.feeStructureId;
@@ -112,6 +123,38 @@ class _FeeAssignmentDialogState extends ConsumerState<FeeAssignmentDialog> {
     }
     _loadClasses();
     _loadAcademicYears();
+  }
+
+  @override
+  void dispose() {
+    _discount.dispose();
+    _fee.dispose();
+    _reason.dispose();
+    super.dispose();
+  }
+
+  /// An amount as typed: "40000", "1250.5".
+  static String _plain(double v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2);
+
+  /// Editing: the figures the assignment would have with the amounts in the
+  /// form (FeeRevision.figures: collected kept, a student discount
+  /// recalculated from its own terms).
+  FeeRevisionFigures? get _revisionFigures {
+    final a = widget.assignment;
+    if (a == null) return null;
+    return FeeRevision.figures(
+      a,
+      totalFee: double.tryParse(_fee.text.trim()) ?? double.nan,
+      // An empty discount is none, as before.
+      manualDiscount: a.studentDiscount != null ? null : (_discount.text.trim().isEmpty ? 0 : double.tryParse(_discount.text.trim()) ?? double.nan),
+      components: _selectedStructure?.components ?? const [],
+    );
+  }
+
+  /// Editing: whether the form revises the fee amount or discount.
+  bool get _revising {
+    final a = widget.assignment, f = _revisionFigures;
+    return a != null && f != null && f.error == null && FeeRevision.changes(a, f);
   }
 
   Future<void> _loadAcademicYears() async {
@@ -164,7 +207,14 @@ class _FeeAssignmentDialogState extends ConsumerState<FeeAssignmentDialog> {
   bool get _monthLocked => _identityLocked && widget.assignment!.feeMonth.isNotEmpty;
 
   void _selectStructure(String? id) => setState(() {
+        final changed = id != _structureId;
         _structureId = id;
+        // Editing (no payment yet): another structure brings its amount, as
+        // a revision to confirm with a reason.
+        if (changed && widget.assignment != null && _selectedStructure != null) {
+          _fee.text = _plain(_selectedStructure!.totalAmount);
+          _feeSource = FeeRevision.fromStructure;
+        }
         if (!_isMonthly) {
           _feeMonth = null;
           _until = null;
@@ -372,11 +422,23 @@ class _FeeAssignmentDialogState extends ConsumerState<FeeAssignmentDialog> {
       }
       feeMonth = resolved;
     }
-    // A discounted assignment keeps its own gross fee (locked), whatever the
-    // structure's total is now.
-    final totalFee = _discountLocked ? widget.assignment!.totalFee : selectedFee.totalAmount;
-    final discountAmount = double.tryParse(_discount.text) ?? 0;
-    if (discountAmount < 0 || discountAmount > totalFee) return;
+    // An existing assignment keeps its own saved amounts (whatever the
+    // structure's total is now) unless they are revised here; a new one
+    // takes the structure's.
+    final existing = widget.assignment;
+    final totalFee = existing != null ? existing.totalFee : selectedFee.totalAmount;
+    final discountAmount = existing != null ? existing.discountAmount : double.tryParse(_discount.text) ?? 0;
+    if (existing == null && (discountAmount < 0 || discountAmount > totalFee)) return;
+    final revision = existing == null ? null : _revisionFigures;
+    if (revision?.error case final e?) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e)));
+      return;
+    }
+    final revising = _revising;
+    if (revising && existing!.paidAmount > 0) {
+      final confirmed = await _confirmRevision(existing, revision!);
+      if (!confirmed || !mounted) return;
+    }
     final className = classData['name']?.toString() ?? '';
     if (_isRange) {
       await _saveRange(selectedFee, classDoc.id as String, className, totalFee, discountAmount);
@@ -393,6 +455,34 @@ class _FeeAssignmentDialogState extends ConsumerState<FeeAssignmentDialog> {
         if (_studentId == null) return;
         final studentDoc = _students.firstWhere((e) => e.id == _studentId);
         final studentData = studentDoc.data() as Map<String, dynamic>;
+        // A revision first, checked against the assignment as it was opened
+        // (refused if anything changed since), then any other details.
+        if (revising) {
+          try {
+            await _service.reviseAssignmentFee(
+              expected: existingAssignment,
+              totalFee: revision!.totalFee,
+              manualDiscount: existingAssignment.studentDiscount == null ? revision.manualDiscount : null,
+              reason: _reason.text,
+              source: _feeSource,
+              structureAmount: _selectedStructure?.totalAmount,
+            );
+          } on StateError catch (e) {
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fee not revised: ${e.message}')));
+            return;
+          } catch (e) {
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fee not revised: $e')));
+            return;
+          }
+        }
+        final othersChanged = studentDoc.id != existingAssignment.studentId ||
+            classDoc.id != existingAssignment.classId ||
+            selectedFee.id != existingAssignment.feeStructureId ||
+            feeMonth != existingAssignment.feeMonth ||
+            _dueDate != existingAssignment.dueDate;
+        if (revising && !othersChanged) {
+          _resultMessage = 'Fee revised successfully.';
+        } else {
         try {
           await _service.updateAssignment(existingAssignment.id, {
             'studentId': studentDoc.id,
@@ -406,8 +496,10 @@ class _FeeAssignmentDialogState extends ConsumerState<FeeAssignmentDialog> {
             'academicYear': resolvedYear.year!.name,
             'feeMonth': feeMonth,
             'dueDate': ?_dueDate,
-            'totalFee': totalFee,
-            'discountAmount': discountAmount,
+            // Its saved amounts (as just revised, if they were): never the
+            // structure's current total.
+            'totalFee': revising ? revision!.totalFee : totalFee,
+            'discountAmount': revising ? revision!.discount : discountAmount,
             // Locked by its student discount: the assignment's own values,
             // so an ordinary edit isn't refused because the structure's
             // current total or year resolution has changed since.
@@ -418,19 +510,20 @@ class _FeeAssignmentDialogState extends ConsumerState<FeeAssignmentDialog> {
               'academicYearId': existingAssignment.academicYearId,
               'academicYear': existingAssignment.academicYear,
               'feeMonth': existingAssignment.feeMonth,
-              'totalFee': existingAssignment.totalFee,
-              'discountAmount': existingAssignment.discountAmount,
+              'totalFee': revising ? revision!.totalFee : existingAssignment.totalFee,
+              'discountAmount': revising ? revision!.discount : existingAssignment.discountAmount,
             },
           });
         } catch (e) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Failed to update assignment: $e')),
+              SnackBar(content: Text(revising ? 'The fee was revised, but the other details were not updated: $e' : 'Failed to update assignment: $e')),
             );
           }
           return;
         }
-        _resultMessage = 'Assignment updated successfully.';
+        _resultMessage = revising ? 'Fee revised and assignment updated successfully.' : 'Assignment updated successfully.';
+        }
       } else if (_mode == 'single') {
         if (_studentId == null) return;
         final studentDoc = _students.firstWhere((e) => e.id == _studentId);
@@ -863,6 +956,142 @@ class _FeeAssignmentDialogState extends ConsumerState<FeeAssignmentDialog> {
     );
   }
 
+  /// Editing: the gross fee, its saved amount until revised, with the
+  /// fee structure's current amount offered when it differs.
+  Widget _buildFeeField() {
+    final a = widget.assignment!;
+    final structure = _selectedStructure;
+    final typed = double.tryParse(_fee.text.trim());
+    final offerStructure = structure != null && (typed == null || FeeRevision.paise(typed) != FeeRevision.paise(structure.totalAmount));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Saved fee amount: ${_money(a.totalFee)}${a.isRevised ? ' (originally ${_money(a.originalTotalFee)})' : ''}',
+          key: const Key('fee-assignment-original-fee'),
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+        ),
+        TextFormField(
+          key: const Key('fee-assignment-total-fee'),
+          controller: _fee,
+          decoration: const InputDecoration(labelText: 'Fee Amount'),
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          onChanged: (_) => setState(() => _feeSource = FeeRevision.entered),
+          validator: (v) {
+            final n = double.tryParse(v?.trim() ?? '');
+            return n == null || !n.isFinite || FeeRevision.paise(n) <= 0 ? 'Enter a fee amount greater than 0' : null;
+          },
+        ),
+        if (offerStructure)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              key: const Key('fee-assignment-use-structure'),
+              onPressed: () => setState(() {
+                _fee.text = _plain(structure.totalAmount);
+                _feeSource = FeeRevision.fromStructure;
+              }),
+              icon: const Icon(Icons.sync, size: 18),
+              label: Text('Use the fee structure\'s current amount (${_money(structure.totalAmount)})'),
+            ),
+          ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  Widget _figure(String label, String value, {Key? key, bool bold = false, Color? color}) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          children: [
+            Expanded(child: Text(label, style: const TextStyle(fontSize: 13))),
+            Text(value, key: key, style: TextStyle(fontSize: 13, fontWeight: bold ? FontWeight.w700 : FontWeight.w500, color: color)),
+          ],
+        ),
+      );
+
+  /// Editing: what a revision would do, recalculated as it is typed:
+  /// current and revised payable, collected (never changed), outstanding or
+  /// the excess held as a credit; the reason when it is a revision.
+  Widget _buildRevisionSummary() {
+    final a = widget.assignment!;
+    final f = _revisionFigures!;
+    final revising = _revising;
+    return Container(
+      key: const Key('fee-assignment-revision-summary'),
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(border: Border.all(color: Colors.black.withValues(alpha: 0.08)), borderRadius: BorderRadius.circular(12)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _figure('Current payable', _money(a.payableAmount), key: const Key('fee-assignment-revision-current-payable')),
+          if (f.error == null) ...[
+            if (a.studentDiscount != null)
+              _figure('Student discount (recalculated)', _money(f.studentDiscount), key: const Key('fee-assignment-revision-student-discount')),
+            _figure(revising ? 'Revised payable' : 'Payable', _money(f.payable), key: const Key('fee-assignment-revision-payable'), bold: true),
+            _figure('Already collected', _money(f.collected), key: const Key('fee-assignment-revision-collected'), color: Colors.green.shade800),
+            _figure('Outstanding', _money(f.outstanding),
+                key: const Key('fee-assignment-revision-outstanding'), bold: true, color: f.outstanding > 0 ? Colors.red.shade800 : null),
+            if (f.excess > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  '${_money(f.excess)} already collected is more than the revised payable. It will be shown on this assignment as an '
+                  'excess collected (a credit held). No refund is recorded and no receipt is changed: settle it outside the app '
+                  'as your school\'s policy requires.',
+                  key: const Key('fee-assignment-revision-excess'),
+                  style: TextStyle(fontSize: 12, color: Colors.orange.shade900),
+                ),
+              ),
+          ] else
+            Text(f.error!, key: const Key('fee-assignment-revision-error'), style: TextStyle(fontSize: 12, color: Colors.red.shade800)),
+          if (a.paidAmount > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                'Changing the fee amount does not change the payments already recorded or their receipts.',
+                key: const Key('fee-assignment-revision-receipts-note'),
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+              ),
+            ),
+          if (revising)
+            TextFormField(
+              key: const Key('fee-assignment-revision-reason'),
+              controller: _reason,
+              maxLength: 500,
+              decoration: const InputDecoration(labelText: 'Reason for revising the fee *'),
+              validator: (v) => _revising && (v?.trim() ?? '').isEmpty ? FeeService.revisionReasonMessage : null,
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Before revising an assignment with payments: what changes and what
+  /// doesn't. True to go ahead.
+  Future<bool> _confirmRevision(StudentFeeAssignmentModel a, FeeRevisionFigures f) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          key: const Key('fee-revision-confirm'),
+          title: const Text('Revise this fee?'),
+          content: Text(
+            '${a.studentName}: payable ${_money(a.payableAmount)} → ${_money(f.payable)}. '
+            '${_money(f.collected)} has already been collected; those payments and their receipts are not changed. '
+            '${f.excess > 0 ? '${_money(f.excess)} collected will be more than the revised payable and is held as a credit (no refund is recorded). ' : 'Outstanding will be ${_money(f.outstanding)}. '}'
+            'The revision is recorded with your reason.',
+          ),
+          actions: [
+            TextButton(key: const Key('fee-revision-confirm-cancel'), onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+            FilledButton(key: const Key('fee-revision-confirm-ok'), onPressed: () => Navigator.pop(context, true), child: const Text('Revise fee')),
+          ],
+        ),
+      ) ==
+      true;
+
+
   @override
   Widget build(BuildContext context) {
     final isEdit = widget.assignment != null;
@@ -901,7 +1130,8 @@ class _FeeAssignmentDialogState extends ConsumerState<FeeAssignmentDialog> {
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Text(
                       'This assignment has a student discount, calculated for its student, fee, academic year and period, '
-                      'so those and the discount cannot be changed. The due date can still be edited.',
+                      'so those and the discount terms cannot be changed. The due date can still be edited, and the fee amount '
+                      'revised below (the student discount is then recalculated from its own terms).',
                       key: const Key('fee-assignment-discount-locked'),
                       style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
                     ),
@@ -911,8 +1141,8 @@ class _FeeAssignmentDialogState extends ConsumerState<FeeAssignmentDialog> {
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Text(
                       'This assignment already has a payment recorded against it, '
-                      'so the student, fee structure, and total fee cannot be changed. '
-                      'Only the discount can be edited here.',
+                      'so the student and fee structure cannot be changed. '
+                      'The fee amount and discount can be revised below; recorded payments and receipts are not changed.',
                       style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
                     ),
                   ),
@@ -977,6 +1207,7 @@ class _FeeAssignmentDialogState extends ConsumerState<FeeAssignmentDialog> {
                 _buildDiscountNote(),
                 if (_selectedStructure != null) _isRange ? _buildDueRuleField() : _buildDueDateField(),
                 const SizedBox(height: 16),
+                if (widget.assignment != null) _buildFeeField(),
                 if (widget.assignment?.studentDiscount case final snap?)
                   TextFormField(
                     key: const Key('fee-assignment-discount'),
@@ -997,6 +1228,7 @@ class _FeeAssignmentDialogState extends ConsumerState<FeeAssignmentDialog> {
                     keyboardType: TextInputType.number,
                     onChanged: (_) => setState(() {}),
                   ),
+                if (widget.assignment != null) _buildRevisionSummary(),
               ],
             ),
           ),

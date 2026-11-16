@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'fee_amount_revision.dart';
 import 'fee_discount.dart';
 
 class StudentFeeAssignmentModel {
@@ -25,6 +26,8 @@ class StudentFeeAssignmentModel {
     this.feeMonth = '',
     this.dueDate,
     this.studentDiscount,
+    this.feeRevision = 0,
+    this.revisions = const [],
   });
   final String id, studentId, studentName, admissionNo, classId, className, feeStructureId, feeStructureName, academicYear, status;
 
@@ -53,6 +56,28 @@ class StudentFeeAssignmentModel {
   /// discounts existed). [discountAmount] is always the total discount:
   /// this plus any manual discount.
   final FeeDiscountSnapshot? studentDiscount;
+
+  /// How many times its fee amount has been revised (FeeRevision); 0 for
+  /// every assignment never revised, including all made before revisions
+  /// existed. Also the version a revision must start from (concurrency).
+  final int feeRevision;
+
+  /// Its fee revisions, oldest first (empty: never revised).
+  final List<FeeAmountRevision> revisions;
+
+  bool get isRevised => revisions.isNotEmpty;
+
+  /// The gross fee before its first revision (its [totalFee] when never
+  /// revised).
+  double get originalTotalFee => revisions.isEmpty ? totalFee : revisions.first.previousTotalFee;
+
+  /// Collected above [payableAmount] (after the fee was revised below what
+  /// had been collected): a credit held, never refunded automatically; 0
+  /// otherwise. Derived, so it stays right when a receipt is voided.
+  double get excessCollected {
+    final p = (paidAmount * 100).round() - (payableAmount * 100).round();
+    return p > 0 ? p / 100 : 0;
+  }
 
   /// The student-discount part of [discountAmount].
   double get studentDiscountAmount => studentDiscount?.amount ?? 0;
@@ -91,6 +116,10 @@ class StudentFeeAssignmentModel {
       feeMonth: data['feeMonth']?.toString() ?? '',
       dueDate: d(data['dueDate']),
       studentDiscount: FeeDiscountSnapshot.fromMap(data[FeeDiscountSnapshot.field]),
+      feeRevision: (data[FeeRevision.revisionField] as num?)?.toInt() ?? 0,
+      revisions: [
+        for (final r in (data[FeeRevision.historyField] as List? ?? const [])) ?FeeAmountRevision.fromMap(r),
+      ],
     );
   }
   Map<String, dynamic> toMap() => {
@@ -98,5 +127,7 @@ class StudentFeeAssignmentModel {
     if (feeMonth.isNotEmpty) 'feeMonth': feeMonth,
     'dueDate': ?dueDate,
     if (studentDiscount case final s?) FeeDiscountSnapshot.field: s.toMap(),
+    if (feeRevision > 0) FeeRevision.revisionField: feeRevision,
+    if (revisions.isNotEmpty) FeeRevision.historyField: [for (final r in revisions) r.toMap()],
   };
 }

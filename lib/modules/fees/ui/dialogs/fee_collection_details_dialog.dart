@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../models/fee_collection_record.dart';
@@ -94,7 +95,13 @@ class _FeeCollectionDetailsDialogState extends State<FeeCollectionDetailsDialog>
     final receiptsTotal = history?.where((r) => r.counts).fold<double>(0, (sum, r) => sum + r.receipt.amount);
     final mismatch = receiptsTotal != null && (receiptsTotal * 100).round() != (_a.paidAmount * 100).round();
     return _section('Financial summary', key: const Key('collection-details-summary'), [
-      _row('Original fee', formatFeeMoney(_a.totalFee), key: const Key('collection-details-total-fee')),
+      // The assignment's own saved amounts, never the fee structure's
+      // current total. Revised: the amount before its first revision too.
+      if (_a.isRevised) ...[
+        _row('Original fee', formatFeeMoney(_a.originalTotalFee), key: const Key('collection-details-original-fee')),
+        _row('Revised fee', formatFeeMoney(_a.totalFee), key: const Key('collection-details-total-fee')),
+      ] else
+        _row('Original fee', formatFeeMoney(_a.totalFee), key: const Key('collection-details-total-fee')),
       _row('Discount', formatFeeMoney(_a.discountAmount), key: const Key('collection-details-discount')),
       if (_a.studentDiscount case final snap?) ...[
         _row('Student discount', snap.label, key: const Key('collection-details-student-discount')),
@@ -109,6 +116,18 @@ class _FeeCollectionDetailsDialogState extends State<FeeCollectionDetailsDialog>
         bold: true,
         color: _a.balanceAmount > 0 ? Colors.red.shade800 : null,
       ),
+      if (_a.excessCollected > 0) ...[
+        _row('Excess collected (credit held)', formatFeeMoney(_a.excessCollected), key: const Key('collection-details-excess'), color: Colors.orange.shade900),
+        Padding(
+          key: const Key('collection-details-excess-note'),
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            'More has been collected than the revised payable. No refund has been recorded and the receipts are unchanged; '
+            'settle the excess outside the app as your school\'s policy requires.',
+            style: TextStyle(fontSize: 12, color: Colors.orange.shade900),
+          ),
+        ),
+      ],
       if (mismatch)
         Padding(
           key: const Key('collection-details-total-mismatch'),
@@ -118,6 +137,37 @@ class _FeeCollectionDetailsDialogState extends State<FeeCollectionDetailsDialog>
             '${formatFeeMoney(_a.paidAmount)} collected. The figures above are the assignment\'s recorded amounts; '
             'some payments may have been recorded before receipts were linked to assignments.',
             style: TextStyle(fontSize: 12, color: Colors.orange.shade900),
+          ),
+        ),
+    ]);
+  }
+
+  /// Its fee revisions (FeeRevision), oldest first: shown only when it has
+  /// been revised.
+  Widget _revisionsSection() {
+    final when = DateFormat('d MMM yyyy, h:mm a');
+    return _section('Fee revisions', key: const Key('collection-details-revisions'), [
+      for (final r in _a.revisions)
+        Padding(
+          key: Key('collection-details-revision-${r.revision}'),
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Fee ${formatFeeMoney(r.previousTotalFee)} → ${formatFeeMoney(r.newTotalFee)} · payable '
+                '${formatFeeMoney(r.previousPayable)} → ${formatFeeMoney(r.newPayable)}'
+                '${(r.previousDiscount * 100).round() != (r.newDiscount * 100).round() ? ' · discount ${formatFeeMoney(r.previousDiscount)} → ${formatFeeMoney(r.newDiscount)}' : ''}',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+              Text(
+                '${r.revisedAt == null ? '' : '${when.format(r.revisedAt!)} · '}${r.revisedByName.isEmpty ? 'Admin' : r.revisedByName}'
+                ' · ${formatFeeMoney(r.collected)} collected at the time'
+                '${r.source == 'structure' ? ' · the fee structure\'s amount' : ''}',
+                style: const TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+              if (r.reason.isNotEmpty) Text('Reason: ${r.reason}', style: const TextStyle(fontSize: 12)),
+            ],
           ),
         ),
     ]);
@@ -182,6 +232,7 @@ class _FeeCollectionDetailsDialogState extends State<FeeCollectionDetailsDialog>
           children: [
             _assignmentSection(),
             _summarySection(snapshot.data),
+            if (_a.isRevised) _revisionsSection(),
             _historySection(snapshot),
           ],
         ),
