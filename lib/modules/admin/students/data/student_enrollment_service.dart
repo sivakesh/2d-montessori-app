@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../parent/data/parent_projection_service.dart';
 
 import '../models/student_enrollment_model.dart';
 
@@ -266,6 +267,9 @@ class StudentEnrollmentService {
         'classId': classId,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      // The class reaches the parents' copy and access (class-targeted
+      // notifications); never throws (docs/parent_access_security.md).
+      await ParentProjectionService(firestore: _firestore).syncStudentQuietly(studentId, updatedBy: actorId);
     }
   }
 }

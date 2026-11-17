@@ -23,6 +23,7 @@ import '../students/models/admission_date.dart';
 import '../students/ui/student_fee_discount_dialog.dart';
 import '../../fees/models/fee_discount.dart';
 import '../students/models/student_enrollment_model.dart';
+import '../../parent/data/parent_link_service.dart';
 import '../students/providers/student_enrollment_provider.dart';
 
 /// The exact, and only, set of values the Parents tab's "Relationship"
@@ -914,47 +915,38 @@ class _AdminStudentFormState extends ConsumerState<AdminStudentForm>
       debugPrint('Student ID being updated for parents: $studentId');
       debugPrint('Parent links before save: $_parentLinks');
 
-      final linksRef =
-          FirebaseFirestore.instance.collection('user_student_links');
+      // Link records and the student's parentLinks are saved together in
+      // one atomic batch (ParentLinkService), then the affected parents'
+      // access and this student's parent-safe profile are refreshed.
+      final links = ParentLinkService();
+      final entries = [
+        for (final e in _parentLinks)
+          if ((e['id']?.toString() ?? '').isNotEmpty)
+            ParentLinkEntry(
+              userId: e['id'].toString(),
+              relation: e['relation']?.toString() ?? 'Guardian',
+              name: e['name']?.toString() ?? '',
+              email: e['email']?.toString() ?? '',
+              phone: e['phone']?.toString() ?? '',
+            ),
+      ];
+      final saved = await links.saveLinksForStudent(studentId: studentId, parents: entries);
+      final normalizedParents = [for (final p in entries) {'userId': p.userId, 'relation': p.relation}];
 
-      final existing = await linksRef
-          .where('studentId', isEqualTo: studentId)
-          .get();
-
-      for (final doc in existing.docs) {
-        await doc.reference.delete();
+      // The links are already saved, so a failure here is reported
+      // separately, never as a failed save.
+      var message = 'Parents saved successfully';
+      try {
+        final user = ref.read(currentUserProvider);
+        final accessIssues = await links.refresh(saved, requesterRole: user?.role ?? '', updatedBy: user?.id ?? '');
+        final unresolved = accessIssues.where((i) => i.kind.unresolved && i.studentId == studentId).toList();
+        if (unresolved.isNotEmpty) {
+          message = 'Parents saved. Parent access needs attention: ${unresolved.map((i) => i.kind.label).toSet().join('; ')}.';
+        }
+      } catch (e) {
+        debugPrint('PARENT ACCESS REFRESH ERROR: $e');
+        message = "Parents saved, but parent access couldn't be refreshed. Run Settings → Parent access.";
       }
-
-      for (final parent in _parentLinks) {
-        final parentId = parent['id']?.toString() ?? '';
-        if (parentId.isEmpty) continue;
-
-        await linksRef.add({
-          'userId': parentId,
-          'studentId': studentId,
-          'relation': parent['relation'] ?? 'Guardian',
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-      }
-
-      final normalizedParents = _parentLinks
-          .where((e) => (e['id']?.toString() ?? '').isNotEmpty)
-          .map((e) => {
-                'userId': e['id'],
-                'name': e['name'] ?? '',
-                'email': e['email'] ?? '',
-                'phone': e['phone'] ?? '',
-                'relation': e['relation'] ?? 'Guardian',
-                'linkedAt': Timestamp.now(),
-              })
-          .toList();
-
-      await FirebaseFirestore.instance
-          .collection('students')
-          .doc(studentId)
-          .set({
-        'parentLinks': normalizedParents,
-      }, SetOptions(merge: true));
 
       debugPrint('Parent links after save: $normalizedParents');
 
@@ -963,7 +955,7 @@ class _AdminStudentFormState extends ConsumerState<AdminStudentForm>
       debugPrint("Saved Parents SUCCESS");
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Parents saved successfully')),
+        SnackBar(content: Text(message)),
       );
     } catch (e) {
       debugPrint("SAVE PARENTS ERROR: $e");

@@ -6,6 +6,9 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/responsive_dialog_shell.dart';
 import '../../admin/students/models/admin_student_model.dart';
 import '../../finance/widgets/finance_status_chip.dart';
+import '../data/parent_file_service.dart';
+import '../data/parent_service.dart';
+import 'parent_child_avatar.dart';
 
 /// Read-only Child Profile — reached from the Parent Dashboard's selected
 /// child card, never as its own navigation destination. Displays only
@@ -24,6 +27,10 @@ void showChildProfile(
   required AdminStudentModel child,
   required String className,
   required String academicYear,
+  String photoPath = '',
+  List<ParentChildDocument> documents = const [],
+  List<ParentChildGuardian> guardians = const [],
+  ParentFileService? fileService,
 }) {
   showDialog<void>(
     context: context,
@@ -35,6 +42,10 @@ void showChildProfile(
         child: child,
         className: className,
         academicYear: academicYear,
+        photoPath: photoPath,
+        documents: documents,
+        guardians: guardians,
+        fileService: fileService,
       ),
     ),
   );
@@ -45,11 +56,23 @@ class _ChildProfileContent extends StatelessWidget {
     required this.child,
     required this.className,
     required this.academicYear,
+    this.photoPath = '',
+    this.documents = const [],
+    this.guardians = const [],
+    this.fileService,
   });
 
   final AdminStudentModel child;
   final String className;
   final String academicYear;
+
+  /// From the parent-safe profile (docs/parent_access_security.md): the
+  /// photo and documents by Storage path (downloaded through the Storage
+  /// rules), and the parents/guardians by name and relationship only.
+  final String photoPath;
+  final List<ParentChildDocument> documents;
+  final List<ParentChildGuardian> guardians;
+  final ParentFileService? fileService;
 
   @override
   Widget build(BuildContext context) {
@@ -68,6 +91,16 @@ class _ChildProfileContent extends StatelessWidget {
       if (_formatDate(child.dateOfBirth) case final dob?)
         ('Date of Birth', dob),
       if (child.gender.isNotEmpty) ('Gender', child.gender),
+      if (child.admissionDate case final d?) ('Admission Date', DateFormat('d MMM yyyy').format(d)),
+      if (child.bloodGroup.isNotEmpty) ('Blood Group', child.bloodGroup),
+      if (child.nationality.isNotEmpty) ('Nationality', child.nationality),
+      if (child.motherTongue.isNotEmpty) ('Mother Tongue', child.motherTongue),
+      if ([child.addressLine1, child.addressLine2, child.city, child.state, child.pincode].where((p) => p.trim().isNotEmpty).join(', ') case final a when a.isNotEmpty)
+        ('Address', a),
+    ];
+    final guardianRows = <(String, String)>[
+      for (final g in guardians)
+        if (g.name.isNotEmpty || g.relation.isNotEmpty) (g.relation.isEmpty ? 'Parent / Guardian' : g.relation, g.name.isEmpty ? '-' : g.name),
     ];
 
     return Column(
@@ -75,23 +108,7 @@ class _ChildProfileContent extends StatelessWidget {
       children: [
         Column(
           children: [
-            CircleAvatar(
-              radius: 36,
-              backgroundColor: AppColors.primary.withValues(alpha: 0.1),
-              backgroundImage: child.profileImageUrl.isNotEmpty
-                  ? NetworkImage(child.profileImageUrl)
-                  : null,
-              child: child.profileImageUrl.isEmpty
-                  ? Text(
-                      child.name.isNotEmpty ? child.name[0].toUpperCase() : '?',
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.primary,
-                      ),
-                    )
-                  : null,
-            ),
+            ParentChildAvatar(name: child.name, studentId: child.id, photoPath: photoPath, photoUrl: child.profileImageUrl, fileService: fileService),
             const SizedBox(height: 12),
             Text(
               child.name.isNotEmpty ? child.name : 'Unnamed student',
@@ -122,6 +139,34 @@ class _ChildProfileContent extends StatelessWidget {
         ),
         const SizedBox(height: 24),
         _ProfileSection(title: 'Student Details', rows: rows),
+        if (guardianRows.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          _ProfileSection(title: 'Parents & Guardians', rows: guardianRows),
+        ],
+        if (documents.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Text('Documents', style: Theme.of(context).textTheme.titleSmall),
+          for (final d in documents)
+            ListTile(
+              key: Key('parent-child-document-${d.storagePath}'),
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.description_outlined),
+              title: Text(d.name.isEmpty ? d.storagePath.split('/').last : d.name),
+              subtitle: d.type.isEmpty ? null : Text(d.type),
+              trailing: const Icon(Icons.download_outlined),
+              onTap: () async {
+                final messenger = ScaffoldMessenger.maybeOf(context);
+                var ok = false;
+                final files = fileService;
+                try {
+                  // Father/Mother only, and only a document listed for
+                  // this child (checked by ParentFileService).
+                  ok = files != null && await files.downloadChildDocument(studentId: child.id, storagePath: d.storagePath, fileName: d.storagePath.split('/').last);
+                } catch (_) {}
+                if (!ok) messenger?.showSnackBar(const SnackBar(content: Text('Could not download the document.')));
+              },
+            ),
+        ],
       ],
     );
   }

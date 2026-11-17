@@ -11,6 +11,9 @@ import '../../admin/settings/models/academic_year_matching.dart';
 import '../../admin/settings/models/school_settings_model.dart' show kDefaultSchoolId;
 import '../../admin/settings/providers/academic_year_provider.dart';
 import '../../admin/students/models/admin_student_model.dart';
+import '../../calendar/models/calendar_event_model.dart';
+import '../../calendar/services/calendar_service.dart';
+import '../../calendar/ui/calendar_event_detail_dialog.dart';
 import '../../calendar/ui/calendar_view.dart';
 import '../../admin/notifications/data/admin_notification_service.dart';
 import '../../admin/notifications/models/admin_notification_model.dart';
@@ -32,16 +35,26 @@ import '../../mood_checkin/services/mood_checkin_service.dart';
 import '../../mood_checkin/widgets/mood_option_chip.dart';
 import '../../notifications/ui/notification_relevance.dart';
 import '../../notifications/ui/notifications_feed_screen.dart';
+import '../data/parent_access.dart' show parentFeesRestrictedMessage;
+import '../data/parent_family_overview.dart';
+import '../data/parent_file_service.dart';
 import '../data/parent_service.dart';
 import 'parent_attendance_history_view.dart';
+import 'parent_app_bar.dart';
+import 'parent_child_avatar.dart';
 import 'parent_child_profile_view.dart';
+import 'parent_family_overview.dart';
 import 'parent_notifications_screen.dart';
 
-/// Parent MVP home screen — read-only. Answers "what's happening with my
-/// child, and what does the school need me to know?" using only existing
-/// collections/services (ParentService, AttendanceService, FeeService,
-/// AdminNotificationService); no parent-specific Firestore data is written
-/// or duplicated here beyond what those services already own.
+/// Parent home screen — read-only. With several linked children it opens on
+/// the family overview (every child's card, family summary, notices and
+/// upcoming events) and each card opens that child's own dashboard; with
+/// one child it is a single page for that child. Everything shown comes from
+/// existing services and the parent-safe copies (ParentService,
+/// ParentFamilyOverviewLoader, AdminNotificationService, LeaveService,
+/// CalendarService); nothing is written here. Access checks are in the app;
+/// server-side enforcement depends on the security rules
+/// (docs/parent_access_security.md).
 class ParentDashboard extends ConsumerStatefulWidget {
   const ParentDashboard({
     super.key,
@@ -52,6 +65,8 @@ class ParentDashboard extends ConsumerStatefulWidget {
     this.classService,
     this.moodCheckinService,
     this.leaveService,
+    this.calendarService,
+    this.fileSaver,
   });
 
   /// Overridable only so tests can inject fake-Firestore-backed services —
@@ -64,6 +79,11 @@ class ParentDashboard extends ConsumerStatefulWidget {
   final ClassService? classService;
   final MoodCheckinService? moodCheckinService;
   final LeaveService? leaveService;
+  final CalendarService? calendarService;
+
+  /// Where downloaded files go; tests only (production: the browser
+  /// download / share sheet, ParentFileService's default).
+  final ParentFileSaver? fileSaver;
 
   @override
   ConsumerState<ParentDashboard> createState() => _ParentDashboardState();
@@ -74,6 +94,7 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
   // are role-aware and offer exactly [Dashboard, Calendar, Leave, Fees] for
   // role == 'parent', in that order.
   int selectedIndex = 0;
+  static const _calendarTab = 1, _feesTab = 3;
 
   late final _parentService = widget.parentService ?? ParentService();
   late final _attendanceService =
@@ -86,34 +107,65 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
       widget.moodCheckinService ?? MoodCheckinService();
   late final _leaveService = widget.leaveService ?? LeaveService();
 
+  /// Protected downloads (photos, documents, bills) for the signed-in
+  /// parent, created only once their access record is in use (the
+  /// parent-safe copies); before that, nothing is downloaded through it.
+  ParentFileService? _fileService;
+
   bool _loading = true;
+  List<LinkedChild> _linked = const [];
   List<AdminStudentModel> _children = const [];
   Map<String, String> _classNames = const {};
   Map<String, String> _classAcademicYears = const {};
+
+  /// Linked children whose profile couldn't be shown (ParentFamily).
+  int _unavailableChildren = 0;
+
+  /// The child whose own dashboard is shown (or, on the family overview,
+  /// the one last opened). Kept across tabs and refreshes while linked.
   String _selectedChildId = '';
-  Map<String, dynamic>? _todayAttendance;
-  List<StudentFeeAssignmentModel> _feeAssignments = const [];
-  bool _loadingChildDetail = false;
+
+  /// A family (several children) is looking at one child's dashboard
+  /// rather than the family overview.
+  bool _showingChild = false;
+
+  /// studentId → that child's overview (attendance, fees, payments, bills),
+  /// loaded once per dashboard load, one child at a time; a child missing
+  /// here is still loading.
+  Map<String, ParentChildOverview> _overviews = const {};
+  int _loadGeneration = 0;
+  DateTime? _updatedAt;
+
+  /// studentId → the linked child (photo path, documents, guardians from the
+  /// parent-safe profile).
+  Map<String, LinkedChild> _linkedById = const {};
 
   /// The Published, `audience == 'Parents'` notifications for this parent's
   /// account, straight from [AdminNotificationService.
-  /// getNotificationsForAudience] — deliberately NOT pre-filtered by any
-  /// child here. Which of these are relevant is re-derived per the
-  /// *currently selected* child at build time (see `build`'s
-  /// `notificationsForSelectedChild`), not fixed once at load time — a
-  /// notification targeted to one linked child must disappear from the
-  /// Dashboard preview the moment a different child is selected, even
+  /// getNotificationsForParent] — deliberately NOT pre-filtered by any
+  /// child here. Which of these are relevant is re-derived at build time:
+  /// for the family overview against all the children, for one child's
+  /// dashboard against exactly that child — a notification targeted to one
+  /// linked child must disappear from another child's dashboard, even
   /// though both children belong to the same parent account.
   List<AdminNotificationModel> _parentNotifications = const [];
   bool _notificationsError = false;
 
   /// Every linked child's leave history, resolved server-side by
   /// LeaveService.getStudentRequestsForParent (never trusts a client-
-  /// supplied student id) — filtered down to the *currently selected*
-  /// child at build time, the same "fetch once for the account, filter per
-  /// selected child at build" shape `_parentNotifications` already uses.
+  /// supplied student id) — filtered down to one child at build time.
   List<LeaveRequestModel> _studentLeaveRequests = const [];
   bool _leaveRequestsError = false;
+
+  /// Published Parents/Public calendar items (CalendarService).
+  List<CalendarEventModel> _events = const [];
+  bool _eventsLoading = true;
+  bool _eventsError = false;
+
+  /// The dashboard page's scroll position: back to the top when switching
+  /// between the family overview and a child's dashboard, so each opens at
+  /// its start (selector and Family overview button in view).
+  final _scroll = ScrollController();
 
   @override
   void initState() {
@@ -121,12 +173,26 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
     _loadDashboard();
   }
 
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _scrollToTop() {
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+  }
+
   Future<void> _loadDashboard() async {
     setState(() => _loading = true);
     final user = ref.read(currentUserProvider);
     final userId = user?.id ?? '';
 
-    final children = await _parentService.getLinkedStudents(userId);
+    final family = await _parentService.getFamily(userId);
+    final linkedChildren = family.children;
+    final children = [for (final c in linkedChildren) c.student];
+    final linkedById = {for (final c in linkedChildren) c.student.id: c};
+    final fileService = linkedChildren.any((c) => c.fromProjection) ? ParentFileService(parentUserId: userId, firestore: _parentService.firestore, save: widget.fileSaver) : null;
     final classes = await _classService.getClasses();
     final classNames = <String, String>{
       for (final doc in classes) doc.id: doc.data()['name']?.toString() ?? '-',
@@ -162,14 +228,19 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
     // a transient failure here (e.g. a network blip) only degrades the
     // Notifications card — it never blocks the rest of the dashboard from
     // loading, and never leaves the user stuck on an infinite spinner.
-    // Not filtered by any child here — see `_parentNotifications`'s doc
-    // comment for why that has to happen per selected child at build time
-    // instead.
     List<AdminNotificationModel> parentNotifications = const [];
     var notificationsError = false;
     try {
+      // Only notices this parent may receive are queried — never ones
+      // targeted at other students (AdminNotificationService.
+      // getNotificationsForParent); per-child relevance is still decided
+      // at build time below.
       parentNotifications = await _notificationService
-          .getNotificationsForAudience('Parents');
+          .getNotificationsForParent(
+            parentUserId: userId,
+            childStudentIds: {for (final c in children) c.id},
+            childClassIds: {for (final c in children) if (c.classId.isNotEmpty) c.classId},
+          );
     } catch (_) {
       notificationsError = true;
     }
@@ -187,42 +258,128 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
     }
 
     if (!mounted) return;
+    final generation = ++_loadGeneration;
     setState(() {
+      _linked = linkedChildren;
       _children = children;
+      _unavailableChildren = family.unavailable;
+      _linkedById = linkedById;
+      _fileService = fileService;
       _classNames = classNames;
       _classAcademicYears = classAcademicYears;
       _parentNotifications = parentNotifications;
       _notificationsError = notificationsError;
       _studentLeaveRequests = studentLeaveRequests;
       _leaveRequestsError = leaveRequestsError;
-      _selectedChildId = children.isNotEmpty ? children.first.id : '';
+      // The selected child stays selected while still linked.
+      if (!children.any((c) => c.id == _selectedChildId)) {
+        _selectedChildId = children.isNotEmpty ? children.first.id : '';
+      }
+      if (children.length < 2) _showingChild = false;
+      // Every child's figures are reloaded (each card shows it is loading)
+      // rather than showing the previous load's figures as current.
+      _overviews = const {};
+      _updatedAt = null;
       _loading = false;
     });
 
-    if (_selectedChildId.isNotEmpty) {
-      await _loadChildDetail(_selectedChildId);
-    }
+    await Future.wait([
+      _loadEvents(generation),
+      _loadOverviews(generation, linkedChildren, studentLeaveRequests),
+    ]);
   }
 
-  Future<void> _loadChildDetail(String studentId) async {
-    setState(() => _loadingChildDetail = true);
-    final attendance = await _attendanceService.getAttendanceForEntity(
-      entityType: 'student',
-      entityId: studentId,
-    );
-    final assignments = await _feeService.getAssignmentsForStudent(studentId);
-    if (!mounted) return;
+  ParentFamilyOverviewLoader get _overviewLoader => ParentFamilyOverviewLoader(
+        parentService: _parentService,
+        attendanceService: _attendanceService,
+        feeService: _feeService,
+        fileService: _fileService,
+      );
+
+  /// Each child's overview, one child at a time (a family's requests are
+  /// never all fired at once); each card appears as soon as its child is
+  /// done, and one child's failure stays on that child's card.
+  Future<void> _loadOverviews(int generation, List<LinkedChild> children, List<LeaveRequestModel> leave) async {
+    final loader = _overviewLoader;
+    for (final child in children) {
+      final overview = await loader.load(child, leaveRequests: leave);
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() => _overviews = {..._overviews, child.student.id: overview});
+    }
+    if (!mounted || generation != _loadGeneration) return;
+    setState(() => _updatedAt = DateTime.now());
+  }
+
+  /// Reloads one child's overview (its card's Retry).
+  Future<void> _retryChild(String studentId) async {
+    final linked = _linkedById[studentId];
+    if (linked == null) return;
+    final generation = _loadGeneration;
+    setState(() => _overviews = {..._overviews}..remove(studentId));
+    final overview = await _overviewLoader.load(linked, leaveRequests: _studentLeaveRequests);
+    if (!mounted || generation != _loadGeneration) return;
+    setState(() => _overviews = {..._overviews, studentId: overview});
+  }
+
+  Future<void> _loadEvents(int generation) async {
     setState(() {
-      _todayAttendance = attendance;
-      _feeAssignments = assignments;
-      _loadingChildDetail = false;
+      _eventsLoading = true;
+      _eventsError = false;
+    });
+    var events = const <CalendarEventModel>[];
+    var failed = false;
+    try {
+      // The same Published Parents/Public items the Calendar tab shows.
+      events = await (widget.calendarService ?? CalendarService(firestore: _parentService.firestore)).getEventsForAudience('Parents');
+    } catch (_) {
+      failed = true;
+    }
+    if (!mounted || generation != _loadGeneration) return;
+    setState(() {
+      _events = events;
+      _eventsError = failed;
+      _eventsLoading = false;
     });
   }
 
+  /// Opens [studentId]'s own dashboard (for a family, from the overview).
   void _selectChild(String studentId) {
-    if (studentId == _selectedChildId) return;
-    setState(() => _selectedChildId = studentId);
-    _loadChildDetail(studentId);
+    final fromFamily = !_showingChild;
+    setState(() {
+      _selectedChildId = studentId;
+      _showingChild = _children.length > 1;
+    });
+    if (fromFamily) _scrollToTop();
+  }
+
+  void _showFamilyOverview() {
+    setState(() => _showingChild = false);
+    _scrollToTop();
+  }
+
+  void _openTab(int index) => setState(() => selectedIndex = index);
+
+  void _openEvent(CalendarEventModel event) => showCalendarEventDetail(context, event, isAdmin: false);
+
+  void _openPayments(LinkedChild child) {
+    final finance = _overviews[child.student.id]?.finance;
+    if (finance == null) return;
+    showParentPaymentHistory(context, childName: child.student.name, payments: finance.payments);
+  }
+
+  void _openBills(LinkedChild child) {
+    final finance = _overviews[child.student.id]?.finance;
+    if (finance == null) return;
+    // The dialog says why when the bills can't be shown.
+    showParentIssuedBills(
+      context,
+      childName: child.student.name,
+      finance: finance,
+      onRetry: () => _retryChild(child.student.id),
+      // The service re-reads the bill and checks this parent's access
+      // before building the PDF.
+      onDownload: _fileService == null ? null : (bill) => _fileService!.downloadFeeBillById(bill.id),
+    );
   }
 
   Future<void> _openRequestLeave() async {
@@ -260,9 +417,216 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
         builder: (_) => ParentNotificationsScreen(
           childStudentIds: childStudentIds,
           childClassIds: childClassIds,
+          parentUserId: ref.read(currentUserProvider)?.id ?? '',
         ),
       ),
     );
+  }
+
+  /// Notices relevant to [children] (the same relevance rule as the
+  /// Notifications screen).
+  List<AdminNotificationModel> _noticesFor(Iterable<AdminStudentModel> children) => [
+        for (final n in _parentNotifications)
+          if (isNotificationRelevantToParent(
+            n,
+            childStudentIds: {for (final c in children) c.id},
+            childClassIds: {for (final c in children) if (c.classId.isNotEmpty) c.classId},
+          ))
+            n,
+      ];
+
+  /// Notices aimed at [child] or their class specifically (not
+  /// school-wide).
+  int _childNotices(AdminStudentModel child) => _noticesFor([child])
+      .where((n) => !(n.audience == 'Public' || n.isPublic || n.appliesToAllClasses || n.appliesToAllStudents))
+      .length;
+
+  List<ParentSummaryTile> _summaryTiles() {
+    final totals = ParentFamilyTotals.of(_linked, _overviews);
+    final family = _children.length > 1;
+    final upcoming = upcomingParentEvents(_events);
+    final soon = DateUtils.dateOnly(DateTime.now()).add(const Duration(days: 30));
+    String todayValue() {
+      if (totals.presentToday == null) return _overviews.length < _linked.length ? '…' : 'Unavailable';
+      if (!family) return parentAttendanceStyle(_overviews[_children.first.id]?.attendance?.todayStatus).$1;
+      return '${totals.presentToday} of ${totals.children}';
+    }
+
+    return [
+      if (family)
+        ParentSummaryTile(key: const Key('parent-summary-children'), icon: Icons.family_restroom_outlined, label: 'Children', value: '${totals.children}', caption: 'linked to your account'),
+      ParentSummaryTile(
+        key: const Key('parent-summary-attendance'),
+        icon: Icons.how_to_reg_outlined,
+        label: 'Attendance today',
+        value: todayValue(),
+        caption: family ? 'present today' : '',
+      ),
+      // Only children whose Father or Mother this parent is; none: no
+      // financial figure at all.
+      if (totals.financeChildren > 0)
+        ParentSummaryTile(
+          key: const Key('parent-summary-outstanding'),
+          icon: Icons.account_balance_wallet_outlined,
+          label: 'Outstanding fees',
+          value: totals.outstanding != null
+              ? parentMoney(totals.outstanding!)
+              : totals.financeIncomplete
+                  ? 'Unavailable'
+                  : '…',
+          caption: totals.financeIncomplete
+              ? "Some fees couldn't load"
+              : family && totals.financeChildren < totals.children
+                  ? 'for ${totals.financeChildren} of ${totals.children} children'
+                  : '',
+          onTap: () => _openTab(_feesTab),
+        ),
+      ParentSummaryTile(
+        key: const Key('parent-summary-events'),
+        icon: Icons.event_outlined,
+        label: 'Upcoming events',
+        value: _eventsLoading ? '…' : _eventsError ? 'Unavailable' : '${upcoming.where((e) => e.date.isBefore(soon)).length}',
+        caption: 'next 30 days',
+        onTap: () => _openTab(_calendarTab),
+      ),
+      ParentSummaryTile(
+        key: const Key('parent-summary-notices'),
+        icon: Icons.campaign_outlined,
+        label: 'School notices',
+        value: _notificationsError ? 'Unavailable' : '${_noticesFor(_children).length}',
+        caption: 'for your family',
+        onTap: _openAllNotifications,
+      ),
+    ];
+  }
+
+  Widget _childCard(AdminStudentModel child) {
+    final linked = _linkedById[child.id]!;
+    return ParentChildOverviewCard(
+      student: child,
+      className: _classNames[child.classId] ?? '',
+      overview: _overviews[child.id],
+      photoPath: linked.photoPath,
+      fileService: _fileService,
+      childNotices: _childNotices(child),
+      onOpen: () => _selectChild(child.id),
+      onPayments: () => _openPayments(linked),
+      onBills: () => _openBills(linked),
+      onRetry: () => _retryChild(child.id),
+    );
+  }
+
+  List<Widget> _familyOverview() => [
+        // The family's everyday actions; each child's own are on its card
+        // and in its dashboard.
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton.icon(key: const Key('parent-family-request-leave'), onPressed: _openRequestLeave, icon: const Icon(Icons.add, size: 18), label: const Text('Request Leave')),
+            OutlinedButton.icon(onPressed: () => _openTab(_calendarTab), icon: const Icon(Icons.calendar_month_outlined, size: 18), label: const Text('Calendar')),
+            if (_linked.any((c) => c.canViewFinance != false))
+              OutlinedButton.icon(key: const Key('parent-family-fees'), onPressed: () => _openTab(_feesTab), icon: const Icon(Icons.account_balance_wallet_outlined, size: 18), label: const Text('Fees')),
+          ],
+        ),
+        const SizedBox(height: 16),
+        if (_unavailableChildren > 0) ...[
+          ParentUnavailableChildrenNotice(count: _unavailableChildren),
+          const SizedBox(height: 16),
+        ],
+        ParentChildCardGrid(cards: [for (final c in _children) _childCard(c)]),
+        const SizedBox(height: 20),
+        _NotificationsSection(
+          notifications: _noticesFor(_children).take(3).toList(),
+          hasError: _notificationsError,
+          onViewAll: _openAllNotifications,
+          onRetry: _loadDashboard,
+        ),
+        const SizedBox(height: 20),
+        _upcomingEvents(),
+      ];
+
+  Widget _upcomingEvents() => ParentUpcomingEvents(
+        events: upcomingParentEvents(_events),
+        loading: _eventsLoading,
+        failed: _eventsError,
+        onOpenCalendar: () => _openTab(_calendarTab),
+        onOpenEvent: _openEvent,
+        onRetry: () => _loadEvents(_loadGeneration),
+      );
+
+  List<Widget> _childDashboard(AdminStudentModel selectedChild) {
+    final family = _children.length > 1;
+    final linked = _linkedById[selectedChild.id]!;
+    final overview = _overviews[selectedChild.id];
+    final className = _classNames[selectedChild.classId] ?? '-';
+    final academicYear = _classAcademicYears[selectedChild.classId] ?? '';
+    // Scoped to exactly the *selected* child's own studentId/classId — not
+    // the union across every linked child — so a notification targeted to
+    // one child (selected-student or class targeting) never bleeds into
+    // another child's dashboard.
+    final notifications = _noticesFor([selectedChild]).take(3).toList();
+    return [
+      // (A family's child switcher is at the top of the page — see build.)
+      if (!family && _unavailableChildren > 0) ...[
+        ParentUnavailableChildrenNotice(count: _unavailableChildren),
+        const SizedBox(height: 16),
+      ],
+      _ChildCard(
+        child: selectedChild,
+        className: className,
+        overview: overview,
+        photoPath: linked.photoPath,
+        fileService: _fileService,
+        onRetry: () => _retryChild(selectedChild.id),
+        onViewProfile: () => showChildProfile(
+          fileService: _fileService,
+          context,
+          child: selectedChild,
+          photoPath: linked.photoPath,
+          documents: linked.documents,
+          guardians: linked.guardians,
+          className: className,
+          academicYear: academicYear,
+        ),
+        onViewHistory: () => showChildAttendanceHistory(
+          context,
+          studentId: selectedChild.id,
+          studentName: selectedChild.name,
+          attendanceService: widget.attendanceService,
+        ),
+      ),
+      const SizedBox(height: 20),
+      _FeeSummarySection(
+        overview: overview,
+        onRetry: () => _retryChild(selectedChild.id),
+        onPayments: () => _openPayments(linked),
+        onBills: () => _openBills(linked),
+        onAllFees: () => _openTab(_feesTab),
+      ),
+      const SizedBox(height: 20),
+      _StudentLeaveSection(
+        loading: _loading,
+        hasError: _leaveRequestsError,
+        requests: _studentLeaveRequests
+            .where((r) => r.studentId == selectedChild.id)
+            .toList(),
+        onRequestLeave: _openRequestLeave,
+        onRetry: _loadDashboard,
+      ),
+      const SizedBox(height: 20),
+      _NotificationsSection(
+        notifications: notifications,
+        hasError: _notificationsError,
+        onViewAll: _openAllNotifications,
+        onRetry: _loadDashboard,
+      ),
+      // A single child's dashboard is also the home page.
+      if (!family) ...[
+        const SizedBox(height: 20),
+        _upcomingEvents(),
+      ],
+    ];
   }
 
   @override
@@ -277,118 +641,79 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
             (c) => c.id == _selectedChildId,
             orElse: () => _children.first,
           );
-
-    // Scoped to a singleton set of exactly the *selected* child's own
-    // studentId/classId — not the union across every linked child — so a
-    // notification targeted to one child (selected-student or class
-    // targeting) never bleeds into another child's dashboard context, even
-    // though isNotificationRelevantToParent itself is unchanged: it already
-    // correctly answers "is this notification relevant to this set of
-    // ids", the bug was in which ids the Dashboard preview used to ask it.
-    final notificationsForSelectedChild = selectedChild == null
-        ? const <AdminNotificationModel>[]
-        : _parentNotifications
-              .where(
-                (n) => isNotificationRelevantToParent(
-                  n,
-                  childStudentIds: {selectedChild.id},
-                  childClassIds: selectedChild.classId.isEmpty
-                      ? const {}
-                      : {selectedChild.classId},
-                ),
-              )
-              .take(3)
-              .toList();
+    final familyHome = _children.length > 1 && !_showingChild;
+    final onHome = familyHome || _children.length <= 1;
 
     final dashboardContent = _loading
         ? const Center(child: CircularProgressIndicator())
         : RefreshIndicator(
             onRefresh: _loadDashboard,
             child: SingleChildScrollView(
+              controller: _scroll,
               physics: const AlwaysScrollableScrollPhysics(),
               padding: EdgeInsets.fromLTRB(
-                isMobile ? 20 : 32,
+                isMobile ? 16 : 32,
                 24,
-                isMobile ? 20 : 32,
+                isMobile ? 16 : 32,
                 40,
               ),
+              // Stretched: every section card spans the page width, however
+              // little it holds.
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _WelcomeCard(parentName: user?.name ?? ''),
+                  // A family looking at one child: the way back to the
+                  // family and to the other children comes first.
+                  if (!familyHome && _children.length > 1) ...[
+                    ParentChildSwitcher(
+                      children: _children,
+                      classNames: _classNames,
+                      selectedId: selectedChild!.id,
+                      onSelected: _selectChild,
+                      onFamilyOverview: _showFamilyOverview,
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  ParentFamilyHeader(
+                    parentName: user?.name ?? '',
+                    childCount: _children.length,
+                    viewingChild: !familyHome && _children.length > 1 ? selectedChild!.name : null,
+                    updatedAt: _updatedAt,
+                    onOpenNotifications: _openAllNotifications,
+                  ),
+                  if (onHome && _children.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    ParentFamilySummary(tiles: _summaryTiles()),
+                  ],
                   const SizedBox(height: 20),
                   // Belongs to the authenticated parent account, not to
-                  // whichever child happens to be selected — deliberately
-                  // placed outside the `if (_children.isEmpty) ... else`
-                  // block below (so it renders even with zero linked
-                  // children) and built as a fully self-contained widget
-                  // that never reads `_selectedChildId`, so switching the
-                  // selected child structurally cannot affect it.
+                  // whichever child happens to be selected — rendered in
+                  // every view (even with zero linked children) and built
+                  // as a fully self-contained widget that never reads
+                  // `_selectedChildId`, so switching the selected child
+                  // structurally cannot affect it.
                   _ParentMoodSection(
                     parentUserId: user?.id ?? '',
                     parentName: user?.name ?? '',
                     moodCheckinService: _moodCheckinService,
                   ),
                   const SizedBox(height: 20),
-                  if (_children.isEmpty)
-                    const _NoChildrenLinkedCard()
-                  else ...[
-                    if (_children.length > 1) ...[
-                      _ChildSelector(
-                        children: _children,
-                        selectedId: _selectedChildId,
-                        onSelected: _selectChild,
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                    Builder(
-                      builder: (context) {
-                        final className =
-                            _classNames[selectedChild!.classId] ?? '-';
-                        final academicYear =
-                            _classAcademicYears[selectedChild.classId] ?? '';
-                        return _ChildCard(
-                          child: selectedChild,
-                          className: className,
-                          loading: _loadingChildDetail,
-                          attendance: _todayAttendance,
-                          onViewProfile: () => showChildProfile(
-                            context,
-                            child: selectedChild,
-                            className: className,
-                            academicYear: academicYear,
-                          ),
-                          onViewHistory: () => showChildAttendanceHistory(
-                            context,
-                            studentId: selectedChild.id,
-                            studentName: selectedChild.name,
-                          ),
-                        );
-                      },
-                    ),
+                  if (_children.isEmpty) ...[
+                    if (_unavailableChildren > 0)
+                      ParentUnavailableChildrenNotice(count: _unavailableChildren)
+                    else
+                      const _NoChildrenLinkedCard(),
                     const SizedBox(height: 20),
-                    _FeeSummarySection(
-                      loading: _loadingChildDetail,
-                      assignments: _feeAssignments,
-                    ),
-                    const SizedBox(height: 20),
-                    _StudentLeaveSection(
-                      loading: _loading,
-                      hasError: _leaveRequestsError,
-                      requests: _studentLeaveRequests
-                          .where((r) => r.studentId == selectedChild!.id)
-                          .toList(),
-                      onRequestLeave: _openRequestLeave,
+                    _NotificationsSection(
+                      notifications: const [],
+                      hasError: _notificationsError,
+                      onViewAll: _openAllNotifications,
                       onRetry: _loadDashboard,
                     ),
-                  ],
-                  const SizedBox(height: 20),
-                  _NotificationsSection(
-                    notifications: notificationsForSelectedChild,
-                    hasError: _notificationsError,
-                    onViewAll: _openAllNotifications,
-                    onRetry: _loadDashboard,
-                  ),
+                  ] else if (familyHome)
+                    ..._familyOverview()
+                  else
+                    ..._childDashboard(selectedChild!),
                 ],
               ),
             ),
@@ -402,7 +727,7 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
     // old duplicated-switch Staff nav once did.
     final tabs = [
       (title: 'Dashboard', body: () => dashboardContent),
-      (title: 'Calendar', body: () => const CalendarView()),
+      (title: 'Calendar', body: () => CalendarView(service: widget.calendarService)),
       (
         title: 'Leave',
         body: () => ParentLeaveView(
@@ -422,17 +747,14 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
     final currentTitle = tabs[safeIndex].title;
     final currentBody = tabs[safeIndex].body();
 
-    Widget logoutAction() => IconButton(
-      icon: const Icon(Icons.logout),
-      onPressed: () async {
-        await ref.read(authServiceProvider).logout(ref, context);
-        if (context.mounted) {
-          Navigator.of(
-            context,
-          ).pushNamedAndRemoveUntil('/login', (route) => false);
-        }
-      },
-    );
+    Future<void> logout() async {
+      await ref.read(authServiceProvider).logout(ref, context);
+      if (context.mounted) {
+        Navigator.of(
+          context,
+        ).pushNamedAndRemoveUntil('/login', (route) => false);
+      }
+    }
 
     // Mirrors DashboardScreen's shell exactly: same ResponsiveLayout,
     // AppSidebar/AppBottomNav (already role-aware and Dashboard-only for
@@ -442,11 +764,9 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
     return ResponsiveLayout(
       mobile: Scaffold(
         backgroundColor: Colors.grey[50],
-        appBar: AppBar(
-          centerTitle: false,
-          title: Text(currentTitle),
-          actions: [logoutAction()],
-        ),
+        // Responsive: never overflows, however narrow the window
+        // (ParentAppBar).
+        appBar: ParentAppBar(title: currentTitle, onLogout: logout),
         body: SafeArea(child: currentBody),
         bottomNavigationBar: AppBottomNav(
           selectedIndex: selectedIndex,
@@ -464,56 +784,10 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
             Expanded(
               child: Column(
                 children: [
-                  AppBar(
-                    title: Text(currentTitle),
-                    actions: [logoutAction()],
-                  ),
+                  ParentAppBar(title: currentTitle, onLogout: logout),
                   Expanded(child: currentBody),
                 ],
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _WelcomeCard extends StatelessWidget {
-  const _WelcomeCard({required this.parentName});
-
-  final String parentName;
-
-  @override
-  Widget build(BuildContext context) {
-    final hour = DateTime.now().hour;
-    final greeting = hour < 12
-        ? 'Good morning'
-        : hour < 17
-        ? 'Good afternoon'
-        : 'Good evening';
-    final name = parentName.trim().isNotEmpty ? parentName.trim() : 'there';
-    return Card(
-      elevation: 0,
-      color: AppColors.card,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '$greeting, $name',
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              "Here's what's happening with your child today.",
-              style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
             ),
           ],
         ),
@@ -559,59 +833,42 @@ class _NoChildrenLinkedCard extends StatelessWidget {
   }
 }
 
-class _ChildSelector extends StatelessWidget {
-  const _ChildSelector({
-    required this.children,
-    required this.selectedId,
-    required this.onSelected,
-  });
-
-  final List<AdminStudentModel> children;
-  final String selectedId;
-  final ValueChanged<String> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          for (final child in children)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: ChoiceChip(
-                label: Text(child.name),
-                selected: child.id == selectedId,
-                onSelected: (_) => onSelected(child.id),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
 class _ChildCard extends StatelessWidget {
   const _ChildCard({
     required this.child,
     required this.className,
-    required this.loading,
-    required this.attendance,
+    required this.overview,
     required this.onViewProfile,
     required this.onViewHistory,
+    this.onRetry,
+    this.photoPath = '',
+    this.fileService,
   });
 
   final AdminStudentModel child;
+
+  /// Protected photo download for the signed-in parent.
+  final ParentFileService? fileService;
+
+  /// The photo's Storage path from the parent-safe profile ('' before it).
+  final String photoPath;
   final String className;
-  final bool loading;
-  final Map<String, dynamic>? attendance;
+
+  /// The child's loaded overview; null while it loads.
+  final ParentChildOverview? overview;
   final VoidCallback onViewProfile;
   final VoidCallback onViewHistory;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
-    final status = attendance?['status']?.toString();
-    final checkInTime = _formatCheckInTime(attendance?['updatedAt']);
+    final loading = overview == null;
+    final snapshot = overview?.attendance;
+    // Today's record in its parent-facing form (photo by path, never URL);
+    // the status as displayed (an approved leave on an unmarked day shows
+    // as On leave, the attendance screens' rule).
+    final status = snapshot?.todayStatus;
+    final checkInTime = _formatCheckInTime(snapshot?.today?['updatedAt']);
 
     return Card(
       elevation: 0,
@@ -625,24 +882,7 @@ class _ChildCard extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CircleAvatar(
-                  radius: 28,
-                  backgroundColor: AppColors.primary.withValues(alpha: 0.1),
-                  backgroundImage: child.profileImageUrl.isNotEmpty
-                      ? NetworkImage(child.profileImageUrl)
-                      : null,
-                  child: child.profileImageUrl.isEmpty
-                      ? Text(
-                          child.name.isNotEmpty
-                              ? child.name[0].toUpperCase()
-                              : '?',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary,
-                          ),
-                        )
-                      : null,
-                ),
+                ParentChildAvatar(name: child.name, studentId: child.id, photoPath: photoPath, photoUrl: child.profileImageUrl, radius: 28, fileService: fileService),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
@@ -650,6 +890,8 @@ class _ChildCard extends StatelessWidget {
                     children: [
                       Text(
                         child.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 17,
                           fontWeight: FontWeight.w700,
@@ -658,7 +900,9 @@ class _ChildCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        className,
+                        parentClassLine(child, className).isEmpty ? className : parentClassLine(child, className),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 13,
                           color: AppColors.textSecondary,
@@ -692,7 +936,9 @@ class _ChildCard extends StatelessWidget {
                 width: 20,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            else
+            else if (overview!.attendanceFailed)
+              ParentAttendanceLine(attendance: null, failed: true, onRetry: onRetry)
+            else ...[
               Row(
                 children: [
                   _AttendanceStatusChip(status: status),
@@ -708,6 +954,17 @@ class _ChildCard extends StatelessWidget {
                   ],
                 ],
               ),
+              if (snapshot != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  snapshot.hasAnyRecord || snapshot.onLeave > 0
+                      ? 'Last ${snapshot.days} days: ${snapshot.present} present · ${snapshot.absent} absent · ${snapshot.onLeave} on leave'
+                      : 'No attendance marked in the last ${snapshot.days} days.',
+                  key: const Key('parent-attendance-30-days'),
+                  style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                ),
+              ],
+            ],
             const Divider(height: 28),
             Row(
               children: [
@@ -764,12 +1021,7 @@ class _AttendanceStatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final normalized = (status ?? '').toLowerCase();
-    final (label, color) = switch (normalized) {
-      'present' => ('Present', AppColors.secondary),
-      'absent' => ('Absent', Colors.redAccent),
-      _ => ('Not marked yet', Colors.grey),
-    };
+    final (label, color) = parentAttendanceStyle(status);
     return FinanceStatusChip(label: label, color: color);
   }
 }
@@ -1033,16 +1285,19 @@ class _StudentLeaveSection extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
+            // Title and action share one line when they fit; on a narrow
+            // phone the action moves below the title instead of
+            // overflowing.
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                const Expanded(
-                  child: Text(
-                    'Leave Requests',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
-                    ),
+                const Text(
+                  'Leave Requests',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
                   ),
                 ),
                 TextButton.icon(
@@ -1090,18 +1345,17 @@ class _StudentLeaveSection extends StatelessWidget {
 }
 
 class _FeeSummarySection extends StatelessWidget {
-  const _FeeSummarySection({required this.loading, required this.assignments});
+  const _FeeSummarySection({required this.overview, required this.onRetry, required this.onPayments, required this.onBills, required this.onAllFees});
 
-  final bool loading;
-  final List<StudentFeeAssignmentModel> assignments;
+  /// Null while loading. Its finance is null when restricted (not the
+  /// child's Father or Mother — nothing financial was read) or failed.
+  final ParentChildOverview? overview;
+  final VoidCallback onRetry, onPayments, onBills, onAllFees;
 
   @override
   Widget build(BuildContext context) {
-    final outstanding = assignments.fold<double>(
-      0,
-      (total, a) => total + a.balanceAmount,
-    );
-
+    final o = overview;
+    final finance = o?.finance;
     return Card(
       elevation: 0,
       color: AppColors.card,
@@ -1120,40 +1374,51 @@ class _FeeSummarySection extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            if (loading)
+            if (o == null)
               const Center(
                 child: Padding(
                   padding: EdgeInsets.symmetric(vertical: 12),
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
               )
-            else if (assignments.isEmpty)
+            else if (o.financeRestricted)
               const Text(
-                'No fee assignments yet.',
+                parentFeesRestrictedMessage,
+                key: Key('parent-fees-restricted'),
                 style: TextStyle(color: AppColors.textSecondary),
               )
-            else ...[
-              for (final assignment in assignments) ...[
-                _FeeAssignmentRow(assignment: assignment),
-                const SizedBox(height: 10),
-              ],
-              const Divider(height: 20),
+            else if (finance == null)
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    'Total Outstanding',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  Text(
-                    '₹${outstanding.toStringAsFixed(0)}',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: outstanding > 0
-                          ? Colors.redAccent
-                          : AppColors.secondary,
-                    ),
-                  ),
+                  const Expanded(child: Text("Couldn't load fees.", style: TextStyle(color: AppColors.textSecondary))),
+                  TextButton(onPressed: onRetry, child: const Text('Retry')),
+                ],
+              )
+            else ...[
+              if (finance.assignments.isEmpty)
+                const Text(
+                  'No fee assignments yet.',
+                  style: TextStyle(color: AppColors.textSecondary),
+                )
+              else ...[
+                ParentFeeFigures(finance: finance),
+                const Divider(height: 24),
+                for (final assignment in finance.assignments) ...[
+                  _FeeAssignmentRow(assignment: assignment),
+                  const SizedBox(height: 10),
+                ],
+              ],
+              const SizedBox(height: 4),
+              // Three different things, never merged: what is charged (All
+              // fees), what was actually paid (Payment history) and the
+              // supplementary bills the school issued (Issued bills).
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  OutlinedButton.icon(key: const Key('parent-fees-payment-history'), onPressed: onPayments, icon: const Icon(Icons.receipt_long_outlined, size: 18), label: const Text('Payment history')),
+                  OutlinedButton.icon(key: const Key('parent-fees-issued-bills'), onPressed: onBills, icon: const Icon(Icons.description_outlined, size: 18), label: Text(parentBillsLabel(finance))),
+                  TextButton(key: const Key('parent-fees-all'), onPressed: onAllFees, child: const Text('All fees')),
                 ],
               ),
             ],
@@ -1189,20 +1454,21 @@ class _FeeAssignmentRow extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          // The status chip sits beside the fee name, or below it when the
+          // card is too narrow for both.
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Expanded(
-                child: Text(
-                  assignment.feeStructureName.isNotEmpty
-                      ? assignment.feeStructureName
-                      : 'Fee',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-                ),
+              Text(
+                assignment.feeStructureName.isNotEmpty
+                    ? assignment.feeStructureName
+                    : 'Fee',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
               ),
-              const SizedBox(width: 8),
               FinanceStatusChip(label: label, color: color),
             ],
           ),
@@ -1210,7 +1476,7 @@ class _FeeAssignmentRow extends StatelessWidget {
           Row(
             children: [
               _FeeAmountColumn(
-                label: 'Total',
+                label: 'Net payable',
                 amount: assignment.payableAmount,
               ),
               _FeeAmountColumn(label: 'Paid', amount: assignment.paidAmount),
@@ -1257,7 +1523,7 @@ class _FeeAmountColumn extends StatelessWidget {
           ),
           const SizedBox(height: 2),
           Text(
-            '₹${amount.toStringAsFixed(0)}',
+            parentMoney(amount),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -1296,8 +1562,9 @@ class _NotificationsSection extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 const Text(
                   'Notifications',
@@ -1360,7 +1627,11 @@ class _NotificationPreviewRow extends StatelessWidget {
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: () => showNotificationDetail(context, notification),
+        onTap: () => showNotificationDetail(
+          context,
+          notification,
+          parentUserId: ProviderScope.containerOf(context, listen: false).read(currentUserProvider)?.id ?? '',
+        ),
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(

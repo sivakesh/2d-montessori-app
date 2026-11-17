@@ -33,7 +33,9 @@ class MoodOptionChip extends StatelessWidget {
             children: [
               Icon(option.icon, size: 20, color: selected ? theme.colorScheme.primary : Colors.grey.shade700),
               const SizedBox(width: 8),
-              Text(option.moodLabel),
+              // Shrinks (with an ellipsis) instead of overflowing when a
+              // chip is wider than its whole row, e.g. on a 320 px phone.
+              Flexible(child: Text(option.moodLabel, maxLines: 1, overflow: TextOverflow.ellipsis)),
             ],
           ),
         ),

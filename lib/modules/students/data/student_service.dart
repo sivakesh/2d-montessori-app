@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../parent/data/parent_projection_service.dart';
 
 class StudentService {
   StudentService({FirebaseFirestore? firestore})
@@ -45,7 +46,8 @@ class StudentService {
   }
 
   Future<void> createStudent(Map<String, dynamic> data) async {
-    await _students.add(data);
+    final doc = await _students.add(data);
+    await _refreshParentCopy(doc.id);
   }
 
   Future<void> updateStudent({
@@ -53,5 +55,12 @@ class StudentService {
     required Map<String, dynamic> data,
   }) async {
     await _students.doc(studentId).update(data);
+    await _refreshParentCopy(studentId);
   }
+
+  /// After a change to student [id]: refreshes the copy parents read
+  /// (parent_student_profiles) and the class list on their access records
+  /// (docs/parent_access_security.md). Runs after the change has been saved
+  /// and never throws.
+  Future<void> _refreshParentCopy(String id) => ParentProjectionService(firestore: _firestore).syncStudentQuietly(id);
 }

@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../../admin/settings/models/school_settings_model.dart' show kDefaultSchoolId;
 import '../../calendar/models/calendar_event_model.dart';
@@ -14,6 +15,20 @@ class UnauthorizedFeeBillException implements Exception {
   @override
   String toString() => 'Only an administrator can issue or cancel fee bills (signed in as "$role").';
 }
+
+/// Called after bills of [studentId] were issued or cancelled, once the
+/// transaction has committed (never for a refused or failed operation).
+/// It must not throw; FeeBillService also contains anything it throws.
+typedef FeeBillsChanged = Future<void> Function(FirebaseFirestore firestore, String studentId);
+
+/// What a [FeeBillsBackfill] did: bills found, copies written, copies that
+/// could not be written, and the first error ('' when none).
+typedef FeeBillsBackfillResult = ({int found, int written, int failed, String error});
+
+/// Brings every copy kept of the bills up to date with the bills themselves
+/// (e.g. bills issued before such a copy existed) and reports what it did.
+/// Must not throw.
+typedef FeeBillsBackfill = Future<FeeBillsBackfillResult> Function(FirebaseFirestore firestore);
 
 /// Fee Bill Issuance's own records (docs/fee_bill_issuance.md):
 ///
@@ -37,11 +52,55 @@ class UnauthorizedFeeBillException implements Exception {
 /// FeeService or FinanceService method. Writes take the requester's role
 /// and refuse anyone but an administrator (the app's convention, e.g.
 /// ExpenseEfficiencyService).
+///
+/// After an issue or cancellation has committed it calls its
+/// [FeeBillsChanged] hook (the Parent module's parent-safe bill copies);
+/// the hook runs outside the transaction and never changes a bill, an
+/// allocation, a counter or the operation's result.
 class FeeBillService {
-  FeeBillService({FirebaseFirestore? firestore, FirebaseAuth? auth, this.schoolId = kDefaultSchoolId, DateTime Function()? clock})
+  FeeBillService({FirebaseFirestore? firestore, FirebaseAuth? auth, this.schoolId = kDefaultSchoolId, DateTime Function()? clock, FeeBillsChanged? afterChange})
       : _firestore = firestore ?? FirebaseFirestore.instance,
         _auth = auth ?? FirebaseAuth.instance,
-        _clock = clock ?? DateTime.now;
+        _clock = clock ?? DateTime.now,
+        _afterChange = afterChange;
+
+  /// The app-wide [FeeBillsChanged], set once at startup by the module that
+  /// keeps copies of bills (the Parent module's parent-safe bill copies:
+  /// registerParentFeeBillRefresh), so this module imports none of it.
+  /// An instance's own `afterChange` takes precedence.
+  static FeeBillsChanged? defaultAfterChange;
+
+  /// The app-wide [FeeBillsBackfill], registered the same way.
+  static FeeBillsBackfill? defaultBackfill;
+
+  /// Runs [defaultBackfill] for an administrator (Fee Bill Issuance calls it
+  /// when the page opens) and returns its report — null when it didn't run
+  /// (not an administrator, or nothing registered). Reads the bills, never
+  /// writes them; anything it throws is reported, not hidden.
+  Future<FeeBillsBackfillResult?> backfillDerivedCopies({required String requesterRole}) async {
+    final hook = defaultBackfill;
+    if (hook == null || requesterRole.toLowerCase() != 'admin') return null;
+    try {
+      return await hook(_firestore);
+    } catch (e) {
+      debugPrint('Fee bill backfill failed: $e');
+      return (found: 0, written: 0, failed: 1, error: e.toString());
+    }
+  }
+
+  final FeeBillsChanged? _afterChange;
+
+  /// Runs the after-change hook for [studentId]; a failure there never
+  /// affects the committed bill operation or its result.
+  Future<void> _changed(String studentId) async {
+    final hook = _afterChange ?? defaultAfterChange;
+    if (hook == null || studentId.isEmpty) return;
+    try {
+      await hook(_firestore, studentId);
+    } catch (e) {
+      debugPrint('Fee bill after-change hook failed for $studentId: $e');
+    }
+  }
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
@@ -248,7 +307,7 @@ class FeeBillService {
     _checkLines(normalized);
     final base = await _checkedReferenceBase(receiptId);
     final issueDates = await _issueDates(normalized);
-    return _firestore.runTransaction((txn) async {
+    final issuedBills = await _firestore.runTransaction((txn) async {
       final receiptRef = _receipts.doc(receiptId);
       final allocRef = _allocations.doc(receiptId);
       final receipt = (await txn.get(receiptRef)).data();
@@ -311,6 +370,9 @@ class FeeBillService {
       ));
       return issued;
     });
+    // Committed (or a repeated request answered with its bills).
+    await _changed(studentId);
+    return issuedBills;
   }
 
   /// Cancels bill [billId] with [reason] (required). Its record, snapshot
@@ -340,12 +402,14 @@ class FeeBillService {
       final b = await getBill(billId);
       if (b != null) base = await _checkedReferenceBase(b.payment.receiptId);
     }
-    return _firestore.runTransaction((txn) async {
+    var studentId = '';
+    final replacementBill = await _firestore.runTransaction((txn) async {
       final billRef = _bills.doc(billId);
       final data = (await txn.get(billRef)).data();
       if (data == null || data['schoolId'] != schoolId) throw StateError('This bill could not be found.');
       final bill = FeeIssuedBill.fromMap(billId, data);
       if (bill.isCancelled) throw StateError('Bill ${bill.billNo} is already cancelled.');
+      studentId = bill.payment.studentId;
       final receiptId = bill.payment.receiptId;
       final allocRef = _allocations.doc(receiptId);
       final allocData = (await txn.get(allocRef)).data();
@@ -421,6 +485,8 @@ class FeeBillService {
       ));
       return issued;
     });
+    await _changed(studentId);
+    return replacementBill;
   }
 
   /// Records that bill [billId] was reprinted (its history only; the bill,
@@ -595,3 +661,4 @@ class FeeBillService {
         'updatedBy': _actor,
       };
 }
+

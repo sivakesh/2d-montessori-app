@@ -14,6 +14,7 @@ import 'modules/admin/ui/admin_dashboard_screen.dart';
 import 'modules/admin/ui/admin_profile_form.dart';
 import 'admin/screens/admin_session_logs_screen.dart';
 import 'modules/auth/utils/recaptcha_web_view.dart';
+import 'modules/parent/data/parent_fee_bill_refresh.dart';
 import 'modules/public_website/public_routes.dart';
 import 'modules/public_website/ui/public_announcement_page.dart';
 import 'modules/public_website/ui/public_custom_page.dart';
@@ -31,6 +32,8 @@ Future<void> main() async {
   // Development only: --dart-define=FIRESTORE_EMULATOR_HOST (never prod).
   connectFirestoreEmulatorIfConfigured(FirebaseFirestore.instance);
   registerRecaptchaView();
+  // Parent-safe fee-bill copies follow Fee Bill Issuance (after commit).
+  registerParentFeeBillRefresh();
   // ignore: avoid_print
   print('Firebase initialized');
   runApp(const ProviderScope(child: MontessoriApp()));

@@ -302,15 +302,21 @@ class LeaveService {
   ) async {
     final linked = await _parentService.getLinkedStudents(parentUserId);
     if (linked.isEmpty) return [];
-    final linkedIds = linked.map((s) => s.id).toSet();
+    final linkedIds = linked.map((s) => s.id).toSet().toList();
 
-    final snap = await _requests.get();
-    final items = snap.docs
-        .map((d) => LeaveRequestModel.fromMap(d.id, d.data()))
-        .where((r) =>
-            r.subjectType == LeaveSubjectType.student &&
-            linkedIds.contains(r.studentId))
-        .toList();
+    // Only these children's student-leave records are queried (never staff
+    // leave, never other students'), in chunks of Firestore's 30-value `in`
+    // limit. The security rules allow a parent this query only when every
+    // id is one of their linked children (docs/parent_access_security.md).
+    final items = <LeaveRequestModel>[];
+    for (var i = 0; i < linkedIds.length; i += 30) {
+      final chunk = linkedIds.sublist(i, i + 30 > linkedIds.length ? linkedIds.length : i + 30);
+      final snap = await _requests
+          .where('subjectType', isEqualTo: LeaveSubjectType.student)
+          .where('studentId', whereIn: chunk)
+          .get();
+      items.addAll(snap.docs.map((d) => LeaveRequestModel.fromMap(d.id, d.data())));
+    }
     _sortByCreatedAtDesc(items);
     return items;
   }

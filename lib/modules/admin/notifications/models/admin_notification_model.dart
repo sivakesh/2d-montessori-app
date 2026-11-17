@@ -35,7 +35,13 @@ class AdminNotificationModel {
     required this.applicableStaffIds,
     required this.applicableStaffNames,
     required this.isPublic,
+    this.attachmentPath = '',
   });
+
+  /// The attachment's Storage path, on the parent copy of a notification
+  /// (parent_notices), which carries no download URL. Parents download it
+  /// through the Storage rules (ParentFileService). Not written by [toMap].
+  final String attachmentPath;
 
   final String id;
   final String title;
@@ -114,6 +120,7 @@ class AdminNotificationModel {
       applicableStaffIds: parseList(map['applicableStaffIds']),
       applicableStaffNames: parseList(map['applicableStaffNames']),
       isPublic: map['isPublic'] == true,
+      attachmentPath: map['attachmentPath']?.toString() ?? '',
     );
   }
 

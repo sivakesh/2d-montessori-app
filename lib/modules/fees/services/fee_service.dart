@@ -16,6 +16,7 @@ import '../models/fee_due_backfill.dart';
 import '../models/fee_due_date.dart';
 import '../models/fee_month.dart';
 import '../models/fee_month_range.dart';
+import '../../parent/data/parent_projection_service.dart';
 import '../models/fee_receipt_model.dart';
 import '../models/fee_report.dart';
 import '../models/fee_student.dart';
@@ -333,6 +334,7 @@ class FeeService {
   Future<void> updateFeeStructure(String id, Map<String, dynamic> data) async {
     _checkComponents(data);
     await _structures.doc(id).set({...data, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+    await _refreshParentFeesForStructure(id);
   }
 
   Future<void> deactivateFeeStructure(String id) async {
@@ -595,6 +597,7 @@ class FeeService {
       'updatedAt': FieldValue.serverTimestamp(),
       if (discount.snapshot case final snap?) ..._discountedAmounts(gross, snap),
     });
+    await _refreshParentFees([studentId]);
     return doc.id;
   }
 
@@ -604,6 +607,10 @@ class FeeService {
       'deletedAt': FieldValue.serverTimestamp(),
       'deletedBy': _auth.currentUser?.uid,
     }, SetOptions(merge: true));
+    // The deleted fee leaves the parents' copy.
+    try {
+      await _refreshParentFees([(await _assignments.doc(id).get()).data()?['studentId']?.toString() ?? '']);
+    } catch (_) {}
   }
 
   /// Edits an existing assignment's amount-basis/identity fields in place.
@@ -723,6 +730,7 @@ class FeeService {
       'status': status,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+    await _refreshParentFees([current.studentId, data['studentId']?.toString() ?? '']);
   }
 
   static const revisionReasonMessage = 'Enter the reason for revising this fee.';
@@ -763,7 +771,7 @@ class FeeService {
     // For allocating a recalculated student discount only (as when applied).
     final components = expected.studentDiscount == null ? const <FeeComponentModel>[] : await _componentsOf(expected.feeStructureId);
     final user = _auth.currentUser;
-    return _firestore.runTransaction((txn) async {
+    final revision = await _firestore.runTransaction((txn) async {
       final snap = await txn.get(ref);
       final data = snap.data();
       if (!snap.exists || data == null || data['isDeleted'] == true) throw StateError('Assignment not found');
@@ -812,6 +820,8 @@ class FeeService {
       });
       return revision;
     });
+    await _refreshParentFees([expected.studentId]);
+    return revision;
   }
 
   /// An assignment with a student discount: its snapshot was calculated for
@@ -930,6 +940,7 @@ class FeeService {
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
     await batch.commit();
+    await _refreshParentFees([receipt.studentId]);
 
     try {
       await _financeService.updateFeeIncomeEntry(
@@ -1106,7 +1117,29 @@ class FeeService {
         'deletedBy': uid,
       });
     });
+    await _refreshParentFees([snap.data()?['studentId']?.toString() ?? '']);
     return FeeVoidOutcome.voided;
+  }
+
+  /// After any Fees write that changes what a parent sees (an assignment, a
+  /// collection, a void): refreshes those students' parent-safe fee,
+  /// payment and fee-bill copies (docs/parent_access_security.md §3a). Runs
+  /// after the Fees writes have committed and never throws — a failure is
+  /// recorded for administrators (Settings → Parent access) — so it can't
+  /// change or fail the Fees operation itself.
+  Future<void> _refreshParentFees(Iterable<String> studentIds) => ParentProjectionService(firestore: _firestore).syncFeesForStudentsQuietly(studentIds);
+
+  /// [_refreshParentFees] for every student with an assignment of fee
+  /// structure [feeStructureId] (after a bulk change to that structure's
+  /// assignments, or to the structure's name or components).
+  Future<void> _refreshParentFeesForStructure(String feeStructureId) async {
+    try {
+      final snap = await _assignments.where('feeStructureId', isEqualTo: feeStructureId).get();
+      await _refreshParentFees({for (final d in snap.docs) d.data()['studentId']?.toString() ?? ''});
+    } catch (_) {
+      // Reading which students to refresh failed; the copies are reported
+      // as out of date by Settings → Parent access → Check.
+    }
   }
 
   /// Amounts are stored as plain doubles (rupees); two amounts are the same
@@ -1240,6 +1273,7 @@ class FeeService {
       }
     }
 
+    await _refreshParentFeesForStructure(feeStructureId);
     return {'created': created, 'updated': updated, 'skipped': skipped, 'admissionSkipped': admissionSkipped, 'manualReview': manualReview};
   }
 
@@ -1343,6 +1377,7 @@ class FeeService {
       assigned++;
     }
     await batch.commit();
+    await _refreshParentFeesForStructure(feeStructureId);
     return {
       'assigned': assigned,
       'skipped': skipped,
@@ -1484,6 +1519,7 @@ class FeeService {
         errors.add('$e');
       }
     }
+    await _refreshParentFees([for (final i in eligible) i.assignment.studentId]);
     return FeeDueBackfillResult(updated: updated, alreadyHadDate: had, changed: changed, failed: failed, stillNeedAttention: attention, errors: errors);
   }
 
@@ -1614,6 +1650,7 @@ class FeeService {
         errors.add('$e');
       }
     }
+    await _refreshParentFees([for (final i in eligible) i.assignment.studentId]);
     return FeeDiscountApplyResult(operationId: operationId, applied: applied, skipped: skipped, failed: failed, errors: errors);
   }
 
@@ -1757,11 +1794,13 @@ class FeeService {
         await batch.commit();
         created += chunk.length;
       } catch (e) {
+        await _refreshParentFees([for (final st in students) st.id]);
         return FeeRecurringResult(created: created, skipped: skipped, failed: toCreate.length - created, error: '$e',
             admissionSkipped: admissionSkipped, manualReview: manualReview, reviewStudents: reviewStudents,
             studentDiscounted: studentDiscounted, discountConflict: discountConflict, conflictStudents: conflictStudents);
       }
     }
+    await _refreshParentFees([for (final st in students) st.id]);
     return FeeRecurringResult(created: created, skipped: skipped, failed: 0,
         admissionSkipped: admissionSkipped, manualReview: manualReview, reviewStudents: reviewStudents,
         studentDiscounted: studentDiscounted, discountConflict: discountConflict, conflictStudents: conflictStudents);
@@ -1894,6 +1933,7 @@ class FeeService {
     // retry, so a failure here must not surface as a failed collection
     // (that would invite a retry that double-collects the fee).
     await generateAndUploadReceiptPdf(receipt);
+    await _refreshParentFees([a.studentId]);
     return receipt;
   }
 

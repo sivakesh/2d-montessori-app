@@ -5,6 +5,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../models/admin_student_model.dart';
+import '../../../parent/data/parent_projection_service.dart';
 import '../../../fees/models/fee_discount.dart';
 import '../models/admission_date.dart';
 
@@ -86,8 +87,16 @@ class AdminStudentService {
       'createdBy': createdBy,
       'createdAt': FieldValue.serverTimestamp(),
     });
+    await _refreshParentCopy(doc.id);
     return doc.id;
   }
+
+  /// After a change to student [id]: refreshes the copy parents read
+  /// (parent_student_profiles) and the class list on their access records
+  /// (docs/parent_access_security.md). Runs after the change has been saved
+  /// and never throws.
+  Future<void> _refreshParentCopy(String id) => ParentProjectionService(firestore: _firestore).syncStudentQuietly(id);
+
 
   /// The stored map for [incoming], replacing [existing] (the student's
   /// current configuration, or null). A student has one configuration:
@@ -126,10 +135,12 @@ class AdminStudentService {
       if (clearAdmissionDate && student.admissionDate == null) 'admissionDate': FieldValue.delete(),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+    await _refreshParentCopy(studentId);
   }
 
   Future<void> deleteStudent(String studentId) async {
     await _students.doc(studentId).delete();
+    await _refreshParentCopy(studentId);
   }
 
   Future<void> linkParentToStudent({
@@ -145,6 +156,7 @@ class AdminStudentService {
         },
       ]),
     }, SetOptions(merge: true));
+    await _refreshParentCopy(studentId);
   }
 
   Future<void> removeParentLink({
@@ -160,6 +172,7 @@ class AdminStudentService {
     await _students.doc(studentId).set({
       'parentLinks': links,
     }, SetOptions(merge: true));
+    await _refreshParentCopy(studentId);
   }
 
   Future<void> uploadStudentDocument({
@@ -187,6 +200,7 @@ class AdminStudentService {
         },
       ]),
     }, SetOptions(merge: true));
+    await _refreshParentCopy(studentId);
   }
 
   Future<void> removeStudentDocument({
@@ -202,6 +216,7 @@ class AdminStudentService {
     await _students.doc(studentId).set({
       'documents': docs,
     }, SetOptions(merge: true));
+    await _refreshParentCopy(studentId);
   }
 
   Future<void> seedSampleStudents() async {

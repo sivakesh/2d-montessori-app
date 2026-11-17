@@ -3,6 +3,8 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../../../parent/data/parent_access_service.dart';
+import '../../../parent/data/parent_projection_service.dart';
 import '../models/admin_notification_model.dart';
 
 class AdminNotificationService {
@@ -65,6 +67,55 @@ class AdminNotificationService {
     return items;
   }
 
+  /// The Published notifications the signed-in parent [parentUserId] (of
+  /// [childStudentIds], in [childClassIds]) may receive, newest first —
+  /// without downloading notices aimed at other students or other classes.
+  ///
+  /// Once the parent's access record exists (docs/parent_access_security.md)
+  /// they come from the parent copies (`parent_notices`), which carry no
+  /// attachment URL and whose targeting the security rules enforce. Before
+  /// that, the original notices are queried by the same targeting.
+  Future<List<AdminNotificationModel>> getNotificationsForParent({
+    required String parentUserId,
+    required Set<String> childStudentIds,
+    Set<String> childClassIds = const {},
+  }) async {
+    final byId = <String, AdminNotificationModel>{};
+    final access = parentUserId.isEmpty ? null : await ParentAccessService(firestore: _firestore).getForParent(parentUserId);
+    if (access != null) {
+      final notices = await ParentProjectionService(firestore: _firestore).getNotices(studentIds: childStudentIds, classIds: childClassIds);
+      for (final n in notices) {
+        final id = n['noticeId']?.toString() ?? '';
+        if (id.isNotEmpty) byId[id] = AdminNotificationModel.fromMap(id, n);
+      }
+    } else {
+      Query<Map<String, dynamic>> published(String audience) =>
+          _notifications.where('status', isEqualTo: 'Published').where('audience', isEqualTo: audience);
+      final queries = <Query<Map<String, dynamic>>>[
+        published('Public'),
+        published('Parents').where('appliesToAllClasses', isEqualTo: true),
+        published('Parents').where('appliesToAllStudents', isEqualTo: true),
+        published('Parents').where('applicableStudentIds', isEqualTo: const <String>[]),
+      ];
+      final ids = (childStudentIds.where((id) => id.isNotEmpty).toList()..sort());
+      for (var i = 0; i < ids.length; i += 30) {
+        queries.add(published('Parents').where('applicableStudentIds', arrayContainsAny: ids.sublist(i, i + 30 > ids.length ? ids.length : i + 30)));
+      }
+      for (final snap in await Future.wait(queries.map((q) => q.get()))) {
+        for (final d in snap.docs) {
+          byId[d.id] = AdminNotificationModel.fromMap(d.id, d.data());
+        }
+      }
+    }
+    final items = byId.values.toList();
+    items.sort((a, b) {
+      final aDate = a.publishDate ?? a.createdAt ?? DateTime(2000);
+      final bDate = b.publishDate ?? b.createdAt ?? DateTime(2000);
+      return bDate.compareTo(aDate);
+    });
+    return items;
+  }
+
   Future<PlatformFile?> pickAttachment() async {
     final res = await _filePicker.pickFiles(withData: true);
     if (res == null || res.files.isEmpty) return null;
@@ -97,6 +148,7 @@ class AdminNotificationService {
     debugPrint('Writing notification to Firestore: ${doc.path}');
     await doc.set(payload);
     debugPrint('Firestore write complete: ${doc.id}');
+    await _refreshParentCopy(doc.id);
     return doc.id;
   }
 
@@ -107,6 +159,7 @@ class AdminNotificationService {
       'updatedAt': FieldValue.serverTimestamp(),
     });
     debugPrint('Firestore update complete: $id');
+    await _refreshParentCopy(id);
   }
 
   Future<void> deleteNotification(String id, {String? attachmentUrl}) async {
@@ -116,6 +169,7 @@ class AdminNotificationService {
       } catch (_) {}
     }
     await _notifications.doc(id).delete();
+    await _refreshParentCopy(id);
   }
 
   Future<void> publishNotification(String id) async {
@@ -124,6 +178,7 @@ class AdminNotificationService {
       'sentAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+    await _refreshParentCopy(id);
   }
 
   Future<void> archiveNotification(String id) async {
@@ -131,7 +186,13 @@ class AdminNotificationService {
       'status': 'Archived',
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+    await _refreshParentCopy(id);
   }
+
+  /// After any change to notification [id]: rewrites (or removes) the copy
+  /// parents read (parent_notices; docs/parent_access_security.md). Runs
+  /// after the change has been saved and never throws.
+  Future<void> _refreshParentCopy(String id) => ParentProjectionService(firestore: _firestore).syncNoticeQuietly(id);
 
   Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> getActiveClasses() async {
     final snap = await _classes.where('isActive', isEqualTo: true).get();
@@ -228,7 +289,7 @@ class AdminNotificationService {
     for (final sample in samples) {
       final key = sample['title'].toString().trim().toLowerCase();
       if (titles.contains(key)) continue;
-      await _notifications.add({
+      final added = await _notifications.add({
         ...sample,
         'category': sample['category'] ?? 'General',
         'message': sample['message'] ?? '',
@@ -241,6 +302,7 @@ class AdminNotificationService {
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      await _refreshParentCopy(added.id);
     }
   }
 }

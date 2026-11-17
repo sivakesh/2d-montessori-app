@@ -12,6 +12,7 @@ import '../../../forms/ui/forms_manager_screen.dart';
 import '../data/academic_year_service.dart';
 import '../data/public_submission_settings_service.dart';
 import '../data/school_settings_service.dart';
+import '../../../parent/ui/parent_access_screen.dart';
 import 'access_restricted_view.dart';
 import 'public_submissions_settings_screen.dart';
 import 'academic_year_screen.dart';
@@ -223,6 +224,36 @@ class _SettingsList extends StatelessWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => PublicSubmissionsSettingsScreen(service: publicSubmissions)),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          color: AppColors.card,
+          child: ListTile(
+            key: const Key('settings-parent-access'),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            leading: Container(
+              width: 40,
+              height: 40,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.lock_person_outlined, color: AppColors.primary, size: 20),
+            ),
+            title: const Text(
+              'Parent access',
+              style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+            ),
+            subtitle: const Text(
+              'Check and apply which children, and whose fees, each parent account can see',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const ParentAccessScreen()),
             ),
           ),
         ),

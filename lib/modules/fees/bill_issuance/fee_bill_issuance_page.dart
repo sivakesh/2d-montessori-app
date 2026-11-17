@@ -59,6 +59,23 @@ class _FeeBillIssuancePageState extends ConsumerState<FeeBillIssuancePage> {
   bool get _isAdmin => _role.toLowerCase() == 'admin';
 
   @override
+  void initState() {
+    super.initState();
+    // Parents' copies of bills issued before they were kept automatically
+    // (or whose refresh failed) are written now; nothing changes when they
+    // are already current. Administrators only; never blocks the page.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final result = await _service.backfillDerivedCopies(requesterRole: ref.read(currentUserProvider)?.role ?? '');
+      if (mounted && result != null) setState(() => _parentCopies = result);
+    });
+  }
+
+  /// What updating the parents' bill copies did on opening (administrators;
+  /// null until it has run).
+  FeeBillsBackfillResult? _parentCopies;
+
+  @override
   void dispose() {
     _search.dispose();
     super.dispose();
@@ -159,6 +176,17 @@ class _FeeBillIssuancePageState extends ConsumerState<FeeBillIssuancePage> {
           const SizedBox(height: 6),
           const Text(FeeBillIssuancePage.explanation, style: TextStyle(fontSize: 13)),
           if (!_isAdmin) const Padding(padding: EdgeInsets.only(top: 4), child: Text('Only an administrator can issue or cancel bills.', style: TextStyle(fontSize: 12))),
+          if (_parentCopies case final r?)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                r.failed > 0 || r.error.isNotEmpty
+                    ? 'Parent copies of bills could not all be updated (${r.failed} failed): ${r.error}. See Settings → Parent access.'
+                    : 'Parent copies of bills are up to date (${r.found} bill${r.found == 1 ? '' : 's'}${r.written > 0 ? ', ${r.written} copied now' : ''}).',
+                key: const Key('fee-bills-parent-copies'),
+                style: TextStyle(fontSize: 12, color: r.failed > 0 || r.error.isNotEmpty ? Colors.orange.shade900 : Colors.green.shade800),
+              ),
+            ),
           const SizedBox(height: 12),
           StreamBuilder<List<FeeIssuedBill>>(
             stream: _bills,

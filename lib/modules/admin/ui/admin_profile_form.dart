@@ -1,10 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/config/app_env.dart';
 import '../../../core/services/profile_image_picker.dart';
 import '../../../core/widgets/responsive_dialog_shell.dart';
+import '../../auth/providers/auth_provider.dart';
+import '../../parent/data/parent_link_service.dart';
 import '../data/admin_profile_service.dart';
 import 'admin_fab.dart';
 import '../models/admin_profile_model.dart';
@@ -997,86 +1000,49 @@ class _AdminProfileFormState extends State<AdminProfileForm>
 
   Future<void> _saveStudentLinks() async {
     final userId = _userId;
-    final linksRef = FirebaseFirestore.instance.collection(
-      'user_student_links',
-    );
-    final existing = await linksRef.where('userId', isEqualTo: userId).get();
-    for (final doc in existing.docs) {
-      await doc.reference.delete();
-    }
+    // Read before any await (the signed-in admin, for the access refresh).
+    final user = ProviderScope.containerOf(context, listen: false).read(currentUserProvider);
+    // This parent's link records and every affected student's parentLinks
+    // are saved together in one atomic batch (ParentLinkService): an
+    // un-ticked student loses this parent in both places, while the
+    // student's other parents are kept.
+    final links = ParentLinkService();
+    final saved = await links.saveLinksForParent(userId: userId, relations: Map<String, String>.from(selectedRelations));
 
-    final profileRef = FirebaseFirestore.instance
-        .collection('profiles')
-        .doc(userId);
-    final profileSnapshot = await profileRef.get();
-    final existingProfileStudents = List<Map<String, dynamic>>.from(
-      profileSnapshot.data()?['students'] as List<dynamic>? ?? const [],
-    );
-    final updatedProfileStudents = <Map<String, dynamic>>[];
-    final selectedStudentIds = <String>{};
-
-    for (final entry in selectedRelations.entries) {
-      final studentId = entry.key;
-      final relation = entry.value;
-      selectedStudentIds.add(studentId);
-      final studentData = linkedStudents.firstWhere(
-        (student) => student['studentId']?.toString() == studentId,
-        orElse: () => <String, dynamic>{},
-      );
-      final studentName =
-          studentData['name']?.toString() ??
-          studentData['studentName']?.toString() ??
-          '';
-
-      await linksRef.add(
-        Map<String, Object>.from({
-          'userId': userId,
-          'studentId': studentId,
-          'relation': relation,
-          'createdAt': FieldValue.serverTimestamp(),
-        }),
-      );
-
-      final studentRef = FirebaseFirestore.instance
-          .collection('students')
-          .doc(studentId);
-      final studentDoc = await studentRef.get();
-      final existingParentLinks = List<Map<String, dynamic>>.from(
-        studentDoc.data()?['parentLinks'] as List<dynamic>? ?? const [],
-      );
-      final updatedParentLinks =
-          existingParentLinks
-              .where((p) => p['userId']?.toString() != userId)
-              .toList()
-            ..add(<String, dynamic>{'userId': userId, 'relation': relation});
-      await studentRef.set({
-        'parentLinks': updatedParentLinks,
-      }, SetOptions(merge: true));
-
-      updatedProfileStudents.add(<String, dynamic>{
-        'studentId': studentId,
-        'studentName': studentName,
-        'name': studentName,
-        'relation': relation,
-        'classId': relation,
-      });
-    }
-
-    for (final student in existingProfileStudents) {
-      final studentId = student['studentId']?.toString() ?? '';
-      if (studentId.isEmpty || selectedStudentIds.contains(studentId)) {
-        continue;
-      }
-      updatedProfileStudents.add(student);
-    }
-
-    await profileRef.set({
-      'students': updatedProfileStudents,
+    // The parent's own profile lists exactly the children now linked (an
+    // un-ticked child is no longer kept on it).
+    await FirebaseFirestore.instance.collection('profiles').doc(userId).set({
+      'students': [
+        for (final entry in selectedRelations.entries)
+          if (linkedStudents.firstWhere((s) => s['studentId']?.toString() == entry.key, orElse: () => <String, dynamic>{}) case final studentData)
+            <String, dynamic>{
+              'studentId': entry.key,
+              'studentName': studentData['name']?.toString() ?? studentData['studentName']?.toString() ?? '',
+              'name': studentData['name']?.toString() ?? studentData['studentName']?.toString() ?? '',
+              'relation': entry.value,
+              'classId': entry.value,
+            },
+      ],
     }, SetOptions(merge: true));
+
+    // Refresh this parent's access and the affected students' parent-safe
+    // profiles. The links are already saved, so a failure here is reported,
+    // not treated as a failed save.
+    var message = 'Students linked successfully';
+    try {
+      final issues = await links.refresh(saved, requesterRole: user?.role ?? '', updatedBy: user?.id ?? '');
+      final unresolved = issues.where((i) => i.kind.unresolved).toList();
+      if (unresolved.isNotEmpty) {
+        message = 'Students linked. Parent access needs attention: ${unresolved.map((i) => i.kind.label).toSet().join('; ')}.';
+      }
+    } catch (e) {
+      debugPrint('PARENT ACCESS REFRESH ERROR: $e');
+      message = "Students linked, but parent access couldn't be refreshed. Run Settings → Parent access.";
+    }
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Students linked successfully')),
+      SnackBar(content: Text(message)),
     );
   }
 

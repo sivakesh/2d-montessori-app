@@ -2,10 +2,14 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/widgets/responsive_dialog_shell.dart';
 import '../../ui/admin_fab.dart';
+import '../../../auth/providers/auth_provider.dart';
+import '../../../parent/data/parent_link_service.dart';
+import '../../../parent/data/parent_projection_service.dart';
 import '../data/admin_student_service.dart';
 import '../models/admin_student_model.dart';
 import '../../../fees/models/fee_discount.dart';
@@ -156,6 +160,8 @@ class _AdminStudentViewDialogState extends State<AdminStudentViewDialog>
         },
       ]),
     }, SetOptions(merge: true));
+    // The parents' copy lists the document by Storage path.
+    await ParentProjectionService().syncStudentQuietly(widget.studentId);
 
     _docNameController.clear();
     await _refresh();
@@ -211,18 +217,31 @@ class _AdminStudentViewDialogState extends State<AdminStudentViewDialog>
   }
 
   Future<void> _saveParentLinks() async {
-    final links = selectedRelations.entries
-        .map(
-          (e) => {
-            'userId': e.key,
-            'relation': e.value,
-          },
-        )
-        .toList();
-
-    await FirebaseFirestore.instance.collection('students').doc(widget.studentId).set({
-      'parentLinks': links,
-    }, SetOptions(merge: true));
+    // Read before any await (the signed-in admin, for the access refresh).
+    final user = ProviderScope.containerOf(context, listen: false).read(currentUserProvider);
+    // Saves the link records and the student's parentLinks together
+    // (ParentLinkService), so parents linked here also get access; this
+    // dialog used to write parentLinks alone.
+    final links = ParentLinkService();
+    final saved = await links.saveLinksForStudent(
+      studentId: widget.studentId,
+      parents: [
+        for (final e in selectedRelations.entries)
+          if (linkedParents.firstWhere((p) => p['userId']?.toString() == e.key, orElse: () => <String, dynamic>{}) case final parent)
+            ParentLinkEntry(
+              userId: e.key,
+              relation: e.value,
+              name: parent['name']?.toString() ?? '',
+              email: parent['email']?.toString() ?? '',
+              phone: parent['phone']?.toString() ?? '',
+            ),
+      ],
+    );
+    try {
+      await links.refresh(saved, requesterRole: user?.role ?? '', updatedBy: user?.id ?? '');
+    } catch (e) {
+      debugPrint('PARENT ACCESS REFRESH ERROR: $e');
+    }
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(

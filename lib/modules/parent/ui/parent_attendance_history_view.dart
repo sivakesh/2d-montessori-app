@@ -8,6 +8,7 @@ import '../../admin/ui/admin_attendance_management_screen.dart'
     show computeAttendanceSummary;
 import '../../attendance/data/attendance_service.dart';
 import '../../finance/widgets/finance_status_chip.dart';
+import '../data/parent_projections.dart' show parentAttendanceRecord;
 
 /// Read-only Parent attendance history for one linked child — reached from
 /// the Dashboard's selected child card, never as its own navigation
@@ -81,10 +82,16 @@ class _AttendanceHistoryContentState
       _hasError = false;
     });
     try {
-      final records = await _service.getAttendanceHistoryForEntity(
-        entityType: 'student',
-        entityId: widget.studentId,
-      );
+      // Parent-facing form of each day: the photo by Storage path only,
+      // never its download URL (parentAttendanceRecord); the records
+      // themselves are unchanged.
+      final records = [
+        for (final r in await _service.getAttendanceHistoryForEntity(
+          entityType: 'student',
+          entityId: widget.studentId,
+        ))
+          parentAttendanceRecord(r),
+      ];
       if (!mounted) return;
       setState(() {
         _records = records;

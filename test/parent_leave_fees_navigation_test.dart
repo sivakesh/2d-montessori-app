@@ -157,6 +157,22 @@ Future<void> seedFeeReceipt(
     'createdBy': 'admin-1',
     'isDeleted': false,
   });
+  // FeeService.collectFee writes each receipt together with its fee
+  // transaction (txn-1 above); the parent payment history reads the
+  // transaction, never the receipt (docs/parent_access_security.md).
+  await firestore.collection('fee_transactions').doc('txn-1').set({
+    'assignmentId': 'assignment-1',
+    'studentId': studentId,
+    'studentName': 'Child',
+    'admissionNo': 'ADM-$studentId',
+    'className': 'Mont 1',
+    'feeStructureName': 'Core Fees',
+    'amount': amount,
+    'paymentDate': DateTime(2026, 8, 1),
+    'paymentMode': 'Cash',
+    'referenceNo': 'REF-1',
+    'createdAt': DateTime(2026, 8, 1),
+  });
 }
 
 Widget _buildParentDashboard(FakeFirebaseFirestore firestore, {String parentId = 'parent-1'}) {

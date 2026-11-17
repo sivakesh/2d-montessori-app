@@ -8,6 +8,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_sizes.dart';
 import '../../admin/notifications/data/admin_notification_service.dart';
 import '../../admin/notifications/models/admin_notification_model.dart';
+import '../../parent/data/parent_file_service.dart';
 import 'notification_relevance.dart';
 
 /// Simple, read-only notification feed shared by the Parent and Staff
@@ -32,6 +33,7 @@ class NotificationsFeedScreen extends StatefulWidget {
     required Set<String> childStudentIds,
     required Set<String> childClassIds,
     this.showOwnScaffold = true,
+    this.parentUserId = '',
   }) : audience = 'Parents',
        _childStudentIds = childStudentIds,
        _childClassIds = childClassIds,
@@ -43,6 +45,7 @@ class NotificationsFeedScreen extends StatefulWidget {
     required String staffUserId,
     this.showOwnScaffold = true,
   }) : audience = 'Staff',
+       parentUserId = '',
        _staffUserId = staffUserId,
        _childStudentIds = const {},
        _childClassIds = const {};
@@ -52,6 +55,11 @@ class NotificationsFeedScreen extends StatefulWidget {
   final Set<String> _childStudentIds;
   final Set<String> _childClassIds;
   final String? _staffUserId;
+
+  /// The signed-in parent (Parents feed): once their access record exists,
+  /// notices come from the parent copies, whose targeting the server
+  /// enforces and which carry no attachment URL.
+  final String parentUserId;
 
   /// True (the default, unchanged for every existing caller) renders this
   /// screen's own `Scaffold`+`AppBar`, exactly as before. Pass false to get
@@ -89,9 +97,15 @@ class _NotificationsFeedScreenState extends State<NotificationsFeedScreen> {
       // error handling as a failed fetch, instead of throwing uncaught
       // before this widget's error state can ever show.
       final service = AdminNotificationService();
-      final fetched = await service.getNotificationsForAudience(
-        widget.audience,
-      );
+      // A parent's feed queries only notices they may receive (never ones
+      // targeted at other students); staff keep the audience query.
+      final fetched = widget.audience == 'Parents'
+          ? await service.getNotificationsForParent(
+              parentUserId: widget.parentUserId,
+              childStudentIds: widget._childStudentIds,
+              childClassIds: widget._childClassIds,
+            )
+          : await service.getNotificationsForAudience(widget.audience);
       final relevant = widget.audience == 'Parents'
           ? fetched
                 .where(
@@ -126,7 +140,7 @@ class _NotificationsFeedScreenState extends State<NotificationsFeedScreen> {
 
   void _openDetail(AdminNotificationModel notification) {
     setState(() => _openedThisSession.add(notification.id));
-    showNotificationDetail(context, notification);
+    showNotificationDetail(context, notification, parentUserId: widget.parentUserId);
   }
 
   @override
@@ -284,10 +298,14 @@ class _NotificationCard extends StatelessWidget {
 /// phone-style sheet stretched full width. Both branches share the exact
 /// same content widget — nothing about the notification itself is
 /// duplicated between them.
+///
+/// [parentUserId]: the signed-in parent, for a parent copy's attachment
+/// (downloaded only after checking the notice is targeted at them).
 void showNotificationDetail(
   BuildContext context,
-  AdminNotificationModel notification,
-) {
+  AdminNotificationModel notification, {
+  String parentUserId = '',
+}) {
   final isMobile =
       MediaQuery.of(context).size.width < AppSizes.mobileBreakpoint;
 
@@ -308,7 +326,7 @@ void showNotificationDetail(
         constraints: BoxConstraints(
           maxHeight: MediaQuery.of(sheetContext).size.height * 0.75,
         ),
-        child: _NotificationDetailContent(notification: notification),
+        child: _NotificationDetailContent(notification: notification, parentUserId: parentUserId),
       ),
     );
     return;
@@ -331,7 +349,7 @@ void showNotificationDetail(
             MediaQuery.of(dialogContext).size.height * 0.8,
           ),
         ),
-        child: _NotificationDetailContent(notification: notification),
+        child: _NotificationDetailContent(notification: notification, parentUserId: parentUserId),
       ),
     ),
   );
@@ -340,14 +358,24 @@ void showNotificationDetail(
 Future<void> _openAttachment(
   BuildContext context,
   AdminNotificationModel notification,
+  String parentUserId,
 ) async {
   final messenger = ScaffoldMessenger.of(context);
   var opened = false;
   try {
-    opened = await launchUrl(
-      Uri.parse(notification.attachmentUrl),
-      mode: LaunchMode.externalApplication,
-    );
+    if (notification.attachmentUrl.isNotEmpty) {
+      opened = await launchUrl(
+        Uri.parse(notification.attachmentUrl),
+        mode: LaunchMode.externalApplication,
+      );
+    } else if (notification.attachmentPath.isNotEmpty) {
+      // A parent copy carries no URL: the file is downloaded through the
+      // Storage rules, which check this parent may receive the notice.
+      opened = await ParentFileService(parentUserId: parentUserId).downloadNoticeAttachment(
+        storagePath: notification.attachmentPath,
+        fileName: notification.attachmentName,
+      );
+    }
   } catch (_) {
     opened = false;
   }
@@ -372,9 +400,10 @@ Future<void> _openAttachment(
 /// notification compact: it only ever claims as much height as its content
 /// actually needs, up to whatever max height the caller supplied.
 class _NotificationDetailContent extends StatelessWidget {
-  const _NotificationDetailContent({required this.notification});
+  const _NotificationDetailContent({required this.notification, this.parentUserId = ''});
 
   final AdminNotificationModel notification;
+  final String parentUserId;
 
   @override
   Widget build(BuildContext context) {
@@ -470,9 +499,9 @@ class _NotificationDetailContent extends StatelessWidget {
                         color: AppColors.textPrimary,
                       ),
                     ),
-                    if (notification.attachmentUrl.isNotEmpty) ...[
+                    if (notification.attachmentUrl.isNotEmpty || notification.attachmentPath.isNotEmpty) ...[
                       const SizedBox(height: 20),
-                      _AttachmentRow(notification: notification),
+                      _AttachmentRow(notification: notification, parentUserId: parentUserId),
                     ],
                     // Bottom breathing room inside the scroll area itself,
                     // so the last line of a long message never sits flush
@@ -490,9 +519,10 @@ class _NotificationDetailContent extends StatelessWidget {
 }
 
 class _AttachmentRow extends StatelessWidget {
-  const _AttachmentRow({required this.notification});
+  const _AttachmentRow({required this.notification, this.parentUserId = ''});
 
   final AdminNotificationModel notification;
+  final String parentUserId;
 
   @override
   Widget build(BuildContext context) {
@@ -501,7 +531,7 @@ class _AttachmentRow extends StatelessWidget {
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: () => _openAttachment(context, notification),
+        onTap: () => _openAttachment(context, notification, parentUserId),
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Row(

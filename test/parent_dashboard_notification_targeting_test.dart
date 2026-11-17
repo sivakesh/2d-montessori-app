@@ -327,18 +327,22 @@ void main() {
       await tester.pumpWidget(buildDashboard());
       await tester.pumpAndSettle();
 
-      // Amenah is linked first and is selected by default.
+      // The family overview (Phase 1) shows the notices of all the
+      // parent's children, so Amenah's appears.
       expect(find.text('Only for Amenah'), findsOneWidget);
 
-      // Switch to Abdul via the child selector chip — the notification
-      // targeted specifically to Amenah must disappear.
+      // Open Abdul's own dashboard from his card (scrolled into view, as a
+      // user would) — the notification targeted specifically to Amenah
+      // must disappear.
+      await tester.ensureVisible(find.text('Abdul Hakeem Khan'));
       await tester.tap(find.text('Abdul Hakeem Khan'));
       await tester.pumpAndSettle();
       expect(find.text('Only for Amenah'), findsNothing);
 
-      // Switch back to Amenah — it must reappear, proving the Dashboard
-      // re-derives relevance from the live selected child rather than a
-      // value cached once at load time.
+      // Switch to Amenah via the child selector chip — it must reappear,
+      // proving the Dashboard re-derives relevance from the live selected
+      // child rather than a value cached once at load time.
+      await tester.ensureVisible(find.text('Amenah Noor'));
       await tester.tap(find.text('Amenah Noor'));
       await tester.pumpAndSettle();
       expect(find.text('Only for Amenah'), findsOneWidget);

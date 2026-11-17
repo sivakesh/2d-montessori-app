@@ -21,10 +21,14 @@ class ParentNotificationsScreen extends StatelessWidget {
     super.key,
     required this.childStudentIds,
     required this.childClassIds,
+    this.parentUserId = '',
   });
 
   final Set<String> childStudentIds;
   final Set<String> childClassIds;
+
+  /// The signed-in parent (see NotificationsFeedScreen.parentUserId).
+  final String parentUserId;
 
   @override
   Widget build(BuildContext context) {
@@ -33,6 +37,7 @@ class ParentNotificationsScreen extends StatelessWidget {
       childStudentIds: childStudentIds,
       childClassIds: childClassIds,
       showOwnScaffold: false,
+      parentUserId: parentUserId,
     );
 
     void goToDashboard(int _) => Navigator.of(context).maybePop();

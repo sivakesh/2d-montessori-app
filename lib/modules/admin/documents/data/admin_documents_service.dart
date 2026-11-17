@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../parent/data/parent_projection_service.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:file_picker/file_picker.dart';
 
@@ -88,6 +89,8 @@ class AdminDocumentsService {
       'fileName': file.name,
       'uploadedAt': FieldValue.serverTimestamp(),
     });
+    // The parents' copy of the student lists its documents by Storage path.
+    await ParentProjectionService(firestore: _firestore).syncStudentQuietly(studentId);
     return DocumentModel.fromMap(doc.id, {
       'entityType': 'student',
       'entityId': studentId,

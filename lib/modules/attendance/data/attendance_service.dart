@@ -154,10 +154,15 @@ class AttendanceService {
       for (final dateKey in dateKeys)
         _attendanceId(dateKey, entityType, entityId),
     ];
-    final snap = await _attendance
-        .where(FieldPath.documentId, whereIn: ids)
-        .get();
-    final byId = {for (final doc in snap.docs) doc.id: doc.data()};
+    // Fetched one document at a time (in parallel) rather than with a
+    // `documentId whereIn` query: the security rules let a parent read a
+    // linked child's attendance by its deterministic id, and refuse parents
+    // any attendance query (docs/parent_access_security.md).
+    final docs = await Future.wait(ids.map((id) => _attendance.doc(id).get()));
+    final byId = {
+      for (final doc in docs)
+        if (doc.exists && doc.data() != null) doc.id: doc.data()!,
+    };
 
     return [
       for (var i = 0; i < dateKeys.length; i++)
