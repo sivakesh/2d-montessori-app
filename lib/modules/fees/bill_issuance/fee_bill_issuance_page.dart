@@ -10,6 +10,7 @@ import '../ui/dialogs/fee_receipt_regenerate_dialog.dart' show SchoolLogoLoader,
 import 'fee_bill_details_dialog.dart';
 import 'fee_bill_issue_dialog.dart';
 import 'fee_bill_models.dart';
+import 'fee_bill_pdf.dart';
 import 'fee_bill_service.dart';
 
 /// Fees → Fee Bill Issuance: supplementary month-wise bill documents issued
@@ -19,7 +20,9 @@ import 'fee_bill_service.dart';
 ///
 /// Keys: `fee-bills-` + `back`, `issue`, `search`, `status-filter`,
 /// `total-issued`, `total-gross`, `total-adjustment`, `total-net`,
-/// `total-cancelled`, `row-<billNo>`, `empty`, `more`.
+/// `total-cancelled`, `total-allocated` (payments used by active bills), `total-eligible`,
+/// `total-unallocated`, `needs-review`, `payment-allocations`,
+/// `payment-allocation-<receiptId>`, `row-<billNo>`, `empty`, `more`.
 class FeeBillIssuancePage extends ConsumerStatefulWidget {
   const FeeBillIssuancePage({
     super.key,
@@ -49,6 +52,15 @@ enum _StatusFilter { all, issued, cancelled }
 class _FeeBillIssuancePageState extends ConsumerState<FeeBillIssuancePage> {
   late final FeeBillService _service = widget.service ?? FeeBillService();
   late Stream<List<FeeIssuedBill>> _bills = _service.watchBills();
+
+  /// Payments against bills (read once, and again after issuing or
+  /// cancelling).
+  late Future<FeeBillAllocationReport> _report = _service.allocationReport();
+
+  void _reload() {
+    _bills = _service.watchBills();
+    _report = _service.allocationReport();
+  }
   final _search = TextEditingController();
   _StatusFilter _status = _StatusFilter.all;
   int _shown = 25;
@@ -94,7 +106,7 @@ class _FeeBillIssuancePageState extends ConsumerState<FeeBillIssuancePage> {
         clock: widget.clock,
       ),
     );
-    if (issued == true && mounted) setState(() => _bills = _service.watchBills());
+    if (issued == true && mounted) setState(_reload);
   }
 
   Future<void> _openBill(FeeIssuedBill b) async {
@@ -102,7 +114,7 @@ class _FeeBillIssuancePageState extends ConsumerState<FeeBillIssuancePage> {
       context: context,
       builder: (_) => FeeBillDetailsDialog(bill: b, service: _service, role: _role, loadLogo: widget.loadLogo, savePdf: widget.savePdf, clock: widget.clock),
     );
-    if (mounted) setState(() => _bills = _service.watchBills());
+    if (mounted) setState(_reload);
   }
 
   bool _matches(FeeIssuedBill b) {
@@ -110,7 +122,7 @@ class _FeeBillIssuancePageState extends ConsumerState<FeeBillIssuancePage> {
     if (_status == _StatusFilter.cancelled && !b.isCancelled) return false;
     final q = _search.text.trim().toLowerCase();
     if (q.isEmpty) return true;
-    return [b.billNo, b.payment.studentName, b.payment.admissionNo, b.payment.receiptNo, FeeMonth.label(b.line.billingMonth), b.line.description]
+    return [b.billNo, b.payment.studentName, b.payment.admissionNo, for (final a in b.allocations) a.receiptNo, FeeMonth.label(b.line.billingMonth), b.line.description]
         .any((f) => f.toLowerCase().contains(q));
   }
 
@@ -144,12 +156,62 @@ class _FeeBillIssuancePageState extends ConsumerState<FeeBillIssuancePage> {
           ]),
           subtitle: Text(
             '${b.payment.studentName}${b.payment.admissionNo.isEmpty ? '' : ' • ${b.payment.admissionNo}'} • ${FeeMonth.label(b.line.billingMonth)}\n'
-            'Receipt Reference ${b.payment.receiptNo} • Gross ${billMoney(b.line.grossPaise)} • Adjustment ${billMoney(b.line.adjustmentPaise)} • '
+            'Receipt Reference ${FeeBillPdf.receiptReference(b)} • Gross ${billMoney(b.line.grossPaise)} • Adjustment ${billMoney(b.line.adjustmentPaise)} • '
             'Net ${billMoney(b.line.netPaise)} • Issued ${b.issuedAt == null ? '-' : _date.format(b.issuedAt!)}',
           ),
           isThreeLine: true,
           trailing: const Icon(Icons.chevron_right),
         ),
+      );
+
+  /// Actual collections against what bills use of them: collected on
+  /// payments that can support bills, allocated, still unallocated, and
+  /// any payment billed above its current amount.
+  Widget _allocationReport() => FutureBuilder<FeeBillAllocationReport>(
+        future: _report,
+        builder: (context, snap) {
+          if (snap.hasError) return Text('The payment allocations could not be loaded: ${snap.error}', style: const TextStyle(fontSize: 12));
+          final r = snap.data;
+          if (r == null) return const Padding(padding: EdgeInsets.all(8), child: LinearProgressIndicator());
+          final review = r.overAllocated;
+          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const SizedBox(height: 8),
+            Wrap(children: [
+              _card('Collected (payments usable for bills)', billMoney(r.eligibleCollectedPaise), const Key('fee-bills-total-eligible')),
+              _card('Allocated to active bills', billMoney(r.allocatedPaise), const Key('fee-bills-total-allocated')),
+              _card('Not yet allocated', billMoney(r.unallocatedPaise), const Key('fee-bills-total-unallocated')),
+            ]),
+            if (review.isNotEmpty)
+              Text(
+                '${review.length} payment${review.length == 1 ? ' is' : 's are'} billed for more than its current amount (edited in Fees after the bills were issued): '
+                '${[for (final p in review) '${p.payment.receiptNo} (${billMoney(p.allocatedPaise)} billed of ${billMoney(p.payment.amountPaise)})'].join(', ')}. '
+                'Review and cancel bills as needed.',
+                key: const Key('fee-bills-needs-review'),
+                style: TextStyle(fontSize: 12, color: Colors.orange.shade900),
+              ),
+            ExpansionTile(
+              key: const Key('fee-bills-payment-allocations'),
+              tilePadding: EdgeInsets.zero,
+              title: const Text('Payment allocation details', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              subtitle: const Text('Each payment: collected, used by active bills, and not yet allocated. A bill-only adjustment is never an allocation.', style: TextStyle(fontSize: 12)),
+              children: [
+                if (r.payments.isEmpty) const Text('No payments have been collected yet.'),
+                for (final p in r.payments)
+                  ListTile(
+                    key: Key('fee-bills-payment-allocation-${p.payment.receiptId}'),
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('${p.payment.receiptNo} · ${p.payment.studentName}'),
+                    subtitle: Text(
+                      '${p.payment.paymentDate == null ? 'No payment date' : _date.format(p.payment.paymentDate!)} · Collected ${billMoney(p.payment.amountPaise)} · '
+                      'Allocated ${billMoney(p.allocatedPaise)} · Not yet allocated ${billMoney(p.availablePaise)}'
+                      '${p.payment.voided ? ' · Voided' : p.eligible ? '' : ' · Can\'t support new bills'}',
+                    ),
+                  ),
+              ],
+            ),
+          ]);
+        },
       );
 
   @override
@@ -209,6 +271,7 @@ class _FeeBillIssuancePageState extends ConsumerState<FeeBillIssuancePage> {
                   'Totals cover active bills only. Actual payments are in Fees → Collections and Receipts; these figures are never added to them or to Finance.',
                   style: TextStyle(fontSize: 12),
                 ),
+                _allocationReport(),
                 const SizedBox(height: 12),
                 Wrap(spacing: 12, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
                   SizedBox(

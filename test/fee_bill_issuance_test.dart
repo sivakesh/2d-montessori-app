@@ -230,6 +230,10 @@ void main() {
 
   group('Bill Reference', () {
     Future<String> otherReceipt(String id, String receiptNo, {double amount = 5000}) async {
+      // A second collected payment: its receipt and its matching Fees
+      // transaction record, as collectFee writes them together.
+      final tx = (await firestore.collection('fee_transactions').doc(receipt.transactionId).get()).data()!;
+      await firestore.collection('fee_transactions').doc('t-$id').set({...tx, 'amount': amount});
       await firestore.collection('fee_receipts').doc(id).set({...receipt.toMap(), 'receiptNo': receiptNo, 'amount': amount, 'transactionId': 't-$id'});
       return id;
     }

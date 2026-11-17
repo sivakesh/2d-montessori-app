@@ -30,11 +30,21 @@ void main() {
   Future<void> seedStudent({String id = 's1', String name = 'Anu Raman'}) =>
       firestore.collection('students').doc(id).set({'name': name, 'admissionNo': 'ADM-101', 'classId': 'c1', 'isActive': true});
 
-  Future<void> seedReceipt(String id, {double amount = 12500, bool voided = false}) => firestore.collection('fee_receipts').doc(id).set({
-        'receiptNo': 'REC-$id', 'studentId': 's1', 'studentName': 'Anu Raman', 'admissionNo': 'ADM-101', 'className': 'Mont 1',
-        'feeStructureName': 'Monthly tuition fee', 'amount': amount, 'paymentMode': 'upi', 'referenceNo': 'UPI-1',
-        'paymentDate': DateTime(2026, 11, 5), if (voided) 'isDeleted': true,
+  /// A collected payment: its receipt and its matching Fees transaction
+  /// record, written together as collectFee does.
+  Future<void> seedReceipt(String id, {double amount = 12500, bool voided = false, DateTime? date, String? transactionId}) async {
+    final tid = transactionId ?? 't-$id';
+    if (tid.isNotEmpty) {
+      await firestore.collection('fee_transactions').doc(tid).set({
+        'studentId': 's1', 'studentName': 'Anu Raman', 'amount': amount, 'paymentMode': 'upi', 'referenceNo': 'UPI-1', 'paymentDate': date ?? DateTime(2026, 11, 5),
       });
+    }
+    await firestore.collection('fee_receipts').doc(id).set({
+      'receiptNo': 'REC-$id', 'transactionId': tid, 'studentId': 's1', 'studentName': 'Anu Raman', 'admissionNo': 'ADM-101', 'className': 'Mont 1',
+      'feeStructureName': 'Monthly tuition fee', 'amount': amount, 'paymentMode': 'upi', 'referenceNo': 'UPI-1',
+      'paymentDate': date ?? DateTime(2026, 11, 5), if (voided) 'isDeleted': true,
+    });
+  }
 
   Future<void> open(WidgetTester tester) async {
     tester.view.physicalSize = const Size(1200, 2000);

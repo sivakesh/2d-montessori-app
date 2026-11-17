@@ -46,8 +46,28 @@ abstract final class FeeBillPdf {
           ('Bill-only Adjustment (${b.line.adjustmentType.label})', '- ${money(b.line.adjustmentPaise)}'),
           ('Adjustment Reason', b.line.adjustmentReason),
         ],
-        ('Receipt Reference', b.payment.receiptNo.isEmpty ? '-' : b.payment.receiptNo),
+        ('Receipt Reference', receiptReference(b)),
       ];
+
+  /// The receipt number of the bill's payment; for a bill supported by
+  /// several payments, every one of them, primary first.
+  static String receiptReference(FeeIssuedBill b) {
+    if (!b.isMultiPayment) return b.payment.receiptNo.isEmpty ? '-' : b.payment.receiptNo;
+    return [for (final a in b.allocations) a.receiptNo.isEmpty ? '-' : a.receiptNo].join(', ');
+  }
+
+  /// The PAYMENT ALLOCATION table's rows (payment reference, payment date,
+  /// allocated amount), for a bill supported by several payments only; a
+  /// one-payment bill has none, so its PDF is unchanged.
+  static List<(String, String, String)> allocationRows(FeeIssuedBill b) => !b.isMultiPayment
+      ? const []
+      : [
+          for (final a in b.allocations)
+            (a.receiptNo.isEmpty ? '-' : a.receiptNo, a.paymentDate == null ? '-' : _date.format(a.paymentDate!), money(a.allocatedPaise)),
+        ];
+
+  static const allocationHeading = 'PAYMENT ALLOCATION';
+  static const allocationTotalLabel = 'Total allocated';
 
   /// The net amount as printed, with "(GST Included)" only when "Amount
   /// includes GST" was ticked.
@@ -109,6 +129,38 @@ abstract final class FeeBillPdf {
           ],
         );
 
+    // The payments supporting a multi-payment bill, in the same style.
+    pw.Widget allocationTable() {
+      pw.Widget cell(String text, {bool head = false, bool bold = false, bool right = false}) => pw.Container(
+            color: head ? _band : null,
+            padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            alignment: right ? pw.Alignment.centerRight : pw.Alignment.centerLeft,
+            child: pw.Text(text,
+                style: head || bold
+                    ? pw.TextStyle(fontSize: head ? 9.5 : 10, fontWeight: pw.FontWeight.bold, color: head ? _muted : _ink)
+                    : const pw.TextStyle(fontSize: 10, color: _ink)),
+          );
+      return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+        pw.Text(allocationHeading, style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: _accent, letterSpacing: 1)),
+        pw.SizedBox(height: 5),
+        pw.Table(
+          border: const pw.TableBorder(
+            top: pw.BorderSide(color: _line, width: 0.7),
+            bottom: pw.BorderSide(color: _line, width: 0.7),
+            left: pw.BorderSide(color: _line, width: 0.7),
+            right: pw.BorderSide(color: _line, width: 0.7),
+            horizontalInside: pw.BorderSide(color: _line, width: 0.5),
+          ),
+          columnWidths: const {0: pw.FlexColumnWidth(), 1: pw.FixedColumnWidth(110), 2: pw.FixedColumnWidth(120)},
+          children: [
+            pw.TableRow(children: [cell('Payment Reference', head: true), cell('Payment Date', head: true), cell('Allocated Amount', head: true, right: true)]),
+            for (final (ref, date, amount) in allocationRows(b)) pw.TableRow(children: [cell(ref), cell(date), cell(amount, right: true)]),
+            pw.TableRow(children: [cell(allocationTotalLabel, bold: true), cell(''), cell(money(b.allocatedPaise), bold: true, right: true)]),
+          ],
+        ),
+      ]);
+    }
+
     pw.Widget banner(String text) => pw.Container(
           width: double.infinity,
           padding: const pw.EdgeInsets.all(8),
@@ -167,6 +219,7 @@ abstract final class FeeBillPdf {
             pw.SizedBox(height: 16),
             if (studentRows(b).isNotEmpty) ...[section('STUDENT DETAILS', studentRows(b)), pw.SizedBox(height: 16)],
             section('BILL DETAILS', billRows(b)),
+            if (allocationRows(b).isNotEmpty) ...[pw.SizedBox(height: 16), allocationTable()],
             pw.SizedBox(height: 18),
             // The net amount, prominently, and in words.
             pw.Container(

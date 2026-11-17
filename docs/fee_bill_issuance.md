@@ -210,6 +210,76 @@ Issued bills are never edited. A cancellation is refused, and nothing is
 written, if the payment's allocation doesn't record the bill exactly, since
 that would leave it inconsistent.
 
+## Several payments, several bills and partial allocations
+
+A bill can be supported by more than one payment, a payment can support
+more than one bill, and a payment never has to be billed in full at once.
+Issuing a bill only records which part of which payment it represents: no
+payment, receipt, fee balance or Finance record is created or changed.
+
+- **Choosing payments.** Issue Bills lists the student's payments with
+  their collected amount, what active bills already use, and what is still
+  available. A payment can be chosen only when it is:
+  - an active (not voided) receipt of this school and student, with an
+    amount above ₹0 and a usable receipt number;
+  - linked (`transactionId`) to its Fees transaction record, which exists,
+    is not voided, and has the same student, school and amount.
+  Any other payment is listed with the reason it can't be used. There is no
+  fallback that skips this check. Every receipt the app has written
+  (`collectFee`, since the Fees module's first version) has its transaction
+  record, written in the same batch; a receipt created outside the app
+  without one can't support new bills, though its existing bills stay
+  readable, downloadable and cancellable.
+- **One payment chosen.** Each bill line uses its net amount of that
+  payment, exactly as before.
+- **Several payments chosen.** Each bill line gets one amount per chosen
+  payment (the allocation matrix). The payments' remaining amounts, the
+  total allocated and the amount left unallocated update as amounts are
+  typed. "Allocate automatically" fills the bills in order from the
+  earliest payment. Before issuing, each bill's allocations must equal its
+  net amount, no payment may be used beyond what is available, and no
+  amount may be negative or invalid. Issuing asks for confirmation.
+- **Limits.** At most 12 bills per issue and 6 payments per bill, checked
+  before any transaction with a message saying what to change. Nothing is
+  truncated.
+- **Net amount above ₹0.** A bill must be supported by an amount actually
+  paid, so a bill whose adjustment equals its gross (net ₹0) can no longer
+  be issued. Existing bills like that stay readable and cancellable.
+- **Bill-only adjustments** are never allocations: a payment supports the
+  bill's net amount only (gross ₹4,200, adjustment ₹100, allocation
+  ₹4,100).
+- **Bill Reference.** A bill supported by several payments is numbered from
+  its primary payment, the earliest by payment date (then the lowest receipt
+  number), using that payment's own sequence:
+  `{primary receipt number}-{six digits}`. Existing references and the
+  per-payment sequences are unchanged; a reference is still never reused.
+- **PDF.** A bill supported by one payment prints exactly as before. A bill
+  supported by several lists every receipt number under Receipt Reference
+  and adds a PAYMENT ALLOCATION table (payment reference, payment date,
+  allocated amount, total allocated) between BILL DETAILS and the net
+  amount, in the same layout. Administrators and parents download the same
+  PDF.
+- **Cancelling** a bill gives back to each of its payments exactly what it
+  used: its ledger entries are marked released and a reversal record is
+  written for each. No other bill's allocation is touched. A replacement
+  gets a new reference and new allocations; for a bill supported by several
+  payments, its allocations are prefilled from the cancelled bill's and can
+  be changed (they must total its net amount).
+- **Bills issued before the ledger** have no stored allocations. They are
+  read as one allocation of their net amount from their one payment, and
+  print as before. Nothing was migrated; when one is cancelled, its ledger
+  entry is recorded then (`legacy: true`, already released) with its
+  reversal record.
+- **Report.** Fee Bill Issuance also shows what payments active bills use,
+  what was collected on payments usable for bills, what is not yet
+  allocated, any payment billed for more than its current amount (edited
+  in Fees afterwards), and each payment's allocation. These are documents
+  only, never income.
+- **Parents** see, in an active bill's details, the payments supporting it
+  (receipt number, date, amount used). A payment that supports several bills
+  appears on each; it was still paid once, and Payment History is
+  unchanged.
+
 ## Data model
 
 ### `fee_issued_bills/{schoolId}_{billNo}`
@@ -245,8 +315,8 @@ One per payment that has bills.
 |---|---|
 | `schoolId`, `receiptId`, `studentId` | |
 | `paymentPaise` | the receipt's amount when last written |
-| `allocatedPaise` | the sum of active bills' net amounts |
-| `bills` | active bill id → net paise |
+| `allocatedPaise` | what active bills use of this payment (the sum of `bills`) |
+| `bills` | active bill id → the paise that bill uses of this payment (its whole net for a one-payment bill) |
 | `lineKeys` | active bill line (month and description) → bill id |
 | `requests` | issue request id → the bill ids it created |
 | `nextSequence` | the sequence of this payment's next Bill Reference (only increases) |
@@ -264,6 +334,58 @@ the check atomic. Its consistency is kept as follows:
 - The proposed rules require each new bill to be recorded in it at its net
   amount, the total to stay within the payment, and the version to advance
   by one.
+
+**Bills supported by several payments** add these fields to
+`fee_issued_bills` (every new bill has them; earlier bills don't):
+
+| Field | |
+|---|---|
+| `allocations` | `[{allocationId, receiptId, receiptNo, paymentDate, paymentAmountPaise, allocatedPaise}]`, primary first; never changed |
+| `receiptIds` | the supporting receipts' ids |
+| `allocationSchema` | 2 |
+
+`receiptId` and `payment` hold the primary payment.
+
+### `fee_bill_payment_allocations/{billId}__{receiptId}`
+
+The allocation ledger: one entry per bill and supporting payment. The id
+makes a second allocation of the same payment to the same bill impossible.
+
+| Field | |
+|---|---|
+| `schoolId`, `studentId`, `allocationId`, `billId`, `billNo` | |
+| `receiptId`, `receiptNo`, `paymentDate`, `paymentAmountPaise` | the payment, as it was when allocated |
+| `allocatedPaise` | |
+| `status` | `active`, or `released` when the bill is cancelled |
+| `reversalId`, `releasedAt`, `releasedBy` | set on release |
+| `requestId`, `allocatedAt`, `allocatedBy` | |
+| `legacy`, `recordedAt` | for a bill issued before the ledger, recorded when it is cancelled |
+
+Written only in the issue and cancel transactions; details never change,
+only `active` → `released`. Never deleted.
+
+### `fee_bill_allocation_reversals/{allocationId}`
+
+The explicit record of a released allocation: `allocationId`, `billId`,
+`billNo`, `receiptId`, `receiptNo`, `releasedPaise`, `reason`,
+`replacedByBillId`, `legacy`, `by`, `at`. Created once, never changed or
+deleted.
+
+### `fee_bill_issue_requests/{requestId}`
+
+`schoolId`, `studentId`, `billIds`, `receiptIds`, `by`, `at`. A repeated
+request returns these bills instead of issuing again. Earlier requests are
+still recognised from `fee_bill_allocations.requests`.
+
+**Transactions.** An issue reads the request record, then for every payment
+used its receipt, its Fees transaction record and its allocation record,
+then the new bill and ledger ids, and checks everything before writing the
+bills, audit entries, ledger entries, allocation records and request record
+together. A cancellation reads the bill, its payments' records, its ledger
+entries and reversal ids (and, with a replacement, the replacement's
+payments). Two transactions using the same payment are serialised by its
+allocation record, so the second sees the first's allocations and is
+refused if they no longer fit.
 
 No student or payment record is copied apart from the snapshots needed for
 the document's historical accuracy.
@@ -366,6 +488,34 @@ Run the emulator tests (demo project only; firebase-tools needs Java 21):
       --project demo-montessori-bills --only firestore \
       "python3 -I test/firebase_rules/fee_bills_rules_test.py"
 
+### Phase 2 additions for the whole-application rules review
+
+Not implemented: rules work is deferred to the whole-application security
+review, and the checks above are app-level only (an administrator role in
+the app). The review must cover:
+
+- `fee_issued_bills`: allow the new fields `allocations`, `receiptIds` and
+  `allocationSchema` on create (in `hasOnly`), never on update.
+- `fee_bill_payment_allocations`: administrators of the school only; create
+  only in the same write as its bill (`getAfter`), with `status: active`;
+  update only `active` → `released` with `reversalId`, `releasedAt` and
+  `releasedBy`, and, for a bill issued before the ledger, create already
+  released with `legacy: true`; never delete.
+- `fee_bill_allocation_reversals`: administrators only; create once, in
+  the same write as the bill's cancellation; never update or delete.
+- `fee_bill_issue_requests`: administrators only; create once; never update
+  or delete.
+- `fee_bill_allocations`: `bills` now holds per-payment amounts. The sum
+  checks (a payment's allocations within its amount, a bill's allocations
+  equal to its net) can only be partly expressed in rules; the app checks
+  them in its transactions.
+- Reads of `fee_transactions` by Fee Bill Issuance (administrators).
+- `parent_fee_bills`: the copy's new `allocations` (receipt number, payment
+  date and amount used only).
+
+No new indexes are needed: the new queries are single-field (`billId`,
+`schoolId`). No Functions are added.
+
 ## Deployment prerequisites
 
 1. Merge the three rule blocks into the real Firestore rules and deploy
@@ -391,4 +541,7 @@ Run the emulator tests (demo project only; firebase-tools needs Java 21):
   bills can still be cancelled.
 - If a collection is later edited in Fees to an amount below what is
   already billed, no new bill can be issued against it until enough bills
-  are cancelled.
+  are cancelled. The report lists such payments for review.
+- A replacement bill for a multi-payment bill can use only the cancelled
+  bill's payments from the bill details; to use other payments, cancel the
+  bill and issue a new one.

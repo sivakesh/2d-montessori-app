@@ -869,6 +869,26 @@ class _BillDetailState extends State<_BillDetail> {
           for (final (label, value) in FeeBillPdf.studentRows(b)) row(label, value),
           const Divider(height: 20),
           for (final (label, value) in FeeBillPdf.billRows(b)) row(label, value),
+          // Several payments support this bill: the PDF's allocation table.
+          // One payment may appear on several bills; it is still one payment.
+          if (FeeBillPdf.allocationRows(b).isNotEmpty) ...[
+            const Divider(height: 20),
+            Text('Payment allocation', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.grey.shade800)),
+            const SizedBox(height: 4),
+            Column(
+              key: const Key('parent-bill-detail-allocations'),
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final (ref, date, amount) in FeeBillPdf.allocationRows(b)) row('$ref ($date)', amount),
+                row(FeeBillPdf.allocationTotalLabel, FeeBillPdf.money(b.allocatedPaise)),
+              ],
+            ),
+            Text(
+              'These are parts of payments already shown in Payment History. A payment can support more than one bill; it was paid only once.',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+            ),
+            const Divider(height: 20),
+          ],
           row('Net Bill Amount', FeeBillPdf.netLabel(b), key: const Key('parent-bill-detail-net')),
           row('Amount in Words', IndianAmount.words(b.line.netPaise)),
           if (b.school.gstin.trim().isNotEmpty) row('GSTIN', b.school.gstin.trim()),

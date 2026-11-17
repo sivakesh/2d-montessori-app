@@ -217,6 +217,132 @@ class FeeBillPayment {
       );
 }
 
+/// Orders payments for a bill: earliest payment date first (a payment with
+/// no date last), then the lowest receipt number. The first is the bill's
+/// primary payment, whose receipt number and sequence give the Bill
+/// Reference.
+int comparePrimaryPayment(DateTime? dateA, String receiptNoA, DateTime? dateB, String receiptNoB) {
+  if (dateA != null && dateB != null && dateA != dateB) return dateA.compareTo(dateB);
+  if (dateA == null && dateB != null) return 1;
+  if (dateA != null && dateB == null) return -1;
+  return receiptNoA.compareTo(receiptNoB);
+}
+
+/// One payment's share of one bill, as stored on the bill (`allocations`)
+/// when it was issued. Bills issued before the allocation ledger have none
+/// stored; [FeeIssuedBill.allocations] then reads them as one allocation of
+/// their net amount from their payment ([legacy]).
+class FeeBillPaymentAllocation {
+  const FeeBillPaymentAllocation({
+    required this.allocationId,
+    required this.receiptId,
+    required this.receiptNo,
+    required this.allocatedPaise,
+    this.paymentDate,
+    this.paymentAmountPaise = 0,
+    this.legacy = false,
+  });
+
+  /// `{billId}__{receiptId}`: one allocation per bill and payment, by
+  /// construction (also the ledger document id).
+  final String allocationId, receiptId, receiptNo;
+  final DateTime? paymentDate;
+
+  /// The payment's amount when the bill was issued (a snapshot, for
+  /// reference; the receipt is authoritative).
+  final int paymentAmountPaise;
+  final int allocatedPaise;
+
+  /// Read from a bill issued before the ledger existed (not stored).
+  final bool legacy;
+
+  static String idFor(String billId, String receiptId) => '${billId}__$receiptId';
+
+  Map<String, dynamic> toSnapshot() => {
+        'allocationId': allocationId,
+        'receiptId': receiptId,
+        'receiptNo': receiptNo,
+        'paymentDate': paymentDate,
+        'paymentAmountPaise': paymentAmountPaise,
+        'allocatedPaise': allocatedPaise,
+      };
+
+  factory FeeBillPaymentAllocation.fromSnapshot(Map<String, dynamic> m) => FeeBillPaymentAllocation(
+        allocationId: m['allocationId']?.toString() ?? '',
+        receiptId: m['receiptId']?.toString() ?? '',
+        receiptNo: m['receiptNo']?.toString() ?? '',
+        paymentDate: _date(m['paymentDate']),
+        paymentAmountPaise: _int(m['paymentAmountPaise']),
+        allocatedPaise: _int(m['allocatedPaise']),
+      );
+}
+
+/// A ledger entry's state (`fee_bill_payment_allocations`): active while
+/// its bill is issued; released (by a reversal record) when it is
+/// cancelled. Never deleted.
+enum FeeBillAllocationStatus {
+  active('active'),
+  released('released');
+
+  const FeeBillAllocationStatus(this.key);
+  final String key;
+
+  static FeeBillAllocationStatus of(Object? key) => key == released.key ? released : active;
+}
+
+/// One bill to issue: its line and the payments supporting it (receipt id
+/// → paise). The allocations must total the line's net amount.
+class FeeBillDraft {
+  const FeeBillDraft({required this.line, required this.allocations});
+
+  final FeeBillLine line;
+  final Map<String, int> allocations;
+
+  int get allocatedPaise => allocations.values.fold<int>(0, (s, v) => s + v);
+}
+
+/// A payment as Issue Bills offers it: what active bills already use and
+/// what is still available, or why it can't be used for a new bill.
+class FeeBillPaymentBalance {
+  const FeeBillPaymentBalance({required this.payment, required this.allocatedPaise, this.ineligibleReason});
+
+  final FeeBillPayment payment;
+
+  /// What active bills use of it (from its allocation record).
+  final int allocatedPaise;
+
+  /// Why it can't support a new bill, or null when it can.
+  final String? ineligibleReason;
+
+  bool get eligible => ineligibleReason == null;
+  int get availablePaise => eligible && payment.amountPaise > allocatedPaise ? payment.amountPaise - allocatedPaise : 0;
+
+  /// Active bills use more than its current amount (e.g. it was edited
+  /// in Fees afterwards).
+  bool get overAllocated => allocatedPaise > payment.amountPaise;
+}
+
+/// The administrator's report of payments against bills (documents only,
+/// never income). Every amount is whole paise.
+class FeeBillAllocationReport {
+  const FeeBillAllocationReport({required this.payments});
+
+  /// Every payment of the school with its allocation, voided and
+  /// unverifiable ones included (marked).
+  final List<FeeBillPaymentBalance> payments;
+
+  /// What active bills use, over all payments.
+  int get allocatedPaise => payments.fold<int>(0, (s, p) => s + p.allocatedPaise);
+
+  /// Collected on payments that can still support bills.
+  int get eligibleCollectedPaise => payments.where((p) => p.eligible).fold<int>(0, (s, p) => s + p.payment.amountPaise);
+
+  /// Of that, not yet used by any active bill.
+  int get unallocatedPaise => payments.fold<int>(0, (s, p) => s + p.availablePaise);
+
+  List<FeeBillPaymentBalance> get overAllocated => [for (final p in payments) if (p.overAllocated) p];
+}
+
 /// The school's header as it was when a bill was issued, so a reprint is
 /// the same document even if School Settings change later.
 class FeeBillSchool {
@@ -265,7 +391,40 @@ class FeeIssuedBill {
     this.parentRelation = '',
     this.parentName = '',
     this.amountIncludesGst = false,
+    this.storedAllocations = const [],
   });
+
+  /// The payments supporting this bill as stored on it, primary first;
+  /// empty for a bill issued before the allocation ledger.
+  final List<FeeBillPaymentAllocation> storedAllocations;
+
+  /// The payments supporting this bill, primary ([payment]) first. A bill
+  /// issued before the ledger is read as one allocation of its net amount
+  /// from its one payment.
+  List<FeeBillPaymentAllocation> get allocations => storedAllocations.isNotEmpty
+      ? storedAllocations
+      : [
+          FeeBillPaymentAllocation(
+            allocationId: FeeBillPaymentAllocation.idFor(id, payment.receiptId),
+            receiptId: payment.receiptId,
+            receiptNo: payment.receiptNo,
+            paymentDate: payment.paymentDate,
+            paymentAmountPaise: payment.amountPaise,
+            allocatedPaise: line.netPaise,
+            legacy: true,
+          ),
+        ];
+
+  /// Issued before the allocation ledger (no ledger entries).
+  bool get isLegacy => storedAllocations.isEmpty;
+
+  /// Supported by more than one payment.
+  bool get isMultiPayment => allocations.length > 1;
+
+  int get allocatedPaise => allocations.fold<int>(0, (s, a) => s + a.allocatedPaise);
+
+  /// Supported by payment [receiptId].
+  bool usesPayment(String receiptId) => allocations.any((a) => a.receiptId == receiptId);
 
   /// [billNo] is the Bill Reference: `{receipt number}-{six-digit
   /// sequence}` (stored as `billNo`), fixed at issue.
@@ -335,6 +494,10 @@ class FeeIssuedBill {
       parentRelation: d['parentRelation']?.toString() ?? '',
       parentName: d['parentName']?.toString() ?? '',
       amountIncludesGst: d['amountIncludesGst'] == true,
+      storedAllocations: [
+        for (final a in (d['allocations'] as List? ?? const []))
+          if (a is Map) FeeBillPaymentAllocation.fromSnapshot(Map<String, dynamic>.from(a)),
+      ],
     );
   }
 }
@@ -360,10 +523,12 @@ class FeeBillAllocation {
   /// The payment amount when last checked (the receipt is authoritative).
   final int paymentPaise;
 
-  /// Sum of the active bills' net amounts.
+  /// What active bills use of this payment (the sum of [bills]).
   final int allocatedPaise;
 
-  /// Active bill id → its net paise.
+  /// Active bill id → the paise that bill uses of this payment: its whole
+  /// net amount for a bill supported by this payment alone (every bill
+  /// issued before multi-payment bills), its allocation otherwise.
   final Map<String, int> bills;
 
   /// Active bill line key ([FeeBillLine.key]) → bill id.
@@ -399,13 +564,17 @@ class FeeBillAllocation {
 
 /// Totals of bills issued (documents only; never collections).
 class FeeBillTotals {
-  const FeeBillTotals({required this.issued, required this.cancelled, required this.grossPaise, required this.adjustmentPaise, required this.netPaise});
+  const FeeBillTotals({required this.issued, required this.cancelled, required this.grossPaise, required this.adjustmentPaise, required this.netPaise, this.allocatedPaise = 0});
 
   final int issued, cancelled, grossPaise, adjustmentPaise, netPaise;
 
+  /// What active bills use of payments (equal to [netPaise]: a bill's net
+  /// is always fully allocated; the adjustment never is).
+  final int allocatedPaise;
+
   /// Active (issued) bills only; cancelled ones are counted separately.
   factory FeeBillTotals.of(Iterable<FeeIssuedBill> bills) {
-    var issued = 0, cancelled = 0, gross = 0, adj = 0, net = 0;
+    var issued = 0, cancelled = 0, gross = 0, adj = 0, net = 0, allocated = 0;
     for (final b in bills) {
       if (b.isCancelled) {
         cancelled++;
@@ -415,8 +584,9 @@ class FeeBillTotals {
       gross += b.line.grossPaise;
       adj += b.line.adjustmentPaise;
       net += b.line.netPaise;
+      allocated += b.allocatedPaise;
     }
-    return FeeBillTotals(issued: issued, cancelled: cancelled, grossPaise: gross, adjustmentPaise: adj, netPaise: net);
+    return FeeBillTotals(issued: issued, cancelled: cancelled, grossPaise: gross, adjustmentPaise: adj, netPaise: net, allocatedPaise: allocated);
   }
 }
 

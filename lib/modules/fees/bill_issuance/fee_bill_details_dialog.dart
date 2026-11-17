@@ -17,11 +17,13 @@ import 'fee_bill_service.dart';
 /// or Cancel and Reissue (a replacement gets a new Bill Reference).
 ///
 /// Keys: `fee-bill-details-` + `status`, `download`, `reprint`,
-/// `payment`, `history`, `history-list`, `cancel`, `close`; the cancel
+/// `payment`, `history`, `history-list`, `cancel`, `close`,
+/// `allocations` (a bill supported by several payments); the cancel
 /// dialog: `fee-bill-cancel-reason`, `fee-bill-cancel-reissue`,
 /// `fee-bill-reissue-gross`, `fee-bill-reissue-description`,
 /// `fee-bill-reissue-adjustment-type`, `fee-bill-reissue-adjustment`,
-/// `fee-bill-reissue-reason`, `fee-bill-cancel-confirm`.
+/// `fee-bill-reissue-reason`, `fee-bill-reissue-alloc-<receiptId>`,
+/// `fee-bill-cancel-confirm`.
 class FeeBillDetailsDialog extends StatefulWidget {
   const FeeBillDetailsDialog({
     super.key,
@@ -46,8 +48,9 @@ class FeeBillDetailsDialog extends StatefulWidget {
 
 class _FeeBillDetailsDialogState extends State<FeeBillDetailsDialog> {
   late FeeIssuedBill _bill = widget.bill;
-  FeeBillPayment? _live;
-  FeeBillAllocation? _allocation;
+  /// Each supporting payment as recorded in Fees now, with its allocation
+  /// record (read only), primary first.
+  List<(FeeBillPaymentAllocation, FeeBillPayment?, FeeBillAllocation?)>? _live;
   bool _paymentShown = false, _busy = false;
   List<Map<String, dynamic>>? _history;
   String? _message;
@@ -75,14 +78,10 @@ class _FeeBillDetailsDialogState extends State<FeeBillDetailsDialog> {
 
   Future<void> _showPayment() async {
     setState(() => _paymentShown = true);
-    final live = await widget.service.getPayment(_bill.payment.receiptId);
-    final alloc = await widget.service.getAllocation(_bill.payment.receiptId);
-    if (mounted) {
-      setState(() {
-        _live = live;
-        _allocation = alloc;
-      });
-    }
+    final live = [
+      for (final a in _bill.allocations) (a, await widget.service.getPayment(a.receiptId), await widget.service.getAllocation(a.receiptId)),
+    ];
+    if (mounted) setState(() => _live = live);
   }
 
   Future<void> _loadHistory() async {
@@ -125,12 +124,19 @@ class _FeeBillDetailsDialogState extends State<FeeBillDetailsDialog> {
     return switch (h['action']) {
       'issued' => 'Issued ${h['billNo'] ?? ''}: gross ${billMoney((h['grossPaise'] as num?)?.toInt() ?? 0)}'
           '${((h['adjustmentPaise'] as num?)?.toInt() ?? 0) > 0 ? ', ${FeeBillAdjustmentType.of(h['adjustmentType']).label.toLowerCase()} ${billMoney((h['adjustmentPaise'] as num).toInt())} (${h['adjustmentReason']})' : ''}'
-          ', net ${billMoney((h['netPaise'] as num?)?.toInt() ?? 0)} · $at · $by',
+          ', net ${billMoney((h['netPaise'] as num?)?.toInt() ?? 0)}${_allocationsText(h['allocations'])} · $at · $by',
       'cancelled' => 'Cancelled: ${h['reason'] ?? ''}${h['replacedBy'] == null ? '' : ' (replaced by ${h['replacedBy']})'} · '
-          '${billMoney((h['releasedPaise'] as num?)?.toInt() ?? 0)} released · $at · $by',
+          '${billMoney((h['releasedPaise'] as num?)?.toInt() ?? 0)} released${_allocationsText(h['released'])} · $at · $by',
       'reprinted' => 'Reprinted · $at · $by',
       final a => '$a · $at · $by',
     };
+  }
+
+  /// " (REC-1 ₹5,000.00, REC-2 ₹7,500.00)" for a history entry's payments
+  /// when there were several; '' otherwise.
+  static String _allocationsText(Object? list) {
+    final items = [for (final a in (list as List? ?? const [])) if (a is Map) '${a['receiptNo']} ${billMoney((a['allocatedPaise'] as num?)?.toInt() ?? 0)}'];
+    return items.length > 1 ? ' (${items.join(', ')})' : '';
   }
 
   @override
@@ -170,16 +176,35 @@ class _FeeBillDetailsDialogState extends State<FeeBillDetailsDialog> {
             _row('Issue date', b.documentDate == null ? '' : _date.format(b.documentDate!)),
             _row('Issued on', b.issuedAt == null ? '' : _date.format(b.issuedAt!)),
             _row('Issued by', b.issuedBy),
-            _row('Receipt Reference', b.payment.receiptNo),
-            _row('Original payment date', b.payment.paymentDate == null ? '' : _date.format(b.payment.paymentDate!)),
-            _row('Original payment reference', b.payment.referenceNo),
+            _row('Receipt Reference', FeeBillPdf.receiptReference(b)),
+            if (b.isMultiPayment)
+              Container(
+                key: const Key('fee-bill-details-allocations'),
+                margin: const EdgeInsets.symmetric(vertical: 4),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(border: Border.all(color: Colors.blueGrey.shade100), borderRadius: BorderRadius.circular(8)),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  Text('Payment allocation (${b.allocations.length} payments; Bill Reference from ${b.payment.receiptNo}, the earliest)',
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+                  for (final a in b.allocations) _row('${a.receiptNo} · ${a.paymentDate == null ? '-' : _date.format(a.paymentDate!)}', billMoney(a.allocatedPaise)),
+                  _row('Total allocated', billMoney(b.allocatedPaise), bold: true),
+                ]),
+              )
+            else ...[
+              _row('Original payment date', b.payment.paymentDate == null ? '' : _date.format(b.payment.paymentDate!)),
+              _row('Original payment reference', b.payment.referenceNo),
+            ],
             if (b.replacesBillId.isNotEmpty) _row('Replaces', b.replacesBillId.split('_').last),
             if (b.replacedByBillId.isNotEmpty) _row('Replaced by', b.replacedByBillId.split('_').last),
             const SizedBox(height: 8),
             Wrap(spacing: 8, runSpacing: 4, children: [
               OutlinedButton.icon(key: const Key('fee-bill-details-download'), onPressed: _busy ? null : () => _pdf(reprint: false), icon: const Icon(Icons.download, size: 18), label: const Text('Download PDF')),
               OutlinedButton.icon(key: const Key('fee-bill-details-reprint'), onPressed: _busy || !_isAdmin ? null : () => _pdf(reprint: true), icon: const Icon(Icons.print, size: 18), label: const Text('Reprint')),
-              OutlinedButton.icon(key: const Key('fee-bill-details-payment'), onPressed: _showPayment, icon: const Icon(Icons.receipt_long, size: 18), label: const Text('Original payment')),
+              OutlinedButton.icon(
+                  key: const Key('fee-bill-details-payment'),
+                  onPressed: _showPayment,
+                  icon: const Icon(Icons.receipt_long, size: 18),
+                  label: Text(b.isMultiPayment ? 'Original payments' : 'Original payment')),
               OutlinedButton.icon(key: const Key('fee-bill-details-history'), onPressed: _loadHistory, icon: const Icon(Icons.history, size: 18), label: const Text('History')),
             ]),
             if (_paymentShown)
@@ -190,16 +215,24 @@ class _FeeBillDetailsDialogState extends State<FeeBillDetailsDialog> {
                 child: _live == null
                     ? const Text('Loading the original payment...')
                     : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                        const Text('Original payment (as recorded in Fees now; read only)', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
-                        _row('Receipt number', _live!.receiptNo),
-                        _row('Status', _live!.voided ? 'Voided in Fees' : 'Active'),
-                        _row('Amount received', billMoney(_live!.amountPaise)),
-                        _row('Payment date', _live!.paymentDate == null ? '' : _date.format(_live!.paymentDate!)),
-                        _row('Payment mode', _live!.paymentMode),
-                        _row('Payment reference', _live!.referenceNo),
-                        if (_allocation != null) ...[
-                          _row('Billed by active bills', billMoney(_allocation!.allocatedPaise)),
-                          _row('Not yet billed', billMoney(max(0, _live!.amountPaise - _allocation!.allocatedPaise))),
+                        Text('Original payment${_live!.length > 1 ? 's' : ''} (as recorded in Fees now; read only)', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+                        for (final (i, (a, live, alloc)) in _live!.indexed) ...[
+                          if (i > 0) const Divider(height: 12),
+                          if (live == null)
+                            _row('Receipt number', '${a.receiptNo} (no longer found in Fees)')
+                          else ...[
+                            _row('Receipt number', live.receiptNo),
+                            _row('Status', live.voided ? 'Voided in Fees' : 'Active'),
+                            _row('Amount received', billMoney(live.amountPaise)),
+                            _row('Payment date', live.paymentDate == null ? '' : _date.format(live.paymentDate!)),
+                            _row('Payment mode', live.paymentMode),
+                            _row('Payment reference', live.referenceNo),
+                            if (_live!.length > 1) _row('Used by this bill', billMoney(a.allocatedPaise)),
+                            if (alloc != null) ...[
+                              _row('Billed by active bills', billMoney(alloc.allocatedPaise)),
+                              _row('Not yet billed', billMoney(max(0, live.amountPaise - alloc.allocatedPaise))),
+                            ],
+                          ],
                         ],
                       ]),
               ),
@@ -254,12 +287,33 @@ class _CancelBillDialogState extends State<_CancelBillDialog> {
   late final _adjReason = TextEditingController(text: widget.bill.line.adjustmentReason);
   late FeeBillAdjustmentType _type = widget.bill.line.adjustmentType;
 
+  /// A bill supported by several payments: how much of each the
+  /// replacement uses (prefilled with the cancelled bill's allocations,
+  /// which the cancellation releases).
+  late final Map<String, TextEditingController> _alloc = {
+    if (widget.bill.isMultiPayment)
+      for (final a in widget.bill.allocations) a.receiptId: TextEditingController(text: rupeesText(a.allocatedPaise)),
+  };
+
   @override
   void dispose() {
-    for (final c in [_reason, _description, _gross, _adjustment, _adjReason]) {
+    for (final c in [_reason, _description, _gross, _adjustment, _adjReason, ..._alloc.values]) {
       c.dispose();
     }
     super.dispose();
+  }
+
+  /// The replacement's allocations (several payments), or null while one
+  /// isn't a valid amount.
+  Map<String, int>? get _allocations {
+    final out = <String, int>{};
+    for (final e in _alloc.entries) {
+      final t = e.value.text.trim();
+      final v = t.isEmpty ? 0 : parseRupees(t);
+      if (v == null) return null;
+      if (v > 0) out[e.key] = v;
+    }
+    return out;
   }
 
   FeeBillLine? get _line {
@@ -281,12 +335,22 @@ class _CancelBillDialogState extends State<_CancelBillDialog> {
     if (_reason.text.trim().isEmpty) return setState(() => _error = 'Enter the reason for cancelling this bill.');
     if (_reissue && line == null) return setState(() => _error = 'Enter valid amounts for the replacement bill.');
     if (line?.error case final e?) return setState(() => _error = 'Replacement: $e');
+    Map<String, int>? allocations;
+    if (line != null && _alloc.isNotEmpty) {
+      allocations = _allocations;
+      if (allocations == null) return setState(() => _error = 'Replacement: enter a valid amount for each payment (0 for none).');
+      final total = allocations.values.fold<int>(0, (s, v) => s + v);
+      if (total != line.netPaise) {
+        return setState(() => _error = 'Replacement: its payment allocations total ${billMoney(total)}, but its net bill amount is ${billMoney(line.netPaise)}. They must be equal.');
+      }
+    }
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      final replacement = await widget.service.cancelBill(requesterRole: widget.role, billId: widget.bill.id, reason: _reason.text, replacement: line);
+      final replacement = await widget.service.cancelBill(
+          requesterRole: widget.role, billId: widget.bill.id, reason: _reason.text, replacement: line, replacementAllocations: allocations);
       if (mounted) Navigator.pop(context, replacement ?? widget.bill);
     } catch (e) {
       if (mounted) {
@@ -308,7 +372,8 @@ class _CancelBillDialogState extends State<_CancelBillDialog> {
         child: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Text(
-              'The bill is kept, marked cancelled, with your reason, and its net amount (${billMoney(b.line.netPaise)}) can be billed again. '
+              'The bill is kept, marked cancelled, with your reason, and its net amount (${billMoney(b.line.netPaise)}) can be billed again'
+              '${b.isMultiPayment ? ': each of its ${b.allocations.length} payments gets back exactly what this bill used of it' : ''}. '
               'Issued bills are never edited: to correct one, cancel it and issue a replacement, which gets a new Bill Reference. '
               'The payment, its receipt and Finance are not changed.',
               style: const TextStyle(fontSize: 12),
@@ -335,6 +400,18 @@ class _CancelBillDialogState extends State<_CancelBillDialog> {
               if (_type != FeeBillAdjustmentType.none) ...[
                 TextField(key: const Key('fee-bill-reissue-adjustment'), controller: _adjustment, enabled: !_busy, decoration: const InputDecoration(labelText: 'Adjustment (₹)')),
                 TextField(key: const Key('fee-bill-reissue-reason'), controller: _adjReason, enabled: !_busy, decoration: const InputDecoration(labelText: 'Adjustment reason *')),
+              ],
+              if (_alloc.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                const Text('Payments supporting the replacement (they must total its net amount)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                for (final a in b.allocations)
+                  TextField(
+                    key: Key('fee-bill-reissue-alloc-${a.receiptId}'),
+                    controller: _alloc[a.receiptId],
+                    enabled: !_busy,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(labelText: 'Uses of ${a.receiptNo} (₹)', isDense: true),
+                  ),
               ],
             ],
             if (_error != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(_error!, key: const Key('fee-bill-cancel-error'), style: TextStyle(fontSize: 12, color: Colors.red.shade800))),

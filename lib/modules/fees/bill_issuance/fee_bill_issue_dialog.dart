@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'dart:math' show min;
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -42,6 +44,17 @@ class _LineDraft {
   final reason = TextEditingController();
   FeeBillAdjustmentType type = FeeBillAdjustmentType.none;
 
+  /// With several payments: how much of each (receipt id → amount typed).
+  final Map<String, TextEditingController> alloc = {};
+  TextEditingController allocFor(String receiptId) => alloc.putIfAbsent(receiptId, () => TextEditingController(text: '0'));
+
+  /// Paise of payment [receiptId] this bill uses (0 when blank); null when
+  /// it isn't a valid amount.
+  int? allocPaise(String receiptId) {
+    final t = alloc[receiptId]?.text.trim() ?? '';
+    return t.isEmpty ? 0 : parseRupees(t);
+  }
+
   int? get grossPaise => parseRupees(gross.text);
   int? get adjustmentPaise => adjustment.text.trim().isEmpty ? 0 : parseRupees(adjustment.text);
 
@@ -64,14 +77,21 @@ class _LineDraft {
     gross.dispose();
     adjustment.dispose();
     reason.dispose();
+    for (final c in alloc.values) {
+      c.dispose();
+    }
   }
 }
 
-/// Fees → Fee Bill Issuance → Issue Bills: choose a student and one of
-/// their existing payments, add one or more bill lines (each issued as a
-/// separate bill), review, then issue. Only bill records are written
-/// ([FeeBillService.issueBills]); the payment, its receipt, the fee
-/// assignment and Finance are never changed.
+/// Fees → Fee Bill Issuance → Issue Bills: choose a student and one or more
+/// of their collected payments, add one or more bill lines (each issued as
+/// a separate bill), review, then issue. With one payment, every bill uses
+/// its net amount of it; with several, each bill says how much of each
+/// payment it uses (an allocation matrix), and the payments' remaining
+/// amounts update as they are typed. Only bill records are written
+/// ([FeeBillService.issueBills], [FeeBillService.issueAllocatedBills]);
+/// the payments, their receipts, the fee assignments and Finance are never
+/// changed.
 ///
 /// Keys: `fee-bill-` + `student-search`, `student-<id>`, `student-change`,
 /// `payment-<receiptId>`, `payment-details`, `line-<i>-month`,
@@ -80,7 +100,10 @@ class _LineDraft {
 /// `line-<i>-net`, `line-<i>-remove`, `add-line`, `summary-payment`,
 /// `summary-billed`, `summary-new`, `summary-remaining`, `error`,
 /// `preview`, `preview-pdf-<i>`, `issue`, `confirm-issue`, `cancel`,
-/// `issued-<billNo>`, `download-<billNo>`, `close`.
+/// `issued-<billNo>`, `download-<billNo>`, `close`; with several payments
+/// `line-<i>-alloc-<receiptId>`, `line-<i>-allocated`, `auto-allocate`,
+/// `matrix`, `matrix-<receiptId>-remaining`, `summary-selected`,
+/// `summary-allocated`, `summary-unallocated`; always `summary-bills`.
 class FeeBillIssueDialog extends StatefulWidget {
   const FeeBillIssueDialog({
     super.key,
@@ -112,9 +135,24 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
   final _search = TextEditingController();
   List<FeeStudent> _students = const [];
   FeeStudent? _student;
-  List<FeeBillPayment> _payments = const [];
-  final Map<String, FeeBillAllocation?> _allocations = {};
-  FeeBillPayment? _payment;
+  /// The student's payments with what active bills use of them.
+  List<FeeBillPaymentBalance> _balances = const [];
+
+  /// The receipt ids of the payments chosen.
+  final Set<String> _selected = {};
+
+  /// The chosen payments, primary first (earliest payment date, then the
+  /// lowest receipt number).
+  List<FeeBillPaymentBalance> get _chosen => [
+        for (final b in _balances)
+          if (_selected.contains(b.payment.receiptId)) b,
+      ]..sort((a, b) => comparePrimaryPayment(a.payment.paymentDate, a.payment.receiptNo, b.payment.paymentDate, b.payment.receiptNo));
+
+  /// The primary chosen payment (the only one, with one).
+  FeeBillPayment? get _payment => _chosen.isEmpty ? null : _chosen.first.payment;
+
+  /// Several payments chosen: each bill's allocations are entered.
+  bool get _multi => _selected.length > 1;
   final List<_LineDraft> _lines = [];
   FeeBillSchool _school = const FeeBillSchool(name: '');
   bool _loading = true, _busy = false, _reviewing = false;
@@ -179,21 +217,17 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
   Future<void> _chooseStudent(FeeStudent s) async {
     setState(() {
       _student = s;
-      _payment = null;
-      _payments = const [];
+      _clearPayments();
       _reviewing = false;
       _error = null;
       _busy = true;
     });
     try {
-      final payments = await widget.service.paymentsForStudent(s.id);
-      for (final p in payments) {
-        _allocations[p.receiptId] = await widget.service.getAllocation(p.receiptId);
-      }
+      final balances = await widget.service.paymentBalancesForStudent(s.id);
       final parent = await widget.service.parentFor(s.id);
       if (!mounted) return;
       setState(() {
-        _payments = payments;
+        _balances = balances;
         _parent = parent;
       });
     } catch (e) {
@@ -203,11 +237,36 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
     }
   }
 
+  void _clearPayments() {
+    _balances = const [];
+    _selected.clear();
+    for (final l in _lines) {
+      l.dispose();
+    }
+    _lines.clear();
+  }
+
+  /// Chooses payment [p], or un-chooses it when already chosen. The first
+  /// payment chosen starts one bill line from it; more payments keep the
+  /// lines.
   void _choosePayment(FeeBillPayment p) {
     setState(() {
-      _payment = p;
       _reviewing = false;
       _error = null;
+      if (_selected.remove(p.receiptId)) {
+        for (final l in _lines) {
+          l.alloc.remove(p.receiptId)?.dispose();
+        }
+        if (_selected.isEmpty) {
+          for (final l in _lines) {
+            l.dispose();
+          }
+          _lines.clear();
+        }
+        return;
+      }
+      _selected.add(p.receiptId);
+      if (_selected.length > 1) return;
       for (final l in _lines) {
         l.dispose();
       }
@@ -236,8 +295,31 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
         _reviewing = false;
       });
 
-  int get _billed => _allocations[_payment?.receiptId]?.allocatedPaise ?? 0;
+  int get _billed => _chosen.isEmpty ? 0 : _chosen.first.allocatedPaise;
   int get _newNet => _lines.fold<int>(0, (s, l) => s + (l.line?.netPaise ?? 0));
+
+  /// What the bills use of payment [receiptId] (several payments).
+  int _requested(String receiptId) => _lines.fold<int>(0, (s, l) => s + (l.allocPaise(receiptId) ?? 0));
+
+  /// What bill line [l] uses of the chosen payments.
+  int _allocatedOf(_LineDraft l) => _chosen.fold<int>(0, (s, c) => s + (l.allocPaise(c.payment.receiptId) ?? 0));
+
+  /// Fills every bill's allocations in order from the chosen payments,
+  /// earliest first, as far as each payment's available amount goes.
+  void _autoAllocate() => setState(() {
+        final left = {for (final c in _chosen) c.payment.receiptId: c.availablePaise};
+        for (final l in _lines) {
+          var need = l.line?.netPaise ?? 0;
+          for (final c in _chosen) {
+            final id = c.payment.receiptId;
+            final take = need <= 0 ? 0 : min(need, left[id]!);
+            l.allocFor(id).text = rupeesText(take);
+            left[id] = left[id]! - take;
+            need -= take;
+          }
+        }
+        _reviewing = false;
+      });
 
   /// Why the lines can't be issued yet, or null.
   String? get _validation {
@@ -245,8 +327,12 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
     if (p == null) return 'Choose the original payment.';
     if (p.voided) return FeeBillService.voidedMessage;
     if (_lines.isEmpty) return 'Add at least one bill line.';
+    if (_lines.length > FeeBillService.maxBillsPerIssue) {
+      return 'At most ${FeeBillService.maxBillsPerIssue} bills can be issued at once. Remove ${_lines.length - FeeBillService.maxBillsPerIssue} and issue them separately.';
+    }
     for (final (i, l) in _lines.indexed) {
       if (l.error case final e?) return 'Bill line ${i + 1}: $e';
+      if (l.line!.netPaise <= 0) return 'Bill line ${i + 1}: the net bill amount must be more than ₹0, because a bill must be supported by an amount actually paid.';
     }
     final keys = <String>{};
     for (final l in _lines) {
@@ -259,6 +345,7 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
         return 'The GSTIN saved in School Settings is not valid ($e) Correct it there, or untick Show GSTIN on bill.';
       }
     }
+    if (_multi) return _allocationError;
     final available = p.amountPaise - _billed;
     if (_newNet > available) {
       return 'These bills total ${billMoney(_newNet)} net, but only ${billMoney(available < 0 ? 0 : available)} of this payment is not yet billed.';
@@ -266,12 +353,60 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
     return null;
   }
 
-  FeeIssuedBill _draftBill(FeeBillLine line) => FeeIssuedBill(
+  /// With several payments: why the allocations can't be issued, or null.
+  String? get _allocationError {
+    for (final (i, l) in _lines.indexed) {
+      var used = 0;
+      for (final c in _chosen) {
+        final v = l.allocPaise(c.payment.receiptId);
+        if (v == null) return 'Bill line ${i + 1}: enter a valid amount for receipt ${c.payment.receiptNo} (0 for none).';
+        if (v > 0) used++;
+      }
+      if (used == 0) return 'Bill line ${i + 1}: enter how much of the chosen payments it uses.';
+      if (used > FeeBillService.maxPaymentsPerBill) {
+        return 'Bill line ${i + 1} uses $used payments, but a bill can be supported by at most ${FeeBillService.maxPaymentsPerBill}.';
+      }
+      final total = _allocatedOf(l), net = l.line!.netPaise;
+      if (total != net) return 'Bill line ${i + 1}: its payment allocations total ${billMoney(total)}, but its net bill amount is ${billMoney(net)}. They must be equal.';
+    }
+    for (final c in _chosen) {
+      final r = _requested(c.payment.receiptId);
+      if (r > c.availablePaise) {
+        return 'These bills use ${billMoney(r)} of receipt ${c.payment.receiptNo}, but only ${billMoney(c.availablePaise)} of it is not yet billed.';
+      }
+    }
+    return null;
+  }
+
+  /// The allocations of bill line [l] for the service (several payments).
+  Map<String, int> _allocationsOf(_LineDraft l) => {
+        for (final c in _chosen)
+          if ((l.allocPaise(c.payment.receiptId) ?? 0) > 0) c.payment.receiptId: l.allocPaise(c.payment.receiptId)!,
+      };
+
+  FeeIssuedBill _draftBill(_LineDraft draft, FeeBillLine line) {
+    final allocations = !_multi
+        ? const <FeeBillPaymentAllocation>[]
+        : [
+            for (final c in _chosen)
+              if ((draft.allocPaise(c.payment.receiptId) ?? 0) > 0)
+                FeeBillPaymentAllocation(
+                  allocationId: '',
+                  receiptId: c.payment.receiptId,
+                  receiptNo: c.payment.receiptNo,
+                  paymentDate: c.payment.paymentDate,
+                  paymentAmountPaise: c.payment.amountPaise,
+                  allocatedPaise: draft.allocPaise(c.payment.receiptId)!,
+                ),
+          ];
+    final primary = allocations.isEmpty ? _payment! : _chosen.firstWhere((c) => c.payment.receiptId == allocations.first.receiptId).payment;
+    return FeeIssuedBill(
         id: '',
         schoolId: widget.service.schoolId,
         billNo: '',
         status: FeeBillStatus.issued,
-        payment: _payment!,
+        payment: primary,
+        storedAllocations: allocations,
         line: line.normalized,
         school: _billSchool,
         issuedAt: null,
@@ -281,6 +416,7 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
         parentName: _parent?.name ?? '',
         amountIncludesGst: _amountIncludesGst,
       );
+  }
 
   /// The school header the bills carry: with the GSTIN only when shown.
   FeeBillSchool get _billSchool => _school.withGstin(_showGstin ? SchoolSettingsValidation.normalizeGstin(_savedGstin) : '');
@@ -323,7 +459,7 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
     final line = _lines[i].line;
     if (line == null) return;
     try {
-      final bytes = await FeeBillPdf.build(_draftBill(line), preview: true, logo: await widget.loadLogo(_school.logoUrl));
+      final bytes = await FeeBillPdf.build(_draftBill(_lines[i], line), preview: true, logo: await widget.loadLogo(_school.logoUrl));
       await widget.savePdf(bytes, 'fee-bill-preview-${i + 1}.pdf');
     } catch (e) {
       if (mounted) setState(() => _error = 'The preview could not be created: $e');
@@ -333,15 +469,22 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
   Future<void> _issue() async {
     if (_busy || _validation != null) return;
     final p = _payment!;
+    final chosen = _chosen;
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Issue ${_lines.length} ${_lines.length == 1 ? 'bill' : 'bills'}?'),
         content: Text(
-          '${_lines.length} ${_lines.length == 1 ? 'bill' : 'separate bills'} totalling ${billMoney(_newNet)} net will be issued against '
-          'receipt ${p.receiptNo} (${billMoney(p.amountPaise)}). Each gets its own Bill Reference (${p.receiptNo}-000001 onwards) and cannot be edited afterwards; '
-          'a mistake is corrected by cancelling the bill and issuing a replacement.\n\n'
-          'No payment, receipt, fee balance or Finance record is created or changed.',
+          chosen.length > 1
+              ? '${_lines.length} ${_lines.length == 1 ? 'bill' : 'separate bills'} totalling ${billMoney(_newNet)} net will be issued, supported by '
+                  '${chosen.length} payments: ${[for (final c in chosen) '${c.payment.receiptNo} (${billMoney(_requested(c.payment.receiptId))} of ${billMoney(c.payment.amountPaise)})'].join(', ')}. '
+                  'Each bill\'s Bill Reference uses the receipt number of its earliest payment, and its PDF lists every payment it uses. '
+                  'Bills cannot be edited afterwards; a mistake is corrected by cancelling the bill and issuing a replacement.\n\n'
+                  'No payment, receipt, fee balance or Finance record is created or changed.'
+              : '${_lines.length} ${_lines.length == 1 ? 'bill' : 'separate bills'} totalling ${billMoney(_newNet)} net will be issued against '
+                  'receipt ${p.receiptNo} (${billMoney(p.amountPaise)}). Each gets its own Bill Reference (${p.receiptNo}-000001 onwards) and cannot be edited afterwards; '
+                  'a mistake is corrected by cancelling the bill and issuing a replacement.\n\n'
+                  'No payment, receipt, fee balance or Finance record is created or changed.',
           key: const Key('fee-bill-confirm-text'),
         ),
         actions: [
@@ -356,15 +499,24 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
       _error = null;
     });
     try {
-      final issued = await widget.service.issueBills(
-        requesterRole: widget.role,
-        studentId: _student!.id,
-        receiptId: p.receiptId,
-        lines: [for (final l in _lines) l.line!],
-        requestId: _requestId,
-        school: _billSchool,
-        amountIncludesGst: _amountIncludesGst,
-      );
+      final issued = chosen.length > 1
+          ? await widget.service.issueAllocatedBills(
+              requesterRole: widget.role,
+              studentId: _student!.id,
+              drafts: [for (final l in _lines) FeeBillDraft(line: l.line!, allocations: _allocationsOf(l))],
+              requestId: _requestId,
+              school: _billSchool,
+              amountIncludesGst: _amountIncludesGst,
+            )
+          : await widget.service.issueBills(
+              requesterRole: widget.role,
+              studentId: _student!.id,
+              receiptId: p.receiptId,
+              lines: [for (final l in _lines) l.line!],
+              requestId: _requestId,
+              school: _billSchool,
+              amountIncludesGst: _amountIncludesGst,
+            );
       if (!mounted) return;
       setState(() {
         _issued = issued;
@@ -409,8 +561,7 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
           key: const Key('fee-bill-student-change'),
           onPressed: _busy ? null : () => setState(() {
                 _student = null;
-                _payment = null;
-                _payments = const [];
+                _clearPayments();
                 _reviewing = false;
               }),
           child: const Text('Change'),
@@ -444,51 +595,59 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
   }
 
   Widget _paymentStep() {
-    if (_busy && _payments.isEmpty) return const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator());
-    if (_payments.isEmpty) return const Text('This student has no recorded payments.', key: Key('fee-bill-no-payments'));
-    return Column(children: [
-      for (final p in _payments)
+    if (_busy && _balances.isEmpty) return const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator());
+    if (_balances.isEmpty) return const Text('This student has no recorded payments.', key: Key('fee-bill-no-payments'));
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const Text('Choose one payment, or several when bills are supported by more than one.', style: TextStyle(fontSize: 12)),
+      for (final b in _balances)
         Builder(builder: (context) {
-          final billed = _allocations[p.receiptId]?.allocatedPaise ?? 0;
-          final available = p.amountPaise - billed;
-          // Nothing left to bill (or voided): shown, but not selectable.
-          final usableNo = FeeBillService.referenceBaseOf(p.receiptNo) != null;
-          final selectable = !p.voided && available > 0 && usableNo;
+          final p = b.payment;
+          final billed = b.allocatedPaise;
+          final available = b.availablePaise;
+          final chosen = _selected.contains(p.receiptId);
+          // Voided, unverifiable or nothing left to bill: shown, but not
+          // selectable (a chosen one can always be un-chosen).
+          final selectable = b.eligible && available > 0;
+          final why = b.ineligibleReason;
           return Card(
             key: Key('fee-bill-payment-${p.receiptId}'),
             margin: const EdgeInsets.symmetric(vertical: 3),
-            color: _payment?.receiptId == p.receiptId ? Colors.blue.shade50 : null,
+            color: chosen ? Colors.blue.shade50 : null,
             child: ListTile(
               dense: true,
-              enabled: selectable && !_busy,
-              leading: Icon(_payment?.receiptId == p.receiptId ? Icons.radio_button_checked : Icons.radio_button_off),
-              title: Text('${p.receiptNo} · ${billMoney(p.amountPaise)}${p.voided ? ' · VOIDED' : (available <= 0 ? ' · FULLY BILLED' : '')}'),
+              enabled: (selectable || chosen) && !_busy,
+              leading: Icon(chosen ? Icons.check_box : Icons.check_box_outline_blank),
+              title: Text('${p.receiptNo} · ${billMoney(p.amountPaise)}'
+                  '${p.voided ? ' · VOIDED' : why != null ? ' · CAN\'T BE USED' : (available <= 0 ? ' · FULLY BILLED' : '')}'),
               subtitle: Text(
                 '${p.paymentDate == null ? 'No payment date' : _date.format(p.paymentDate!)} · ${p.paymentMode}'
                 '${p.referenceNo.isEmpty ? '' : ' · Ref ${p.referenceNo}'}\n'
-                'Already billed ${billMoney(billed)} · Not yet billed ${billMoney(available < 0 ? 0 : available)}'
-                '${!p.voided && available <= 0 ? ' · Cancel a bill to bill this payment again' : ''}'
-                '${usableNo ? '' : '\n${FeeBillService.unusableReceiptNoMessage(p.receiptNo)}'}',
+                'Collected ${billMoney(p.amountPaise)} · Already billed ${billMoney(billed)} · Not yet billed ${billMoney(available)}'
+                '${b.eligible && available <= 0 ? ' · Cancel a bill to bill this payment again' : ''}'
+                '${why == null || p.voided ? '' : '\n$why'}',
               ),
               isThreeLine: true,
-              onTap: selectable ? () => _choosePayment(p) : null,
+              onTap: selectable || chosen ? () => _choosePayment(p) : null,
             ),
           );
         }),
     ]);
   }
 
-  Widget _paymentDetails(FeeBillPayment p) => Container(
+  Widget _paymentDetails() => Container(
         key: const Key('fee-bill-payment-details'),
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
         child: Column(children: [
-          _row('Student', p.studentName),
-          _row('Receipt number', p.receiptNo),
-          _row('Payment date', p.paymentDate == null ? '-' : _date.format(p.paymentDate!)),
-          _row('Amount received', billMoney(p.amountPaise), bold: true),
-          _row('Payment mode', p.paymentMode.isEmpty ? '-' : p.paymentMode),
-          _row('Payment reference', p.referenceNo.isEmpty ? '-' : p.referenceNo),
+          for (final (i, c) in _chosen.indexed) ...[
+            if (i > 0) const Divider(height: 12),
+            if (i == 0) _row('Student', c.payment.studentName),
+            _row('Receipt number', '${c.payment.receiptNo}${_multi && i == 0 ? ' (primary: earliest payment)' : ''}'),
+            _row('Payment date', c.payment.paymentDate == null ? '-' : _date.format(c.payment.paymentDate!)),
+            _row('Amount received', billMoney(c.payment.amountPaise), bold: true),
+            _row('Payment mode', c.payment.paymentMode.isEmpty ? '-' : c.payment.paymentMode),
+            _row('Payment reference', c.payment.referenceNo.isEmpty ? '-' : c.payment.referenceNo),
+          ],
         ]),
       );
 
@@ -612,10 +771,118 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
             key: Key('fee-bill-line-$i-net'),
             style: const TextStyle(fontWeight: FontWeight.w700),
           ),
+          if (_multi) ..._allocationEditor(i, l),
           if (err != null && (l.gross.text.isNotEmpty || l.description.text.isNotEmpty))
             Text(err, style: TextStyle(fontSize: 12, color: Colors.red.shade800)),
         ]),
       ),
+    );
+  }
+
+  /// Bill line [l]'s row of the allocation matrix: how much of each chosen
+  /// payment it uses, and whether that equals its net.
+  List<Widget> _allocationEditor(int i, _LineDraft l) {
+    final net = l.line?.netPaise;
+    final total = _allocatedOf(l);
+    final ok = net != null && total == net;
+    return [
+      const SizedBox(height: 6),
+      Text('Payments supporting this bill', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.blueGrey.shade700)),
+      for (final c in _chosen)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Row(children: [
+            Expanded(child: Text('${c.payment.receiptNo} · ${c.payment.paymentDate == null ? '-' : _date.format(c.payment.paymentDate!)}', style: const TextStyle(fontSize: 12))),
+            SizedBox(
+              width: 130,
+              child: TextField(
+                key: Key('fee-bill-line-$i-alloc-${c.payment.receiptId}'),
+                controller: l.allocFor(c.payment.receiptId),
+                enabled: !_busy,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Uses (₹)', isDense: true),
+                onChanged: (_) => setState(() => _reviewing = false),
+              ),
+            ),
+          ]),
+        ),
+      const SizedBox(height: 4),
+      Text(
+        'Allocated ${billMoney(total)} of ${net == null ? '-' : billMoney(net)} net${ok ? '' : (net == null ? '' : ' · ${billMoney((net - total).abs())} ${net > total ? 'still to allocate' : 'too much'}')}',
+        key: Key('fee-bill-line-$i-allocated'),
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: ok ? Colors.green.shade800 : Colors.red.shade800),
+      ),
+    ];
+  }
+
+  /// With several payments: each payment's collected, already billed,
+  /// available, used by these bills and remaining amounts, and the totals.
+  Widget _matrixSummary() {
+    final chosen = _chosen;
+    final allocated = chosen.fold<int>(0, (s, c) => s + _requested(c.payment.receiptId));
+    final available = chosen.fold<int>(0, (s, c) => s + c.availablePaise);
+    final unallocated = available - allocated;
+    Widget cell(String t, {bool bold = false, Color? color, Key? key, bool right = true}) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Text(t, key: key, textAlign: right ? TextAlign.right : TextAlign.left, style: TextStyle(fontSize: 12, fontWeight: bold ? FontWeight.w700 : FontWeight.w500, color: color)),
+        );
+    TableRow paymentRow(FeeBillPaymentBalance c) {
+      final used = _requested(c.payment.receiptId);
+      final left = c.availablePaise - used;
+      return TableRow(children: [
+        cell(c.payment.receiptNo, right: false),
+        cell(billMoney(c.payment.amountPaise)),
+        cell(billMoney(c.allocatedPaise)),
+        cell(billMoney(c.availablePaise)),
+        cell(billMoney(used), bold: true),
+        cell(billMoney(left), key: Key('fee-bill-matrix-${c.payment.receiptId}-remaining'), bold: true, color: left < 0 ? Colors.red.shade800 : null),
+      ]);
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(border: Border.all(color: Colors.blueGrey.shade100), borderRadius: BorderRadius.circular(8)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Table(
+            key: const Key('fee-bill-matrix'),
+            defaultColumnWidth: const IntrinsicColumnWidth(),
+            border: TableBorder(horizontalInside: BorderSide(color: Colors.blueGrey.shade50)),
+            children: [
+              TableRow(children: [
+                for (final h in ['Payment', 'Collected', 'Already billed', 'Available', 'These bills', 'Remaining']) cell(h, bold: true, right: h != 'Payment'),
+              ]),
+              for (final c in chosen) paymentRow(c),
+              TableRow(children: [
+                cell('Bill totals', bold: true, right: false),
+                cell(''),
+                cell(''),
+                cell(billMoney(available)),
+                cell(billMoney(allocated), bold: true),
+                cell(billMoney(unallocated), bold: true),
+              ]),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        _row('Payments selected', '${chosen.length}', key: const Key('fee-bill-summary-selected')),
+        _row('Total allocated (these bills)', billMoney(allocated), key: const Key('fee-bill-summary-allocated'), bold: true),
+        _row('Remaining unallocated', billMoney(unallocated < 0 ? 0 : unallocated),
+            key: const Key('fee-bill-summary-unallocated'), bold: true, color: unallocated < 0 ? Colors.red.shade800 : null),
+        _row('Bills to be issued', '${_lines.length}', key: const Key('fee-bill-summary-bills')),
+        if (unallocated > 0)
+          Text('${billMoney(unallocated)} of these payments stays available for future bills.', style: TextStyle(fontSize: 12, color: Colors.orange.shade900)),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const Key('fee-bill-auto-allocate'),
+            onPressed: _busy ? null : _autoAllocate,
+            icon: const Icon(Icons.auto_fix_high, size: 18),
+            label: const Text('Allocate automatically (earliest payment first)'),
+          ),
+        ),
+      ]),
     );
   }
 
@@ -628,6 +895,7 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
         _row('Original payment', billMoney(p.amountPaise), key: const Key('fee-bill-summary-payment')),
         _row('Already billed (active bills)', billMoney(_billed), key: const Key('fee-bill-summary-billed')),
         _row('These bills (net)', billMoney(_newNet), key: const Key('fee-bill-summary-new'), bold: true),
+        _row('Bills to be issued', '${_lines.length}', key: const Key('fee-bill-summary-bills')),
         _row('Not yet billed after issuing', billMoney(remaining < 0 ? 0 : remaining),
             key: const Key('fee-bill-summary-remaining'), bold: true, color: remaining < 0 ? Colors.red.shade800 : (remaining == 0 ? Colors.green.shade800 : Colors.orange.shade900)),
         if (remaining > 0)
@@ -654,6 +922,8 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
                     if (l.line!.adjustmentPaise > 0) '${l.type.label} ${billMoney(l.line!.adjustmentPaise)} (${l.reason.text.trim()})',
                     'Net ${billMoney(l.line!.netPaise)}${_amountIncludesGst ? ' (GST Included)' : ''}',
                   ].join(' · '),
+                  if (_multi)
+                    'Supported by ${[for (final c in _chosen) if ((l.allocPaise(c.payment.receiptId) ?? 0) > 0) '${c.payment.receiptNo} ${billMoney(l.allocPaise(c.payment.receiptId)!)}'].join(', ')}',
                   [
                     if (_issueDates[l.month] case final d?) 'Issue date ${_date.format(d)}',
                     if (l.className.isNotEmpty) 'Class ${l.className}',
@@ -723,15 +993,17 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
                           ),
                           _heading('1. STUDENT'),
                           _studentStep(),
-                          if (_student != null) ...[_heading('2. ORIGINAL PAYMENT'), _paymentStep()],
+                          if (_student != null) ...[_heading('2. ORIGINAL PAYMENT(S)'), _paymentStep()],
                           if (p != null) ...[
                             const SizedBox(height: 8),
-                            _paymentDetails(p),
+                            _paymentDetails(),
                             _heading('3. BILL LINES (ONE BILL EACH)'),
                             for (final (i, l) in _lines.indexed) _lineEditor(i, l),
                             Align(
                               alignment: Alignment.centerLeft,
-                              child: TextButton.icon(key: const Key('fee-bill-add-line'), onPressed: _busy ? null : _addLine, icon: const Icon(Icons.add), label: const Text('Add bill line')),
+                              child: TextButton.icon(
+                                  key: const Key('fee-bill-add-line'),
+                                  onPressed: _busy || _lines.length >= FeeBillService.maxBillsPerIssue ? null : _addLine, icon: const Icon(Icons.add), label: const Text('Add bill line')),
                             ),
                             _heading('4. GST (OPTIONAL)'),
                             CheckboxListTile(
@@ -761,7 +1033,7 @@ class _FeeBillIssueDialogState extends State<FeeBillIssueDialog> {
                             if (_parent != null)
                               Text('${ReceiptParent.labelOf(_parent!.relation)} on the bills: ${_parent!.name}', key: const Key('fee-bill-parent'), style: const TextStyle(fontSize: 12)),
                             _heading('5. ALLOCATION'),
-                            _summary(p),
+                            if (_multi) _matrixSummary() else _summary(p),
                             if (_reviewing && validation == null) _preview(),
                           ],
                           if (_error != null || (p != null && validation != null && (_showGstin || _lines.any((l) => l.gross.text.isNotEmpty))))

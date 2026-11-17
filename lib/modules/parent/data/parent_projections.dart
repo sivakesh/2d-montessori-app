@@ -266,14 +266,26 @@ Map<String, dynamic>? parentFeeBill(String billId, Map<String, dynamic> data) {
       for (final k in ['receiptNo', 'amountPaise', 'paymentMode', 'referenceNo', 'paymentDate'])
         if (payment.containsKey(k)) k: payment[k],
     },
+    // The payments supporting the bill as its PDF prints them (receipt
+    // number, payment date, amount used); no receipt or allocation ids.
+    if (data['allocations'] is List)
+      'allocations': [
+        for (final a in data['allocations'] as List)
+          if (a is Map)
+            {
+              for (final k in ['receiptNo', 'paymentDate', 'allocatedPaise'])
+                if (a.containsKey(k)) k: a[k],
+            },
+      ],
     'school': {
       for (final k in ['name', 'addressLines', 'contactLines', 'gstin'])
         if (school.containsKey(k)) k: school[k],
       'logoPath': storagePathFromDownloadUrl(school['logoUrl']),
     },
-    // 2: active bills only, no replacement links (copies of version 1 are
-    // rewritten or removed by the next refresh or rebuild).
-    'schemaVersion': 2,
+    // 2: active bills only, no replacement links. 3: the supporting
+    // payments (`allocations`). Older copies are rewritten or removed by
+    // the next refresh or rebuild.
+    'schemaVersion': 3,
   };
 }
 
