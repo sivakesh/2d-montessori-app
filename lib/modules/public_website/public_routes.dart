@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../core/navigation/app_router.dart';
+import 'widgets/public_section_anchors.dart';
+
 /// Named routes of the public website, plus the management app's entry.
 class PublicRoutes {
   static const home = '/';
@@ -134,22 +137,113 @@ class PublicRoutes {
     return slug.toLowerCase();
   }
 
-  /// Moves between public pages without growing the back stack: Home pops
-  /// back to the first route; any other page replaces everything above it.
-  static void open(BuildContext context, String route) {
+  /// Section anchor ids (SectionAnchors.pattern): what may follow `#` in a
+  /// page route.
+  static final _anchor = RegExp(r'^[a-z0-9]+(?:-[a-z0-9]+)*$');
+
+  /// [route] without its `#section` (`/teacher-training#enquire` →
+  /// `/teacher-training`; `#enquire` → '').
+  static String pathOf(String route) {
+    final hash = route.indexOf('#');
+    return hash < 0 ? route : route.substring(0, hash);
+  }
+
+  /// The section anchor of [route] (`/teacher-training#enquire` →
+  /// `enquire`), or null when it names none (or not a well-formed one).
+  static String? anchorOf(String? route) {
+    if (route == null) return null;
+    final hash = route.indexOf('#');
+    if (hash < 0) return null;
+    final anchor = route.substring(hash + 1);
+    return anchor.length <= 64 && _anchor.hasMatch(anchor) ? anchor : null;
+  }
+
+  /// The route a browser address with a section hash opens: [path] with
+  /// [hash] (`/teacher-training` + `#enquire`), so the page opens at that
+  /// section; null when [hash] is not a section anchor (an ordinary page
+  /// address, or a legacy `#/route`), or [path] has a query.
+  static String? sectionRoute(String path, String hash) {
+    if (path.contains('?') || path.contains('#') || !hash.startsWith('#')) return null;
+    return anchorOf(hash) == null ? null : '$path$hash';
+  }
+
+  /// Opens a public page: in the app (its Router), a new page and browser
+  /// history entry, so Back and Forward go through the pages visited.
+  ///
+  /// A section link (`#enquire`, or `/teacher-training#enquire` while on
+  /// Teacher Training) scrolls this page to that section and shows it in the
+  /// address, without a new history entry; one on another page opens that
+  /// page at the section (a new entry: Back returns to this page).
+  ///
+  /// Outside the app's Router (a page shown on its own, e.g. in a preview
+  /// or a test), as before: Home pops back to the first route and any other
+  /// page replaces everything above it, or with [stack] is pushed on top.
+  static void open(BuildContext context, String route, {bool stack = false}) {
+    final anchor = anchorOf(route);
+    final current = ModalRoute.of(context)?.settings.name;
+    final app = AppRouterDelegate.maybeOf(context);
+    if (anchor != null) {
+      final path = pathOf(route);
+      if (path.isEmpty || (current != null && normalizeRoute(path) == normalizeRoute(pathOf(current)))) {
+        PublicAnchorScope.maybeOf(context)?.scrollTo(anchor);
+        if (app != null) Router.neglect(context, () => app.showSection(anchor));
+        return;
+      }
+    } else if (route.startsWith('#')) {
+      return;
+    }
+    if (current == route) return;
+    final caller = ModalRoute.of(context);
+    final onPage = caller == null || caller.settings is Page;
+    if (app != null && onPage) {
+      app.go(route);
+      return;
+    }
+    // Outside the app's Router, or from a screen pushed on top of a page
+    // (by name, as before): as before, down to the first route — or, in the
+    // app, to the page beneath.
     final navigator = Navigator.of(context);
-    if (ModalRoute.of(context)?.settings.name == route) return;
+    bool base(Route<dynamic> r) => r.isFirst || (app != null && r.settings is Page);
+    if (stack) {
+      navigator.pushNamed(route);
+      return;
+    }
     if (route == home) {
+      if (app != null) {
+        navigator.popUntil(base);
+        app.go(home);
+        return;
+      }
       // Home is the first route (a deep link like /programs is stacked on
       // top of it); if this page is somehow first, replace it.
       navigator.canPop() ? navigator.popUntil((r) => r.isFirst) : navigator.pushReplacementNamed(home);
       return;
     }
-    navigator.pushNamedAndRemoveUntil(route, (r) => r.isFirst);
+    navigator.pushNamedAndRemoveUntil(route, base);
   }
 
-  /// Opens the management app on top of the public site (back returns here).
-  static void openManagement(BuildContext context) => Navigator.of(context).pushNamed(management);
+  /// Opens the management app ([route]: `/app`, or a dashboard route) from
+  /// the public site: in the app, a new history entry (Back returns here);
+  /// otherwise pushed on top, as before.
+  static void openManagement(BuildContext context, [String route = management]) {
+    final app = AppRouterDelegate.maybeOf(context);
+    if (app != null) {
+      app.go(route);
+      return;
+    }
+    Navigator.of(context).pushNamed(route);
+  }
+
+  /// What returns Home after logging out from the public site, taken
+  /// before logging out (the menu it is chosen from may be gone by then): a
+  /// fresh Home page (the menu closes with the page). Outside the app's
+  /// Router, a fresh stack, as before.
+  static VoidCallback freshHome(BuildContext context) {
+    final app = AppRouterDelegate.maybeOf(context);
+    if (app != null) return () => app.go(home, fresh: true);
+    final navigator = Navigator.of(context);
+    return () => navigator.pushNamedAndRemoveUntil(home, (route) => false);
+  }
 }
 
 /// The hosts this website is served from. A link to any of them is a link

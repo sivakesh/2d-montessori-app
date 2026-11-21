@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../public_routes.dart';
 import 'blocks/block_registry.dart';
 import 'blocks/legacy_sections.dart';
+import 'blocks/section_anchors.dart';
 import 'blocks/website_block.dart';
 import 'website_content_models.dart';
 import 'website_page_style.dart';
@@ -116,24 +117,51 @@ class CustomPageSection {
 
 /// Where a call-to-action button may lead, checked when saving and again
 /// before following it on the public site. Allowed: a public page of this
-/// site (`/`, a built-in section, or `/pages/<slug>`), an `https://` link
-/// to another website, or a `mailto:`/`tel:` link. Anything else (e.g.
-/// `javascript:`, `http:`, `/app` or other management routes, or an
-/// `https://` address on this website such as `https://<site>/#/app`) is
-/// refused.
+/// site (`/`, a built-in section, or `/pages/<slug>`), optionally with a
+/// section of it (`/teacher-training#enquire`), a section of the same page
+/// (`#enquire`), an `https://` link to another website, or a
+/// `mailto:`/`tel:` link. Anything else (e.g. `javascript:`, `http:`,
+/// `/app` or other management routes, or an `https://` address on this
+/// website such as `https://<site>/#/app`) is refused.
+///
+/// Only the format is checked here; whether the page and its section
+/// exist is checked in the editor against the site (WebsiteLinkSite).
 class SafeLinkTarget {
-  static bool isInternal(String target) => target.startsWith('/');
+  /// A page of this website or a section of the current page.
+  static bool isInternal(String target) {
+    final value = target.trim();
+    return value.startsWith('/') || value.startsWith('#');
+  }
+
+  /// A section of the current page (`#enquire`).
+  static bool isSamePageAnchor(String target) => target.trim().startsWith('#');
+
+  /// An internal [target] as its page path (`''` for the current page)
+  /// and its section anchor (null when it names no section).
+  static ({String path, String? anchor}) split(String target) {
+    final value = target.trim();
+    final hash = value.indexOf('#');
+    if (hash < 0) return (path: value, anchor: null);
+    return (path: value.substring(0, hash), anchor: value.substring(hash + 1));
+  }
 
   /// Null when [target] is allowed, otherwise why not. [siteHosts]
   /// replaces this website's hosts (tests).
   static String? validate(String target, {Set<String>? siteHosts}) {
     final value = target.trim();
     if (value.isEmpty) return 'Enter where the button should lead.';
-    if (value.startsWith('/')) {
-      if (PublicRoutes.sections.contains(value)) return null;
-      final slug = PublicRoutes.slugFromRoute(value);
+    if (value.startsWith('#') || value.startsWith('/')) {
+      final (:path, :anchor) = split(value);
+      if (anchor != null && !SectionAnchors.isValid(anchor)) {
+        return anchor.isEmpty
+            ? 'After # enter the section’s anchor ID, for example #enquire.'
+            : '“#$anchor” is not a section anchor ID: use lowercase letters, numbers and single hyphens, for example #enquire.';
+      }
+      if (path.isEmpty) return null;
+      if (PublicRoutes.sections.contains(path)) return null;
+      final slug = PublicRoutes.slugFromRoute(path);
       if (slug != null && CustomPage.validateSlugFormat(slug) == null) return null;
-      return 'Use a page of this website, for example /admissions or /pages/open-day.';
+      return 'Use a page of this website, for example /admissions or /pages/open-day (a section of it: /admissions#enquire).';
     }
     final uri = Uri.tryParse(value);
     if (uri == null) return 'This link is not valid.';

@@ -15,6 +15,7 @@ import 'custom_html.dart';
 import 'embed_providers.dart';
 import 'faq_accordion.dart';
 import 'field_spec.dart';
+import 'section_anchors.dart';
 import 'testimonials.dart';
 import 'website_block.dart';
 import 'website_icons.dart';
@@ -408,6 +409,10 @@ class BlockRegistry {
     styleKeys: ['background', 'spacing', 'padding', 'paddingTop', 'paddingBottom', 'width', 'columnGap', 'rowGap', 'textColor', 'headingColor', 'buttonColor', 'buttonTextColor', 'borderColor', 'borderWidth', 'align'],
     fields: [
       TextFieldSpec('name', 'Section name (for the editor only)', maxLength: 60, translatable: false),
+      // Its public navigation id (SectionAnchors): given automatically,
+      // not stored until then, so sections saved before anchors existed
+      // are written back as they were stored.
+      AnchorFieldSpec(SectionAnchors.field, 'Section anchor ID', omitDefault: true),
       // Optional text above the columns; not stored while empty.
       TextFieldSpec('eyebrow', 'Small heading above the title', maxLength: 60, omitDefault: true),
       TextFieldSpec('heading', 'Section heading', maxLength: 160, translationRequired: true, omitDefault: true),
@@ -1028,6 +1033,10 @@ class BlockRegistry {
         ];
       }
     }
+    // A duplicated section never shares its original's anchor: it is
+    // given a new one, unique on the page, when it is placed there
+    // (SectionAnchors.ensure).
+    if (SectionAnchors.isSection(b)) values[SectionAnchors.field] = '';
     return b.copyWith(id: BlockIds.block(), values: values);
   }
 
@@ -1202,6 +1211,12 @@ class BlockRegistry {
         if (target.isEmpty) return [if (field.required) 'enter where the button should lead'];
         final error = SafeLinkTarget.validate(target);
         return [?error];
+      case AnchorFieldSpec():
+        // None stored yet: one is given automatically.
+        final anchor = (value as String? ?? '').trim();
+        if (anchor.isEmpty) return const [];
+        if (anchor.length > SectionAnchors.maxLength) return ['the anchor ID can be at most ${SectionAnchors.maxLength} characters'];
+        return [if (!SectionAnchors.isValid(anchor)) 'the anchor ID “$anchor” can use only lowercase letters, numbers and single hyphens (for example enquire)'];
       case ChoiceFieldSpec():
         return [if (!field.options.contains(value)) '“$value” is not a ${label.toLowerCase()} option'];
       case ToggleFieldSpec():
@@ -1300,6 +1315,8 @@ class BlockRegistry {
     }
 
     walk(blocks, '', 0);
+    // Each section's anchor is its own: two sections can't share one.
+    errors.addAll(SectionAnchors.pageProblems(blocks));
     if (count > limits.maxBlocks) errors.add('A page can have at most ${limits.maxBlocks} blocks.');
     final bytes = utf8.encode(jsonEncode(toMapList(blocks), toEncodable: (o) => o.toString())).length;
     if (bytes > limits.maxDocumentBytes) errors.add('This page is too large (${(bytes / 1024).ceil()} KB; at most ${limits.maxDocumentBytes ~/ 1024} KB). Split it into more pages.');

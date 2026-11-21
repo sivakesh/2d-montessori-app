@@ -132,14 +132,17 @@ void main() {
   Finder item(String id) => find.byKey(Key('public-gallery-item-$id'));
 
   group('Gallery navigation', () {
-    testWidgets('header link opens /gallery; Home returns with a short back stack', (tester) async {
+    testWidgets('header link opens /gallery; Home returns; Back returns to the gallery', (tester) async {
       await pumpSite(tester);
       await tapAndSettle(tester, find.byKey(const Key('public-nav-/gallery')));
       expect(find.byType(PublicGalleryPage), findsOneWidget);
       expect(tester.widget<Text>(find.byKey(const Key('public-section-title'))).data, 'Gallery');
       await tapAndSettle(tester, find.byKey(const Key('public-nav-/')));
       expect(find.byType(PublicHomePage), findsOneWidget);
-      expect(tester.state<NavigatorState>(find.byType(Navigator).first).canPop(), isFalse);
+      // Each page visited is a history entry.
+      tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+      await tester.pumpAndSettle();
+      expect(find.byType(PublicGalleryPage), findsOneWidget);
     });
 
     testWidgets('mobile menu and footer reach the gallery', (tester) async {

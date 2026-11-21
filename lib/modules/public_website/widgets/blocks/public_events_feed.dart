@@ -296,7 +296,7 @@ class PublicEventsFeed extends ConsumerWidget {
         label: strings.eventOpenLabel(item.title.resolve(language), dates.date, dates.time),
         accent: accent,
         radius: radius,
-        onTap: interactive ? () => Navigator.of(context).pushNamed(PublicRoutes.event(item.sourceId)) : null,
+        onTap: interactive ? () => PublicRoutes.open(context, stack: true, PublicRoutes.event(item.sourceId)) : null,
         child: child,
       );
 

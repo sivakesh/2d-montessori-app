@@ -124,7 +124,7 @@ final publicAccountStateProvider = Provider<PublicAccountState>((ref) {
 /// was set meanwhile. The authentication code itself is used unchanged.
 void openPublicDashboard(BuildContext context, String route) {
   final container = ProviderScope.containerOf(context, listen: false);
-  Navigator.of(context).pushNamed(route);
+  PublicRoutes.openManagement(context, route);
   if (route != PublicRoutes.management || container.read(currentUserProvider) != null) return;
   RestoredSessionDashboard.reloadProfileOnceAuthGateIsReady(container);
 }
@@ -198,9 +198,9 @@ class PublicAccountControls extends ConsumerWidget {
   /// would dispose this widget, and its `ref`, mid-logout); returning home
   /// with a fresh stack then removes it.
   Future<void> _logout(BuildContext context, WidgetRef ref) async {
-    final navigator = Navigator.of(context);
+    final home = PublicRoutes.freshHome(context);
     await ref.read(authServiceProvider).logout(ref, context);
-    navigator.pushNamedAndRemoveUntil(PublicRoutes.home, (route) => false);
+    home();
   }
 
   @override

@@ -10,6 +10,7 @@ import '../../content/blocks/block_registry.dart';
 import '../../content/blocks/block_spacing.dart';
 import '../../content/blocks/embed_providers.dart';
 import '../../content/blocks/field_spec.dart';
+import '../../content/blocks/section_anchors.dart';
 import '../../content/blocks/website_block.dart';
 import '../../content/website_content_models.dart';
 import '../../content/website_custom_page.dart';
@@ -23,6 +24,7 @@ import '../../../forms/ui/public_website_form.dart';
 import 'public_accreditations.dart';
 import 'public_announcements_feed.dart';
 import 'block_spacing_box.dart';
+import '../public_section_anchors.dart';
 import 'public_asymmetric_gallery.dart';
 import 'public_custom_html.dart';
 import 'public_embed_block.dart';
@@ -33,9 +35,10 @@ import 'public_events_feed.dart';
 import 'public_item_cards.dart';
 import 'public_feature_widgets.dart';
 
-/// Follows a block's button link: a public page in place, an allowed
-/// external link in a new tab. Checked again first; an unsafe link does
-/// nothing.
+/// Follows a block's button link: a public page in place (a section link,
+/// `#enquire` or `/teacher-training#enquire`, scrolls to that section —
+/// PublicRoutes.open), an allowed external link in a new tab. Checked
+/// again first; an unsafe link does nothing.
 Future<void> followBlockLink(BuildContext context, String target, {bool newTab = true}) async {
   if (SafeLinkTarget.validate(target) != null) return;
   if (SafeLinkTarget.isInternal(target)) {
@@ -162,12 +165,20 @@ class WebsiteBlocksView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final layout = PublicLayout.of(MediaQuery.sizeOf(context).width);
+    // Each section drawn for visitors carries its anchor id (links scroll
+    // to it); the editor's canvas frames blocks itself and has none.
+    final anchors = editing == null ? SectionAnchors.effective(blocks) : const <String, String>{};
     final children = <Widget>[];
     for (final block in blocks) {
       final widget = _BlockWidget.maybe(block, this);
       if (widget == null) continue;
       if (spaced) children.add(SizedBox(height: spaceAbove(block, mobile: layout.isMobile, screen: _BlockWidget.screenOf(layout))));
-      children.add(KeyedSubtree(key: Key('public-block-${block.id}'), child: fullBleed ? place(block, widget) : widget));
+      final placed = fullBleed ? place(block, widget) : widget;
+      final anchor = anchors[block.id];
+      children.add(KeyedSubtree(
+        key: Key('public-block-${block.id}'),
+        child: anchor == null ? placed : PublicSectionAnchor(anchor: anchor, child: placed),
+      ));
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
   }

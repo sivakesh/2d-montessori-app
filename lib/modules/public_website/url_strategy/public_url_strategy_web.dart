@@ -6,6 +6,10 @@ import '../public_routes.dart';
 /// opens old hash links (`https://<site>/#/pages/about`) at their page:
 /// when the path is the site root and the fragment is a route, that route
 /// is used. Flutter then replaces the address with the clean path.
+///
+/// A section address (`https://<site>/teacher-training#enquire`) keeps its
+/// `#enquire`: the route is `/teacher-training#enquire`, so the page opens
+/// at that section, also when reached with the browser's Back or Forward.
 class PublicPathUrlStrategy extends PathUrlStrategy {
   PublicPathUrlStrategy(PlatformLocation super.platformLocation) : _location = platformLocation;
 
@@ -14,7 +18,10 @@ class PublicPathUrlStrategy extends PathUrlStrategy {
   @override
   String getPath() {
     final path = super.getPath();
-    return PublicRoutes.legacyHashRoute(path.split('?').first, _orEmpty(_location.hash)) ?? path;
+    final hash = _orEmpty(_location.hash);
+    final legacy = PublicRoutes.legacyHashRoute(path.split('?').first, hash);
+    if (legacy != null) return legacy;
+    return PublicRoutes.sectionRoute(path, hash) ?? path;
   }
 
   // The browser's hash is nullable on the web (and typed non-null in the

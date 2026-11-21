@@ -197,6 +197,80 @@ in the structure or from the columns block), drag and drop, undo/redo,
 editing text directly on the canvas, and a warning when leaving with
 unsaved changes.
 
+## Section anchors and internal navigation
+
+Every section has an **anchor ID** (`SectionAnchors`,
+`content/blocks/section_anchors.dart`): the public navigation identifier
+that links use (`#enquire` on the same page, `/teacher-training#enquire`
+from another), separate from the section's editor-only **name**.
+
+- **Stored** in the section's optional `anchor` field: lowercase letters
+  and digits in words joined by single hyphens, at most 64 characters,
+  unique on its page. The section block stays at version 1.
+- **Automatic:**
+  - A section added, duplicated or inserted from a template is given an
+    anchor from its name (else its heading, else `section`) when it is
+    placed on the page: `Enquire` → `enquire`, a second `Enquire` →
+    `enquire-2`, `Our Programs & Courses` → `our-programs-courses`.
+  - A duplicate never keeps its original's anchor.
+- **Stable:** renaming, reordering or editing a section never changes its
+  anchor. Only Section anchor ID (or its Regenerate) does, and it warns
+  how many links on the website lead to the old one.
+- **Sections saved before anchors** have none stored. Their anchor is
+  derived the same way, in page order, every time the page is read, so
+  such a page is saved back exactly as it was stored.
+  - An anchor is stored only when an edit would otherwise move it (for
+    example, deleting or renaming a section that shared its name with
+    another).
+  - At publishing, an anchor is stored if leaving out a hidden section
+    would change it for visitors (`pinForVisitors`).
+  - There is no bulk migration.
+- **Problems** (block a save, in "to fix"): a malformed anchor, and two
+  sections with the same stored anchor. Visitors' copy gives each anchor
+  to its first section only.
+
+**Links** (`LinkFieldSpec`: buttons, cards, call to action, gallery
+images, accreditations, icons) are edited with a "leads to" choice:
+- a page of the website;
+- a section of this page (by name; stores `#anchor`);
+- a section of another page (page, then section; stores `/page#anchor`);
+- another website (https://);
+- email (mailto:) or phone (tel:);
+- a typed address.
+
+The address can always be typed. `SafeLinkTarget` reads the path and the
+`#fragment` separately: a fragment must be a well-formed anchor, and the
+path must still be a page of this website. Unsafe schemes and management
+routes are refused as before.
+
+**Links to check** (a warning, not blocking: the "N links to check" chip
+and panel):
+- links on this page to a page that doesn't exist, is archived or
+  unpublished;
+- links to a section missing from its page, or hidden;
+- links to a page that isn't built with sections (or not published with
+  them);
+- links on other pages to sections of this page that were deleted or had
+  their anchor changed.
+
+They're checked against each page's draft (`WebsiteLinkSite`, read by
+`WebsiteContentAdminService.linkSite`). Nothing is redirected.
+
+**Visitors:**
+- Each section drawn on a public page registers its anchor with the
+  page's `PublicAnchorScope` (key `public-section-anchor-<id>`, the
+  anchor also its semantics identifier).
+- `#anchor` (or the page's own address with it) scrolls there.
+- Another page's section opens that page at `/page#anchor`. The route
+  keeps the fragment, so the address can be shared and Back and Forward
+  work, and the page scrolls once that section is drawn (pages load
+  asynchronously).
+- Opening an address with a section works too: the URL strategy keeps a
+  `#anchor` fragment, while legacy `#/route` addresses still open their
+  route.
+- The header scrolls with the page, so no space is kept above the
+  section (`headerOffset` 0).
+
 ## Translation core (`content/translation/`)
 
 Pure Dart; nothing is stored.

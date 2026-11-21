@@ -3,8 +3,8 @@
 //   mobile, tablet and desktop widths, without layout overflow.
 // - Header/drawer/footer navigation reaches Home, Admissions, Teacher
 //   Training, Programs and Contact; the Families and Educators pathways open
-//   Admissions and Teacher Training; moving between pages keeps a short back
-//   stack (back returns Home).
+//   Admissions and Teacher Training; each page visited is a history entry
+//   (Back goes through them in reverse order, Forward restores them).
 // - The EN/தமிழ் switch changes the site's text and carries across pages.
 // - Login opens `/app`: the existing AuthGate, which shows the
 //   existing LoginScreen when signed out; back returns to the site.
@@ -14,6 +14,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:montessori_app/main.dart';
+import 'package:montessori_app/core/navigation/app_router.dart';
 import 'package:montessori_app/modules/auth/providers/auth_state_provider.dart';
 import 'package:montessori_app/modules/auth/ui/auth_gate.dart';
 import 'package:montessori_app/modules/auth/ui/login_screen.dart';
@@ -77,7 +78,7 @@ void main() {
   });
 
   group('navigation', () {
-    testWidgets('header links reach every section; Home returns; back stack stays short', (tester) async {
+    testWidgets('header links reach every section; Home returns; Back goes through the pages visited', (tester) async {
       await pumpApp(tester);
       for (final (route, label) in [
         (PublicRoutes.admissions, 'Admissions'),
@@ -90,16 +91,24 @@ void main() {
         expect(find.byType(PublicSectionPage), findsOneWidget, reason: 'one page at a time');
         expect(find.text('This page is being prepared'), findsOneWidget);
       }
-      // Only Home is underneath, so back returns there.
+      // Each page visited is a history entry: back returns to the previous
+      // page, not straight to Home.
+      for (final label in ['Programs', 'Teacher Training', 'Admissions']) {
+        navigator(tester).pop();
+        await tester.pumpAndSettle();
+        expect(sectionTitle(tester), label);
+        expect(find.byType(PublicSectionPage), findsOneWidget, reason: 'one page at a time');
+      }
       navigator(tester).pop();
       await tester.pumpAndSettle();
       expect(find.byType(PublicHomePage), findsOneWidget);
-      expect(navigator(tester).canPop(), isFalse);
 
       await tapAndSettle(tester, find.byKey(const Key('public-nav-/programs')));
       await tapAndSettle(tester, find.byKey(const Key('public-nav-/')));
-      expect(find.byType(PublicHomePage), findsOneWidget);
-      expect(navigator(tester).canPop(), isFalse);
+      expect(find.byType(PublicHomePage), findsOneWidget, reason: 'Home returns');
+      navigator(tester).pop();
+      await tester.pumpAndSettle();
+      expect(sectionTitle(tester), 'Programs', reason: 'and Back returns to the page before it');
     });
 
     testWidgets('Families and Educators pathways open Admissions and Teacher Training', (tester) async {
@@ -298,19 +307,21 @@ void main() {
 
     testWidgets('/app is AuthGate itself (role routing unchanged), not a bypass', (tester) async {
       await pumpApp(tester);
-      final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
-      final page = app.routes![PublicRoutes.management]!(tester.element(find.byType(PublicHomePage)));
+      // The route table moved from MaterialApp to the app's Router
+      // (lib/core/navigation/app_router.dart), unchanged.
+      final page = ManagementRoutes.named[PublicRoutes.management]!(tester.element(find.byType(PublicHomePage)));
       expect(page, isA<AuthGate>());
-      expect(app.home, isA<PublicHomePage>());
+      expect(publicPageFor(AppLocation.parse(PublicRoutes.home)), isA<PublicHomePage>());
+      expect(find.byType(PublicHomePage), findsOneWidget, reason: 'Home is the start page');
     });
   });
 
   group('existing routes', () {
     testWidgets('all existing named routes are still registered', (tester) async {
       await pumpApp(tester);
-      final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
-      expect(app.routes!.keys, containsAll(['/login', '/dashboard', '/admin_dashboard', '/admin_session_logs', '/admin_profile_form']));
-      expect(app.onGenerateRoute, isNotNull);
+      // The route table moved from MaterialApp to the app's Router, unchanged.
+      expect(ManagementRoutes.named.keys, containsAll(['/login', '/dashboard', '/admin_dashboard', '/admin_session_logs', '/admin_profile_form']));
+      expect(ManagementRoutes.generate(const RouteSettings(name: '/otp', arguments: {'phone': '9876543210'})), isNotNull);
     });
 
     testWidgets('/login opens the existing LoginScreen', (tester) async {

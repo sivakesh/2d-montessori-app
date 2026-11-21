@@ -132,6 +132,25 @@ final class LinkFieldSpec extends FieldSpec {
   Object? serialize(Object? value) => (value as String? ?? '').trim();
 }
 
+/// A section's anchor id (`SectionAnchors`): the public navigation
+/// identifier links use (`#enquire`), separate from the section's
+/// editor-only name. '' = none stored yet (one is given automatically).
+final class AnchorFieldSpec extends FieldSpec {
+  const AnchorFieldSpec(super.key, super.label, {super.omitDefault, super.group});
+
+  @override
+  Object? get defaultValue => '';
+
+  @override
+  bool accepts(Object? raw) => raw is String;
+
+  @override
+  Object? parse(Object? raw) => raw as String;
+
+  @override
+  Object? serialize(Object? value) => (value as String? ?? '').trim();
+}
+
 /// A website form (Settings → Website forms), by id ('' = none). The page
 /// stores only the id: the form itself is read from its active version
 /// when the page is shown, so one form can be on many pages.

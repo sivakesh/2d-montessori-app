@@ -221,9 +221,9 @@ void main() {
       expect(find.byKey(const Key('public-page-not-found')), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       await startAt(tester, '/no-such-page');
-      // Flutter reports the unknown start route (in debug) and opens Home —
-      // as it did for /#/no-such-page with hash URLs.
-      expect(tester.takeException(), contains('Could not navigate to initial route'));
+      // An unknown start route opens Home, as it did for /#/no-such-page
+      // with hash URLs (the app's Router shows Home without an error).
+      expect(tester.takeException(), isNull);
       expect(find.byType(PublicHomePage), findsOneWidget);
     });
 
@@ -240,9 +240,13 @@ void main() {
       expect(currentRoute(tester), '/programs');
       await tapLink('public-footer-/gallery');
       expect(currentRoute(tester), '/gallery');
+      // Each page visited is a history entry: Back returns to the page before.
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
-      expect(find.byType(PublicHomePage), findsOneWidget, reason: 'public pages replace each other above Home');
+      expect(currentRoute(tester), '/programs');
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byType(PublicHomePage), findsOneWidget);
     });
 
     testWidgets('protected routes keep their guards when opened directly: /app and /dashboard ask signed-out visitors to log in', (tester) async {

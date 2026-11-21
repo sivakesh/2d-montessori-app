@@ -29,6 +29,7 @@ import 'package:montessori_app/modules/admin/website/ui/website_custom_page_edit
 import 'package:montessori_app/modules/auth/models/app_user.dart';
 import 'package:montessori_app/modules/auth/providers/auth_state_provider.dart';
 import 'package:montessori_app/modules/public_website/content/blocks/block_registry.dart';
+import 'package:montessori_app/modules/public_website/content/blocks/section_anchors.dart';
 import 'package:montessori_app/modules/public_website/content/blocks/website_block.dart';
 import 'package:montessori_app/modules/public_website/content/website_content_models.dart';
 
@@ -446,7 +447,10 @@ void main() {
       expect(key('website-templates'), findsNothing);
       final inserted = blocks(tester).last as StructuredBlock;
       expect(blocks(tester).first.id, 'b_intro0001', reason: 'existing content untouched');
-      expect(_withoutIds(inserted.toMap()), _withoutIds(_richSection()));
+      // Placed on this page, the section is given its own anchor id here
+      // (as it is given new ids); the rest is the template's content.
+      expect(SectionAnchors.stored(inserted), 'programmes', reason: 'an anchor id from its name, unique on this page');
+      expect(_withoutIds(inserted.toMap()..remove(SectionAnchors.field)), _withoutIds(_richSection()));
       expect(_ids(inserted.toMap()).toSet().intersection(_ids(_richSection()).toSet()), isEmpty, reason: 'new ids');
 
       // Edit the copy: the template and the source page stay as they were.

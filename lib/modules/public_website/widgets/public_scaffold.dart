@@ -14,6 +14,7 @@ import '../public_strings.dart';
 import '../public_website_theme.dart';
 import 'blocks/website_blocks_view.dart';
 import 'public_account_controls.dart';
+import 'public_section_anchors.dart';
 
 /// Page frame shared by every public page: header (inline navigation on
 /// desktop, a menu drawer below that), scrollable [body] and footer. Never
@@ -36,14 +37,21 @@ class PublicScaffold extends ConsumerWidget {
         // Used whenever the header falls back to its menu button.
         endDrawer: PublicMenuDrawer(currentRoute: currentRoute),
         body: SafeArea(
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                PublicHeader(currentRoute: currentRoute),
-                body,
-                const PublicFooter(),
-              ],
+          // Section links scroll this page; an address with a section
+          // (`/teacher-training#enquire`) opens at it once it is drawn.
+          // The header scrolls with the page, so nothing is kept clear
+          // above the section.
+          child: PublicAnchorScope(
+            initialAnchor: PublicRoutes.anchorOf(ModalRoute.of(context)?.settings.name),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  PublicHeader(currentRoute: currentRoute),
+                  body,
+                  const PublicFooter(),
+                ],
+              ),
             ),
           ),
         ),

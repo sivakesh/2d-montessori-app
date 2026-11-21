@@ -7,6 +7,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import '../../../auth/models/app_user.dart';
 import '../../../public_website/content/blocks/block_limits.dart';
 import '../../../public_website/content/blocks/block_registry.dart';
+import '../../../public_website/content/blocks/section_anchors.dart';
 import '../../../public_website/content/blocks/website_block.dart';
 import '../../../public_website/content/built_in_pages.dart';
 import '../../../public_website/content/website_content_models.dart';
@@ -15,6 +16,7 @@ import '../../../public_website/content/website_content_repository.dart';
 import '../../../public_website/content/website_custom_page.dart';
 import '../../../public_website/content/website_page_style.dart';
 import '../../../public_website/content/website_languages.dart';
+import '../../../public_website/content/website_link_targets.dart';
 import '../../../public_website/content/website_site_layout.dart';
 import 'website_image_processor.dart';
 import 'album_galleries.dart';
@@ -1041,7 +1043,9 @@ class WebsiteContentAdminService {
   /// can't be written, the error says so.
   Future<void> publishBuiltInPage({required String requesterRole, required AppUser actor, required BuiltInPage page, required List<WebsiteBlock> blocks, PageStyle style = const PageStyle()}) async {
     _requireAdmin(requesterRole);
-    blocks = await updateAlbumGalleries(requesterRole: requesterRole, blocks: blocks);
+    // Visitors get the section anchors the editor shows: one that leaving
+    // out hidden blocks would change is stored first (in the draft too).
+    blocks = SectionAnchors.pinForVisitors(await updateAlbumGalleries(requesterRole: requesterRole, blocks: blocks), BlockRegistry.withoutHidden);
     _validateBlocks(blocks);
     _validatePageStyle(style);
     _requirePublishable(blocks);
@@ -1197,6 +1201,7 @@ class WebsiteContentAdminService {
       final updated = await updateAlbumGalleries(requesterRole: requesterRole, blocks: blocks);
       if (!identical(updated, blocks)) page = page.copyWith(blocks: () => updated);
     }
+    page = _withAnchors(page);
     final current = await getCustomPage(requesterRole: requesterRole, pageId: page.id);
     if (current == null) throw WebsiteContentException('This page no longer exists.');
     if (current.draft.archived) throw WebsiteContentException('Restore this page before publishing it.');
@@ -1212,6 +1217,46 @@ class WebsiteContentAdminService {
           ...page.forVisitors.copyWith(navOrder: current.draft.navOrder).toContentMap(),
           'publishedAt': FieldValue.serverTimestamp(),
         }));
+  }
+
+  /// [page] with the section anchors visitors would otherwise get
+  /// differently stored ([SectionAnchors.pinForVisitors]); a page made of
+  /// sections is unchanged.
+  static CustomPage _withAnchors(CustomPage page) {
+    final blocks = page.blocks;
+    if (blocks == null) return page;
+    final pinned = SectionAnchors.pinForVisitors(blocks, BlockRegistry.withoutHidden);
+    return identical(pinned, blocks) ? page : page.copyWith(blocks: () => pinned);
+  }
+
+  // ------------------------------------------------------------ links
+
+  /// Every page of the website, for choosing where a link leads and for
+  /// checking that internal links lead to a page and section that exist:
+  /// the built-in pages (their draft blocks, else their published ones;
+  /// none while a page is its built-in self) and the additional pages
+  /// (their drafts; archived ones are listed so links to them are
+  /// reported). Read only; nothing is written.
+  Future<WebsiteLinkSite> linkSite({required String requesterRole}) async {
+    _requireAdmin(requesterRole);
+    final pages = <WebsiteLinkPage>[];
+    for (final page in BuiltInPage.values) {
+      final draft = builtInPageBlocks((await _drafts.doc(page.id).get()).data());
+      final live = builtInPageBlocks((await _live.doc(page.id).get()).data());
+      pages.add(WebsiteLinkPage(route: page.route, label: page.label, blocks: draft ?? live, sectionsPublished: live != null));
+    }
+    for (final (:draft, :live) in await listCustomPages(requesterRole: requesterRole)) {
+      final title = draft.title.en.trim();
+      pages.add(WebsiteLinkPage(
+        route: draft.route,
+        label: title.isEmpty ? draft.slug : title,
+        blocks: draft.blocks,
+        reachable: live != null && !draft.archived,
+        sectionsPublished: live?.usesBlocks ?? false,
+        archived: draft.archived,
+      ));
+    }
+    return WebsiteLinkSite(pages: pages);
   }
 
   /// Takes the page off the website (its address shows "page not found");

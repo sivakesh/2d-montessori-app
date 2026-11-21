@@ -13,6 +13,7 @@ import '../../../../public_website/content/blocks/block_spacing.dart';
 import '../../../../public_website/content/blocks/block_registry.dart';
 import '../../../../public_website/content/blocks/custom_html.dart';
 import '../../../../public_website/content/blocks/embed_providers.dart';
+import '../../../../public_website/content/blocks/section_anchors.dart';
 import '../../../../public_website/content/blocks/section_presets.dart';
 import '../../../../public_website/content/blocks/field_spec.dart';
 import '../../../../public_website/content/blocks/website_block.dart';
@@ -28,6 +29,7 @@ import '../../../../forms/models/website_form.dart';
 import '../../../../forms/public/public_forms_repository.dart';
 import '../website_content_editors.dart';
 import '../website_content_screen.dart';
+import 'website_link_field.dart';
 import '../../../../public_website/content/blocks/album_source.dart';
 import '../../data/album_galleries.dart';
 import '../../data/website_albums_service.dart';
@@ -120,6 +122,11 @@ class WebsiteBlocksEmptyState extends StatelessWidget {
 /// A short description of [block] for the page structure.
 String blockSummary(WebsiteBlock block) {
   if (block is! StructuredBlock) return 'Kept unchanged; this version of the editor can’t show or edit it.';
+  // A section shows its anchor id (what links to it use) first.
+  if (SectionAnchors.isSection(block) && SectionAnchors.stored(block).isNotEmpty) {
+    final rest = blockSummary(block.withValue(SectionAnchors.field, ''));
+    return '#${SectionAnchors.stored(block)}${rest.isEmpty ? '' : ' · $rest'}';
+  }
   for (final key in ['heading', 'caption', 'body']) {
     final f = block.definition.field(key);
     if (f is TextFieldSpec && block.text(key).en.trim().isNotEmpty) {
@@ -825,12 +832,25 @@ class _FieldEditor extends StatelessWidget {
           children: [Text(f.label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)), const SizedBox(height: 4), row],
         );
       case LinkFieldSpec():
-        final target = value as String? ?? '';
-        return TextFormField(
-          key: Key('$keyPrefix-$generation'),
-          initialValue: target,
-          decoration: websiteField(f.label, helper: 'A page of this website (/admissions, /pages/open-day), an https:// link to another site, mailto: or tel:.')
-              .copyWith(errorText: target.trim().isEmpty ? null : SafeLinkTarget.validate(target.trim())),
+        // Where it leads: a page, a section (of this page or another), or
+        // another website — chosen from the website's pages, or typed.
+        return WebsiteLinkField(
+          key: ValueKey('$keyPrefix-link-$generation'),
+          keyPrefix: keyPrefix,
+          label: f.label,
+          value: value as String? ?? '',
+          generation: generation,
+          onChanged: onChanged,
+        );
+      case AnchorFieldSpec():
+        // A section's own field (owner is the section).
+        final section = owner;
+        if (section == null) return const SizedBox.shrink();
+        return WebsiteAnchorField(
+          key: ValueKey('$keyPrefix-anchor-${section.id}-$generation'),
+          keyPrefix: keyPrefix,
+          section: section,
+          generation: generation,
           onChanged: onChanged,
         );
       case ChoiceFieldSpec():

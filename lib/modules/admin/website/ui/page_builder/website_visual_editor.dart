@@ -8,10 +8,12 @@ import '../../../../../core/theme/app_colors.dart';
 import '../../../../auth/models/app_user.dart';
 import '../../../../public_website/content/blocks/block_limits.dart';
 import '../../../../public_website/content/blocks/block_registry.dart';
+import '../../../../public_website/content/blocks/section_anchors.dart';
 import '../../../../public_website/content/blocks/section_presets.dart';
 import '../../../../public_website/content/blocks/website_block.dart';
 import '../../../../public_website/content/website_content_models.dart';
 import '../../../../public_website/content/website_design.dart';
+import '../../../../public_website/content/website_link_targets.dart';
 import '../../../../public_website/content/website_page_style.dart';
 import '../../../../public_website/public_strings.dart';
 import '../../../../public_website/public_website_theme.dart';
@@ -22,6 +24,7 @@ import '../../data/website_templates_service.dart';
 import '../../data/website_editor_settings.dart';
 import 'block_list_ops.dart';
 import 'website_block_editor.dart';
+import 'website_link_field.dart';
 import 'website_template_library.dart';
 import '../../data/website_albums_service.dart';
 
@@ -78,7 +81,18 @@ class WebsiteVisualEditor extends StatefulWidget {
     this.user,
     this.albums,
     this.editorSettings,
+    this.linkSite,
+    this.pageRoute,
   });
+
+  /// The website's pages and their sections, for link fields (choosing a
+  /// page or section, and checking that it exists); null when they
+  /// couldn't be read (links are then checked for their format only).
+  final WebsiteLinkSite? linkSite;
+
+  /// The address of the page being edited (`/teacher-training`,
+  /// `/pages/open-day`): what `#anchor` links on it lead to.
+  final String? pageRoute;
 
   /// The school's albums, for galleries' image source (null: they couldn't
   /// be read).
@@ -243,8 +257,14 @@ class _WebsiteVisualEditorState extends State<WebsiteVisualEditor> {
 
   void _apply(List<WebsiteBlock> next, BlockPath? select, {bool edit = false}) {
     _select(select, edit: edit);
-    widget.onChanged(next);
+    _changed(next);
   }
+
+  /// Reports [next] with every section holding its anchor id: a new or
+  /// duplicated section gets one unique on the page, and one saved before
+  /// anchors existed keeps the anchor it had (SectionAnchors.ensure), so
+  /// renaming, reordering or deleting other sections never moves it.
+  void _changed(List<WebsiteBlock> next) => widget.onChanged(SectionAnchors.ensure(next, previous: _blocks));
 
   void _add(BlockDefinition definition, {BlockPath? at}) {
     final to = at ?? (_selected == null ? BlockPath(_blocks.length) : BlockPath(_selected!.index + 1));
@@ -489,6 +509,12 @@ class _WebsiteVisualEditorState extends State<WebsiteVisualEditor> {
 
   @override
   Widget build(BuildContext context) {
+    // Link fields choose and check pages and sections against the site,
+    // with this page as it is now.
+    return WebsiteLinkScope(site: widget.linkSite, route: widget.pageRoute, blocks: _blocks, child: _layout(context));
+  }
+
+  Widget _layout(BuildContext context) {
     return LayoutBuilder(builder: (context, constraints) {
       final width = constraints.maxWidth;
       _narrow = width < narrowEditorWidth;
@@ -1067,7 +1093,7 @@ class _WebsiteVisualEditorState extends State<WebsiteVisualEditor> {
             library: widget.library,
             albums: widget.albums,
             generation: widget.generation,
-            onChanged: (b) => widget.onChanged(BlockListOps.replace(_blocks, path, b)),
+            onChanged: (b) => _changed(BlockListOps.replace(_blocks, path, b)),
             onSelectNested: containerTypes.contains(block.type) && path.depth < 2 ? (c, j) => _select(BlockPath.inside(path, c, j), edit: true) : null,
             onAddToColumn: containerTypes.contains(block.type) && path.depth < 2 ? (c, d) => _addToColumn(path, c, d) : null,
             screen: _screen,

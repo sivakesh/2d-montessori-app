@@ -9,11 +9,13 @@ import '../../../auth/models/app_user.dart';
 import '../../../auth/providers/auth_state_provider.dart';
 import '../../../public_website/content/blocks/album_source.dart';
 import '../../../public_website/content/blocks/block_registry.dart';
+import '../../../public_website/content/blocks/section_anchors.dart';
 import '../../../public_website/content/blocks/website_block.dart';
 import '../../../public_website/content/built_in_pages.dart';
 import '../../../public_website/content/website_content_models.dart';
 import '../../../public_website/content/website_content_repository.dart';
 import '../../../public_website/content/website_custom_page.dart';
+import '../../../public_website/content/website_link_targets.dart';
 import '../../../public_website/content/website_page_style.dart';
 import '../../../public_website/content/website_site_layout.dart';
 import '../../../public_website/public_strings.dart';
@@ -25,6 +27,7 @@ import '../data/website_content_admin_service.dart';
 import '../data/album_galleries.dart';
 import '../data/website_albums_service.dart';
 import 'page_builder/website_chrome_scope.dart';
+import 'page_builder/website_link_field.dart';
 import 'page_builder/website_visual_editor.dart';
 import 'website_content_editors.dart';
 import 'website_content_screen.dart';
@@ -184,6 +187,10 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
   List<PublicLanguage> _languages = PublicLanguage.builtIn;
   SiteLayout? _siteLayout;
   List<CustomPage> _publishedPages = const [];
+
+  /// The website's pages and sections, for link fields and Links to check
+  /// (null: they couldn't be read; links are checked for format only).
+  WebsiteLinkSite? _linkSite;
   int _generation = 0;
   PublicLanguage _language = PublicLanguage.english;
   bool _mobile = false;
@@ -216,8 +223,16 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
       final layout = await service.getSiteLayout(requesterRole: role);
       final languages = (await service.editorLanguageRegistry(requesterRole: role)).editorLanguages;
       final publishedPages = await service.publishedCustomPages(requesterRole: role);
+      // Only links use it: if it can't be read, the page still opens.
+      WebsiteLinkSite? linkSite;
+      try {
+        linkSite = await service.linkSite(requesterRole: role);
+      } catch (_) {
+        linkSite = null;
+      }
       if (!mounted) return;
       setState(() {
+        _linkSite = linkSite;
         _draftBlocks = page.draft;
         _liveBlocks = page.live;
         _blocks = page.draft == null ? null : [...page.draft!];
@@ -268,6 +283,29 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
       builtInBlocks: {_pageId.id: ?blocks},
       builtInStyles: {if (blocks != null && !_pageStyle.isDefault) _pageId.id: _pageStyle},
     );
+  }
+
+  /// The blocks being edited as publishing stores them: a section anchor
+  /// visitors would otherwise get differently stored
+  /// (SectionAnchors.pinForVisitors), so the editor holds what is stored.
+  List<WebsiteBlock> _anchored() {
+    final blocks = _blocks!;
+    final anchored = SectionAnchors.pinForVisitors(blocks, BlockRegistry.withoutHidden);
+    if (!identical(anchored, blocks)) setState(() => _blocks = anchored);
+    return anchored;
+  }
+
+  /// Links on this page that lead to a page or section that doesn't exist
+  /// (or that visitors can't reach), and links on other pages to sections
+  /// of this page that are gone or hidden.
+  List<String> _linkChecks(List<WebsiteBlock> blocks) {
+    final site = _linkSite;
+    if (site == null) return const [];
+    final route = _pageId.route;
+    return [
+      ...site.withPage(route, blocks).linkProblems(blocks, currentRoute: route),
+      ...site.brokenElsewhere(route, blocks),
+    ];
   }
 
   static String _encode(List<WebsiteBlock>? blocks) => blocks == null ? 'null' : jsonEncode(BlockRegistry.toMapList(blocks), toEncodable: (o) => o.toString());
@@ -547,6 +585,7 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
     final blocks = _blocks!;
     final chrome = PublicSiteChrome.resolve(_siteLayout, _publishedPages);
     final errors = BlockRegistry.validate(blocks);
+    final linkChecks = _linkChecks(blocks);
     final warnings = _warnings(blocks);
     final published = {for (final m in _published) m.id: m};
     final unsaved = _unsaved;
@@ -560,6 +599,8 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
       if (_draftUnpublished) const WebsiteStatusChip(key: Key('website-builtin-draft-unpublished'), label: 'Draft not published', color: Color(0xFF8A6A33)),
       if (unsaved) const WebsiteStatusChip(key: Key('website-builtin-unsaved'), label: 'Unsaved edits', color: Color(0xFFB3261E)),
       if (errors.isNotEmpty) WebsiteStatusChip(key: const Key('website-builtin-fix-count'), label: '${errors.length} to fix', color: const Color(0xFFB3261E)),
+      if (linkChecks.isNotEmpty)
+        WebsiteStatusChip(key: const Key('website-builtin-link-count'), label: '${linkChecks.length} link${linkChecks.length == 1 ? '' : 's'} to check', color: const Color(0xFF8A6A33)),
     ];
     final actions = [
       OutlinedButton.icon(
@@ -570,7 +611,7 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
       ),
       FilledButton.icon(
         key: const Key('website-builtin-publish'),
-        onPressed: () => _publish(blocks),
+        onPressed: () => _publish(_anchored()),
         icon: const Icon(Icons.public),
         label: const Text('Publish'),
         style: FilledButton.styleFrom(backgroundColor: AppColors.secondary),
@@ -630,6 +671,8 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
             key: const Key('website-builtin-blocks'),
             blocks: blocks,
             onChanged: (list) => setState(() => _blocks = list),
+            linkSite: _linkSite,
+            pageRoute: _pageId.route,
             library: _library,
             albums: _albums,
             media: published,
@@ -685,6 +728,7 @@ class _WebsiteBuiltInPageEditorScreenState extends ConsumerState<WebsiteBuiltInP
                       children: [const Text('Fix before saving:', style: TextStyle(fontWeight: FontWeight.w600)), for (final e in errors) Text('• $e', style: const TextStyle(fontSize: 13))],
                     ),
                   ),
+                if (linkChecks.isNotEmpty) WebsiteLinkChecks(key: const Key('website-builtin-link-checks'), problems: linkChecks),
                 if (warnings.isNotEmpty)
                   Container(
                     key: const Key('website-builtin-warnings'),

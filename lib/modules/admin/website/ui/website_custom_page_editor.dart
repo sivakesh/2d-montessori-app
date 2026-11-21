@@ -6,10 +6,12 @@ import '../../../auth/models/app_user.dart';
 import '../../../public_website/content/blocks/album_source.dart';
 import '../../../public_website/content/blocks/block_registry.dart';
 import '../../../public_website/content/blocks/legacy_sections.dart';
+import '../../../public_website/content/blocks/section_anchors.dart';
 import '../../../public_website/content/blocks/website_block.dart';
 import '../../../public_website/content/translation/translation_coverage.dart';
 import '../../../public_website/content/website_content_models.dart';
 import '../../../public_website/content/website_custom_page.dart';
+import '../../../public_website/content/website_link_targets.dart';
 import '../../../public_website/content/website_page_style.dart';
 import '../../../public_website/public_routes.dart';
 import '../../../public_website/public_strings.dart';
@@ -22,6 +24,7 @@ import '../data/website_albums_service.dart';
 import '../../../public_website/content/website_site_layout.dart';
 import '../../../public_website/widgets/public_scaffold.dart';
 import 'page_builder/website_chrome_scope.dart';
+import 'page_builder/website_link_field.dart';
 import 'page_builder/website_visual_editor.dart';
 import 'website_content_editors.dart';
 import 'website_design_editors.dart';
@@ -203,6 +206,10 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
   SiteLayout? _siteLayout;
   List<CustomPage> _publishedPages = const [];
 
+  /// The website's pages and sections, for link fields and Links to check
+  /// (null: they couldn't be read; links are checked for format only).
+  WebsiteLinkSite? _linkSite;
+
   CustomPage? _draft;
   CustomPage? _live;
   List<WebsiteMedia> _library = const [];
@@ -279,7 +286,15 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
       final layout = await service.getSiteLayout(requesterRole: role);
       final languages = (await service.editorLanguageRegistry(requesterRole: role)).editorLanguages;
       final publishedPages = await service.publishedCustomPages(requesterRole: role);
+      // Only links use it: if it can't be read, the page still opens.
+      WebsiteLinkSite? linkSite;
+      try {
+        linkSite = await service.linkSite(requesterRole: role);
+      } catch (_) {
+        linkSite = null;
+      }
       if (!mounted) return;
+      _linkSite = linkSite;
       _layoutPublished = layout.live != null;
       _siteLayout = layout.draft ?? layout.live;
       _publishedPages = publishedPages;
@@ -655,6 +670,31 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
   /// archive — the existing service calls and their checks.
   void _restore() => _run(() => service.restoreCustomPage(requesterRole: role, actor: user, pageId: widget.pageId), 'Restored as an unpublished draft.');
 
+  /// [page] as publishing stores it: a section anchor visitors would
+  /// otherwise get differently stored (SectionAnchors.pinForVisitors); the
+  /// editor then holds what is stored.
+  CustomPage _anchored(CustomPage page) {
+    final blocks = page.blocks;
+    if (blocks == null) return page;
+    final anchored = SectionAnchors.pinForVisitors(blocks, BlockRegistry.withoutHidden);
+    if (identical(anchored, blocks)) return page;
+    setState(() => _blocks = anchored);
+    return page.copyWith(blocks: () => anchored);
+  }
+
+  /// Links on this page that lead to a page or section that doesn't exist
+  /// (or that visitors can't reach), and links on other pages to sections
+  /// of this page that are gone or hidden. [route]: the page's saved
+  /// address (what other pages link to).
+  List<String> _linkChecks(List<WebsiteBlock> blocks, String route) {
+    final site = _linkSite;
+    if (site == null) return const [];
+    return [
+      ...site.withPage(route, blocks).linkProblems(blocks, currentRoute: route),
+      ...site.brokenElsewhere(route, blocks),
+    ];
+  }
+
   void _saveDraft(CustomPage page, CustomPage? live) => _run(
         () => service.saveCustomPageDraft(requesterRole: role, actor: user, page: page),
         live == null ? 'Draft saved. It is not on the website yet.' : 'Draft saved. Visitors still see the published version.',
@@ -663,6 +703,7 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
   /// Publishes [page]; over a published page, only once confirmed.
   Future<void> _publish(CustomPage page) async {
     if (_live != null && !await confirmReplacePublished(const Key('website-custom-publish-confirm'))) return;
+    page = _anchored(page);
     // Publishing brings album galleries up to date (the service does too);
     // the editor shows what is published.
     if (page.blocks case final blocks? when AlbumGalleries.anyUsesAlbums(blocks)) {
@@ -775,6 +816,7 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
     final previewingLive = _previewSource == WebsitePreviewSource.live;
     final published = {for (final m in _library) if (m.isPublished) m.id: m};
     final warnings = _blockWarnings(_blocks!);
+    final linkChecks = _linkChecks(_blocks!, draft.route);
     final sources = TranslatableSources.forCustomPage(page);
     final title = page.title.en.trim().isEmpty ? 'Page' : page.title.en.trim();
     final chrome = PublicSiteChrome.resolve(_siteLayout, _publishedPages);
@@ -837,6 +879,8 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
                     ..._statusChips(draft, live, unsaved),
                     if (errors.isNotEmpty && !draft.archived)
                       WebsiteStatusChip(key: const Key('website-custom-fix-count'), label: '${errors.length} to fix', color: const Color(0xFFB3261E)),
+                    if (linkChecks.isNotEmpty && !draft.archived)
+                      WebsiteStatusChip(key: const Key('website-custom-link-count'), label: '${linkChecks.length} link${linkChecks.length == 1 ? '' : 's'} to check', color: const Color(0xFF8A6A33)),
                     if (narrow) ...[
                       WebsiteLanguagePicker(languages: _languages, selected: _previewLanguage, onChanged: (l) => setState(() => _previewLanguage = l), keyPrefix: 'website-preview'),
                       ..._mainActions(draft, live, page),
@@ -882,6 +926,8 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
                 siteFooter: WebsiteChromeScope(chrome: chrome, language: _previewLanguage, child: const PublicFooter()),
                 siteChromeInfo: (part) => openSiteDesignButton(context, service: service, user: user, onReturn: _reloadSiteLayout),
                 onChanged: (list) => setState(() => _blocks = list),
+                linkSite: _linkSite,
+                pageRoute: draft.route,
                 library: _library,
                 albums: _albums,
                 media: published,
@@ -903,7 +949,11 @@ class _WebsiteCustomPageEditorScreenState extends ConsumerState<WebsiteCustomPag
                 ),
                 checks: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [?_errorsBox(errors, draft), ?_warningsBox(warnings, draft)],
+                  children: [
+                    ?_errorsBox(errors, draft),
+                    if (linkChecks.isNotEmpty && !draft.archived) WebsiteLinkChecks(key: const Key('website-custom-link-checks'), problems: linkChecks),
+                    ?_warningsBox(warnings, draft),
+                  ],
                 ),
               ),
             ),
