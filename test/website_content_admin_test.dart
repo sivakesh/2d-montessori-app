@@ -418,7 +418,10 @@ void main() {
       expect(find.byKey(Key('website-media-${media.id}')), findsOneWidget);
       expect(find.text('Draft'), findsOneWidget);
 
+      // A card opens the image's details; Edit details opens its editor.
       await tapAndSettle(tester, find.byKey(Key('website-media-${media.id}')));
+      expect(find.byKey(const Key('website-media-details')), findsOneWidget);
+      await tapAndSettle(tester, find.byKey(const Key('website-media-details-edit')));
       expect(find.byKey(const Key('website-media-crops')), findsOneWidget);
       await tapAndSettle(tester, find.byKey(const Key('website-media-publish')));
       expect(find.textContaining('alt text'), findsWidgets, reason: 'refused without alt text');
@@ -441,7 +444,11 @@ void main() {
       final b = await upload(publish: true);
       await pumpScreen(tester, 'admin', WebsiteContentScreen(service: service));
       await tapAndSettle(tester, find.byKey(const Key('website-tab-gallery')));
+      // The keyboard-accessible Move menu; the new order is saved only with Save order.
+      await tapAndSettle(tester, find.byKey(Key('website-gallery-move-${a.id}')));
       await tapAndSettle(tester, find.byKey(Key('website-gallery-down-${a.id}')));
+      expect((await publicRepository().publishedMedia()).map((m) => m.id), [a.id, b.id], reason: 'not saved yet');
+      await tapAndSettle(tester, find.byKey(const Key('website-gallery-save')));
       expect((await publicRepository().publishedMedia()).map((m) => m.id), [b.id, a.id]);
     });
 

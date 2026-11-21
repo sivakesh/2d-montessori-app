@@ -18,6 +18,7 @@ import 'website_built_in_page_editor.dart';
 import 'website_content_editors.dart';
 import 'website_custom_page_editor.dart';
 import 'website_editor_settings_card.dart';
+import 'website_gallery_order.dart';
 import 'website_languages_editor.dart';
 import 'website_media_library.dart';
 import 'website_publishing_manager_screen.dart';
@@ -139,6 +140,15 @@ class _WebsiteContentBodyState extends ConsumerState<_WebsiteContentBody> with W
   List<WebsiteAlbum> _albums = const [];
   String? _albumsError;
 
+  /// The images of the latest upload (shown first in the library).
+  Set<String> _recentlyUploaded = const {};
+
+  /// Gallery order: the shown images in the order being arranged (null:
+  /// the saved order), and whether it is being saved. Kept here, so
+  /// switching tabs never loses it.
+  List<String>? _galleryDraft;
+  bool _savingGallery = false;
+
   @override
   void initState() {
     super.initState();
@@ -177,6 +187,9 @@ class _WebsiteContentBodyState extends ConsumerState<_WebsiteContentBody> with W
         _albums = albums;
         _albumsError = albumsError;
         _loadError = null;
+        // An unsaved gallery order survives a reload (images gone leave it).
+        _galleryDraft = WebsiteGalleryOrder.reconcile(_gallery(media), _galleryDraft);
+        _recentlyUploaded = {for (final id in _recentlyUploaded) if (media.any((m) => m.id == id)) id};
       });
     } catch (e) {
       if (mounted) setState(() => _loadError = e);
@@ -202,7 +215,10 @@ class _WebsiteContentBodyState extends ConsumerState<_WebsiteContentBody> with W
     }
     final uploaded = await showBulkUpload(context, service: service, user: user, files: files, albums: _albums);
     if (!mounted) return;
-    setState(() => _uploading = false);
+    setState(() {
+      _uploading = false;
+      if (uploaded.isNotEmpty) _recentlyUploaded = {...uploaded};
+    });
     await _load();
     if (uploaded.length == 1 && files.length == 1 && mounted) {
       final media = _media?.where((m) => m.id == uploaded.single).firstOrNull;
@@ -277,25 +293,57 @@ class _WebsiteContentBodyState extends ConsumerState<_WebsiteContentBody> with W
     await _load();
   }
 
-  Future<void> _move(List<WebsiteMedia> gallery, int from, int to) async {
-    if (to < 0 || to >= gallery.length || from == to) return;
-    final reordered = [...gallery];
-    final item = reordered.removeAt(from);
-    reordered.insert(to, item);
-    setState(() {
-      // Optimistic: show the new order straight away.
-      final others = _media!.where((m) => !m.inGallery).toList();
-      _media = [...reordered, ...others];
-    });
-    final ok = await attempt(() => service.reorderGallery(requesterRole: role, actor: user, orderedIds: [for (final m in reordered) m.id]));
-    if (ok) refreshPublicSite();
+  /// Every image marked for the gallery, in its saved order.
+  static List<WebsiteMedia> _gallery(List<WebsiteMedia> media) => [for (final m in media) if (m.inGallery) m];
+
+  /// Saves the arranged gallery order (the images visitors don't see keep
+  /// their places). On failure the arrangement is kept to try again.
+  Future<void> _saveGallery() async {
+    final draft = _galleryDraft;
+    final media = _media;
+    if (draft == null || media == null || _savingGallery) return;
+    setState(() => _savingGallery = true);
+    final ok = await attempt(
+      () => service.reorderGallery(requesterRole: role, actor: user, orderedIds: WebsiteGalleryOrder.orderToSave(_gallery(media), draft)),
+      success: 'Gallery order saved. Visitors see the new order.',
+    );
+    if (ok) {
+      refreshPublicSite();
+      setState(() => _galleryDraft = null);
+    }
     await _load();
+    if (mounted) setState(() => _savingGallery = false);
   }
+
+  Future<bool> _confirmLeaveGallery() async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Discard the new gallery order?'),
+          content: const Text('The gallery order you arranged isn’t saved. Visitors keep seeing the saved order.'),
+          actions: [
+            TextButton(key: const Key('website-gallery-leave-cancel'), onPressed: () => Navigator.pop(context, false), child: const Text('Keep arranging')),
+            FilledButton(key: const Key('website-gallery-leave-confirm'), onPressed: () => Navigator.pop(context, true), child: const Text('Discard')),
+          ],
+        ),
+      ) ==
+      true;
 
   @override
   Widget build(BuildContext context) {
     final media = _media;
-    return DefaultTabController(
+    // Leaving with an unsaved gallery order asks first.
+    return PopScope(
+      canPop: _galleryDraft == null,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final navigator = Navigator.of(context);
+        if (await _confirmLeaveGallery() && mounted) {
+          setState(() => _galleryDraft = null);
+          navigator.pop();
+        }
+      },
+      child: DefaultTabController(
       length: 5,
       child: Scaffold(
         backgroundColor: Colors.grey[50],
@@ -314,7 +362,7 @@ class _WebsiteContentBodyState extends ConsumerState<_WebsiteContentBody> with W
             tabAlignment: TabAlignment.start,
             tabs: [
               const Tab(key: Key('website-tab-media'), text: 'Media library'),
-              const Tab(key: Key('website-tab-gallery'), text: 'Gallery order'),
+              Tab(key: const Key('website-tab-gallery'), text: _galleryDraft == null ? 'Gallery order' : 'Gallery order •'),
               const Tab(key: Key('website-tab-pages'), text: 'Pages'),
               const Tab(key: Key('website-tab-layout'), text: 'Site layout'),
               // Shown whatever the editing languages ([multilingualEditing]):
@@ -342,12 +390,20 @@ class _WebsiteContentBodyState extends ConsumerState<_WebsiteContentBody> with W
                         onUpload: _upload,
                         onOpen: _openMedia,
                         note: const _PrivacyNote(),
+                        recentlyUploaded: _recentlyUploaded,
                         onChanged: ({bool publicChange = false}) async {
                           if (publicChange) refreshPublicSite();
                           await _load();
                         },
                       ),
-                      _GalleryOrderTab(gallery: [for (final m in media) if (m.inGallery) m], onMove: _move),
+                      WebsiteGalleryOrderTab(
+                        gallery: _gallery(media),
+                        draft: _galleryDraft,
+                        saving: _savingGallery,
+                        onChanged: (order) => setState(() => _galleryDraft = WebsiteGalleryOrder.reconcile(_gallery(media), order) == null ? null : order),
+                        onSave: _saveGallery,
+                        onDiscard: () => setState(() => _galleryDraft = null),
+                      ),
                       _PagesTab(
                         settings: WebsiteEditorSettingsCard(service: service.editorSettings, user: user),
                         pages: _pages,
@@ -364,6 +420,7 @@ class _WebsiteContentBodyState extends ConsumerState<_WebsiteContentBody> with W
                       _LanguagesTab(languages: _languages, onOpen: _openLanguages),
                     ],
                   ),
+      ),
       ),
     );
   }
@@ -474,93 +531,6 @@ class _PrivacyNote extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _GalleryOrderTab extends StatelessWidget {
-  const _GalleryOrderTab({required this.gallery, required this.onMove});
-
-  final List<WebsiteMedia> gallery;
-  final Future<void> Function(List<WebsiteMedia> gallery, int from, int to) onMove;
-
-  @override
-  Widget build(BuildContext context) {
-    if (gallery.isEmpty) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text('No gallery images yet. Images marked “Show in gallery” appear here.', textAlign: TextAlign.center),
-        ),
-      );
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
-          child: Text(
-            'Drag, or use the arrows, to set the order. Only published images appear on the website.',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-          ),
-        ),
-        Expanded(
-          child: ReorderableListView.builder(
-            padding: const EdgeInsets.all(16),
-            buildDefaultDragHandles: false,
-            itemCount: gallery.length,
-            onReorder: (from, to) => onMove(gallery, from, to > from ? to - 1 : to),
-            itemBuilder: (context, i) {
-              final item = gallery[i];
-              return Card(
-                key: Key('website-gallery-${item.id}'),
-                color: AppColors.card,
-                margin: const EdgeInsets.only(bottom: 8),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                  child: Row(
-                    children: [
-                      ReorderableDragStartListener(
-                        index: i,
-                        child: const Padding(padding: EdgeInsets.all(8), child: Icon(Icons.drag_indicator, color: Colors.grey)),
-                      ),
-                      WebsiteMediaThumb(media: item, size: 48),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              item.caption.en.isNotEmpty ? item.caption.en : (item.alt.en.isNotEmpty ? item.alt.en : 'Untitled image'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                            const SizedBox(height: 4),
-                            WebsiteStatusChip.forMedia(item.status),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        key: Key('website-gallery-up-${item.id}'),
-                        tooltip: 'Move up',
-                        onPressed: i == 0 ? null : () => onMove(gallery, i, i - 1),
-                        icon: const Icon(Icons.arrow_upward),
-                      ),
-                      IconButton(
-                        key: Key('website-gallery-down-${item.id}'),
-                        tooltip: 'Move down',
-                        onPressed: i == gallery.length - 1 ? null : () => onMove(gallery, i, i + 1),
-                        icon: const Icon(Icons.arrow_downward),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
     );
   }
 }
