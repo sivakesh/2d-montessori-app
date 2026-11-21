@@ -121,6 +121,10 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
   /// Linked children whose profile couldn't be shown (ParentFamily).
   int _unavailableChildren = 0;
 
+  /// The children (or the classes) couldn't be read: the dashboard can't tell
+  /// whether any are linked, so it says so with Retry — never "no children".
+  bool _familyError = false;
+
   /// The child whose own dashboard is shown (or, on the family overview,
   /// the one last opened). Kept across tabs and refreshes while linked.
   String _selectedChildId = '';
@@ -150,6 +154,11 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
   /// though both children belong to the same parent account.
   List<AdminNotificationModel> _parentNotifications = const [];
   bool _notificationsError = false;
+
+  /// A parent account whose lookup succeeded and found no linked child:
+  /// it has no notification access — none are fetched, shown or opened.
+  /// Never set while loading or after a failed lookup.
+  bool _unlinkedParent = false;
 
   /// Every linked child's leave history, resolved server-side by
   /// LeaveService.getStudentRequestsForParent (never trusts a client-
@@ -184,16 +193,39 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
   }
 
   Future<void> _loadDashboard() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _familyError = false;
+      _unlinkedParent = false;
+    });
     final user = ref.read(currentUserProvider);
     final userId = user?.id ?? '';
+    // No session user yet (it is still being set): which children are
+    // linked can't be known, so the dashboard keeps loading and loads once
+    // the user is set (see build), rather than showing "no children".
+    if (userId.isEmpty) return;
 
-    final family = await _parentService.getFamily(userId);
+    final ParentFamily family;
+    final List<QueryDocumentSnapshot<Map<String, dynamic>>> classes;
+    try {
+      family = await _parentService.getFamily(userId);
+      classes = await _classService.getClasses();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _linked = const [];
+        _children = const [];
+        _unavailableChildren = 0;
+        _familyError = true;
+        _loading = false;
+      });
+      return;
+    }
     final linkedChildren = family.children;
     final children = [for (final c in linkedChildren) c.student];
+    final unlinkedParent = (user?.role ?? '').toLowerCase() == 'parent' && linkedChildren.isEmpty && family.unavailable == 0;
     final linkedById = {for (final c in linkedChildren) c.student.id: c};
     final fileService = linkedChildren.any((c) => c.fromProjection) ? ParentFileService(parentUserId: userId, firestore: _parentService.firestore, save: widget.fileSaver) : null;
-    final classes = await _classService.getClasses();
     final classNames = <String, String>{
       for (final doc in classes) doc.id: doc.data()['name']?.toString() ?? '-',
     };
@@ -230,19 +262,22 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
     // loading, and never leaves the user stuck on an infinite spinner.
     List<AdminNotificationModel> parentNotifications = const [];
     var notificationsError = false;
-    try {
-      // Only notices this parent may receive are queried — never ones
-      // targeted at other students (AdminNotificationService.
-      // getNotificationsForParent); per-child relevance is still decided
-      // at build time below.
-      parentNotifications = await _notificationService
-          .getNotificationsForParent(
-            parentUserId: userId,
-            childStudentIds: {for (final c in children) c.id},
-            childClassIds: {for (final c in children) if (c.classId.isNotEmpty) c.classId},
-          );
-    } catch (_) {
-      notificationsError = true;
+    // An unlinked parent has no notification access: nothing is queried.
+    if (!unlinkedParent) {
+      try {
+        // Only notices this parent may receive are queried — never ones
+        // targeted at other students (AdminNotificationService.
+        // getNotificationsForParent); per-child relevance is still decided
+        // at build time below.
+        parentNotifications = await _notificationService
+            .getNotificationsForParent(
+              parentUserId: userId,
+              childStudentIds: {for (final c in children) c.id},
+              childClassIds: {for (final c in children) if (c.classId.isNotEmpty) c.classId},
+            );
+      } catch (_) {
+        notificationsError = true;
+      }
     }
 
     // Fetched the same defensive way as notifications above — a transient
@@ -269,6 +304,7 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
       _classAcademicYears = classAcademicYears;
       _parentNotifications = parentNotifications;
       _notificationsError = notificationsError;
+      _unlinkedParent = unlinkedParent;
       _studentLeaveRequests = studentLeaveRequests;
       _leaveRequestsError = leaveRequestsError;
       // The selected child stays selected while still linked.
@@ -407,6 +443,9 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
   }
 
   void _openAllNotifications() {
+    // No notification access for an unlinked parent: stays on the dashboard
+    // (which shows the not-linked message), whatever the way in.
+    if (_unlinkedParent) return;
     final childStudentIds = _children.map((c) => c.id).toSet();
     final childClassIds = _children
         .map((c) => c.classId)
@@ -632,6 +671,10 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(currentUserProvider);
+    // Opened before the session user was set: load once it is.
+    ref.listen(currentUserProvider, (previous, next) {
+      if ((previous?.id ?? '').isEmpty && (next?.id ?? '').isNotEmpty) _loadDashboard();
+    });
     final isMobile =
         MediaQuery.of(context).size.width < AppSizes.mobileBreakpoint;
 
@@ -679,7 +722,7 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
                     childCount: _children.length,
                     viewingChild: !familyHome && _children.length > 1 ? selectedChild!.name : null,
                     updatedAt: _updatedAt,
-                    onOpenNotifications: _openAllNotifications,
+                    onOpenNotifications: _unlinkedParent ? null : _openAllNotifications,
                   ),
                   if (onHome && _children.isNotEmpty) ...[
                     const SizedBox(height: 16),
@@ -699,17 +742,23 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
                   ),
                   const SizedBox(height: 20),
                   if (_children.isEmpty) ...[
-                    if (_unavailableChildren > 0)
+                    if (_familyError)
+                      _FamilyLoadErrorCard(onRetry: _loadDashboard)
+                    else if (_unavailableChildren > 0)
                       ParentUnavailableChildrenNotice(count: _unavailableChildren)
                     else
-                      const _NoChildrenLinkedCard(),
-                    const SizedBox(height: 20),
-                    _NotificationsSection(
-                      notifications: const [],
-                      hasError: _notificationsError,
-                      onViewAll: _openAllNotifications,
-                      onRetry: _loadDashboard,
-                    ),
+                      // Confirmed: the lookup succeeded and no child is
+                      // linked to this parent account.
+                      _NoChildrenLinkedCard(parent: (user?.role ?? '').toLowerCase() == 'parent'),
+                    if (!_unlinkedParent) ...[
+                      const SizedBox(height: 20),
+                      _NotificationsSection(
+                        notifications: const [],
+                        hasError: _notificationsError,
+                        onViewAll: _openAllNotifications,
+                        onRetry: _loadDashboard,
+                      ),
+                    ],
                   ] else if (familyHome)
                     ..._familyOverview()
                   else
@@ -796,35 +845,106 @@ class _ParentDashboardState extends ConsumerState<ParentDashboard> {
   }
 }
 
+/// No child is linked to the account (the lookup succeeded). A parent is
+/// told their login worked and the school links their child; any other
+/// account shown this dashboard keeps the earlier wording.
 class _NoChildrenLinkedCard extends StatelessWidget {
-  const _NoChildrenLinkedCard();
+  const _NoChildrenLinkedCard({required this.parent});
+
+  final bool parent;
+
+  static const title = 'Your account is not linked to a student yet';
+  static const body = [
+    'Your login was successful, but we could not find any children linked to your account.',
+    'Please contact the school administrator to register your parent details and link your child to your account.',
+    "Once your account is linked, you will be able to view your child's dashboard, attendance, fees and other available information here.",
+  ];
 
   @override
   Widget build(BuildContext context) {
     return Card(
+      key: const Key('parent-no-children'),
       elevation: 0,
       color: AppColors.card,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      child: const Padding(
-        padding: EdgeInsets.all(24),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
         child: Column(
           children: [
-            Icon(
+            const Icon(
               Icons.family_restroom_outlined,
               size: 36,
               color: AppColors.textSecondary,
             ),
-            SizedBox(height: 12),
-            Text(
-              'No children linked to your account yet.',
+            const SizedBox(height: 12),
+            if (parent) ...[
+              const Text(
+                title,
+                key: Key('parent-no-children-title'),
+                textAlign: TextAlign.center,
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+              ),
+              for (final line in body) ...[
+                const SizedBox(height: 8),
+                Text(line, textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+              ],
+            ] else ...[
+              const Text(
+                'No children linked to your account yet.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                "Ask the school office to link your child's profile to this account.",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The linked children couldn't be read (a network or access problem):
+/// said plainly, with Retry. Never "no children".
+class _FamilyLoadErrorCard extends StatelessWidget {
+  const _FamilyLoadErrorCard({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      key: const Key('parent-family-error'),
+      elevation: 0,
+      color: AppColors.card,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            const Icon(Icons.cloud_off_outlined, size: 36, color: AppColors.textSecondary),
+            const SizedBox(height: 12),
+            const Text(
+              "Your children's details couldn't be loaded right now.",
               textAlign: TextAlign.center,
               style: TextStyle(fontWeight: FontWeight.w600),
             ),
-            SizedBox(height: 6),
-            Text(
-              "Ask the school office to link your child's profile to this account.",
+            const SizedBox(height: 6),
+            const Text(
+              'Check your connection and try again.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              key: const Key('parent-family-retry'),
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
             ),
           ],
         ),

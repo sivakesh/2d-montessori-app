@@ -258,7 +258,8 @@ void main() {
 
     testWidgets('no linked children: a clear empty state', (tester) async {
       await pump(tester, app(await family(), '9000000077'));
-      expect(find.text('No children linked to your account yet.'), findsOneWidget);
+      // The approved wording for a parent whose account isn't linked yet.
+      expect(find.text('Your account is not linked to a student yet'), findsOneWidget);
       expect(tile('outstanding'), findsNothing);
       expect(tester.takeException(), isNull);
     });

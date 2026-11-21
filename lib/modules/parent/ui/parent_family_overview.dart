@@ -67,7 +67,9 @@ class ParentFamilyHeader extends StatelessWidget {
 
   final String parentName;
   final int childCount;
-  final VoidCallback onOpenNotifications;
+  /// Null: no notification access (a parent with no linked child), so no
+  /// button.
+  final VoidCallback? onOpenNotifications;
 
   /// When the figures below were loaded (pull down to refresh).
   final DateTime? updatedAt;
@@ -105,7 +107,7 @@ class ParentFamilyHeader extends StatelessWidget {
               ],
             ),
           ),
-          IconButton(
+          if (onOpenNotifications != null) IconButton(
             key: notificationsKey,
             tooltip: 'Notifications',
             onPressed: onOpenNotifications,

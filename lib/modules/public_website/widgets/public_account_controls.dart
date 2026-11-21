@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../auth/models/app_user.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../auth/providers/auth_session_provider.dart';
 import '../../auth/providers/auth_state_provider.dart';
 import '../../auth/providers/user_loader_provider.dart';
 import '../public_routes.dart';
@@ -103,6 +104,77 @@ final publicAccountStateProvider = Provider<PublicAccountState>((ref) {
       );
 });
 
+/// Opens Dashboard ([route]) from the public site.
+///
+/// For a session Firebase restored (no session user yet: [route] is `/app`,
+/// AuthGate), the profile was already loaded for the public header before
+/// AuthGate existed, so AuthGate's session sync — which applies the profile
+/// only when it next loads — would never set the session user, and the
+/// dashboard would wait for it. So, in order:
+///
+/// 1. `/app` opens (AuthGate builds and creates its session sync);
+/// 2. after a frame in which that sync exists ([ProviderContainer.exists]),
+///    the existing profile lookup is run again (`userLoaderProvider`
+///    invalidated) — never during a build, and only once;
+/// 3. the sync applies the reloaded profile, exactly as on a refresh of
+///    `/app`, and the role's dashboard shows.
+///
+/// Nothing is reloaded when the session user is already set (a session from
+/// this tab's login, or the dev login: [route] is `/dashboard`), or when it
+/// was set meanwhile. The authentication code itself is used unchanged.
+void openPublicDashboard(BuildContext context, String route) {
+  final container = ProviderScope.containerOf(context, listen: false);
+  Navigator.of(context).pushNamed(route);
+  if (route != PublicRoutes.management || container.read(currentUserProvider) != null) return;
+  RestoredSessionDashboard.reloadProfileOnceAuthGateIsReady(container);
+}
+
+/// The profile reload after Dashboard is opened for a restored session
+/// ([openPublicDashboard]).
+class RestoredSessionDashboard {
+  RestoredSessionDashboard._();
+
+  /// Frames to wait for AuthGate to appear before giving up (it appears in
+  /// the first frame after `/app` is opened; this covers a slow device).
+  static const maxFrames = 120;
+
+  /// Containers with a reload waiting (a second click waits for the first).
+  static final _waiting = Expando<bool>('restored-session-dashboard');
+
+  /// How many times the profile lookup was run again this way (tests).
+  @visibleForTesting
+  static int reloads = 0;
+
+  static void reloadProfileOnceAuthGateIsReady(ProviderContainer container) {
+    if (_waiting[container] == true) return;
+    _waiting[container] = true;
+    var frames = 0;
+    void check(Duration _) {
+      // Set meanwhile (by the sync, or a login): nothing to reload.
+      if (container.read(currentUserProvider) != null) {
+        _waiting[container] = null;
+        return;
+      }
+      if (container.exists(authSessionSyncProvider)) {
+        _waiting[container] = null;
+        reloads++;
+        container.invalidate(userLoaderProvider);
+        return;
+      }
+      if (++frames >= maxFrames) {
+        // AuthGate never appeared (e.g. the visitor went straight back).
+        _waiting[container] = null;
+        return;
+      }
+      WidgetsBinding.instance.addPostFrameCallback(check);
+      WidgetsBinding.instance.scheduleFrame();
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback(check);
+    WidgetsBinding.instance.scheduleFrame();
+  }
+}
+
 /// Where the controls sit, which sets their look.
 enum PublicAccountControlsStyle { utilityBar, menu, footer }
 
@@ -188,7 +260,7 @@ class PublicAccountControls extends ConsumerWidget {
               key: Key(dashboardKey),
               icon: Icons.dashboard_outlined,
               label: strings.dashboard,
-              onPressed: () => Navigator.of(context).pushNamed(route),
+              onPressed: () => openPublicDashboard(context, route),
             ),
           button(key: Key(logoutKey), icon: Icons.logout_rounded, label: strings.logout, onPressed: () => _logout(context, ref)),
         ],
