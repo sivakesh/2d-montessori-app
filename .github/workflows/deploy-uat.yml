@@ -1,0 +1,198 @@
+name: 🧪 Deploy to Firebase (UAT — montessori-app-uat)
+
+# Independent UAT installation: builds the same application as DEV and
+# deploys Firebase Hosting ONLY to the UAT project montessori-app-uat.
+#
+# - Manual only (workflow_dispatch), from main, through the GitHub
+#   Environment "uat" (required reviewer approval, main-only branch rule).
+# - Uses only the UAT environment secret FIREBASE_SERVICE_ACCOUNT_UAT, which
+#   must belong to github-uat-deployer@montessori-app-uat. No DEV or
+#   production credential is referenced, so none can be used as a fallback.
+# - Never deploys Firestore/Storage rules, indexes or Functions.
+# - The app is built with DEPLOY_TARGET=hosted, so at runtime it reads its
+#   Firebase configuration from this site's /__/firebase/init.json and
+#   refuses to start unless that is for EXPECTED_PROJECT_ID.
+#
+# For a future school installation, copy with a different UAT_PROJECT_ID,
+# expected service account and environment (or turn this into a reusable
+# workflow); nothing else is project-specific.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-uat-montessori-app-uat
+  cancel-in-progress: false
+
+env:
+  UAT_PROJECT_ID: montessori-app-uat
+  UAT_SITE_URL: https://montessori-app-uat.web.app
+  UAT_DEPLOYER_EMAIL: github-uat-deployer@montessori-app-uat.iam.gserviceaccount.com
+  FLUTTER_VERSION: 3.41.6
+  FIREBASE_TOOLS_VERSION: 15.35.0
+
+jobs:
+  deploy_uat:
+    name: Build and deploy Hosting to montessori-app-uat
+    runs-on: ubuntu-latest
+    environment: uat
+    timeout-minutes: 30
+
+    steps:
+      - name: Require main branch
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::UAT deploys run only from main (this run: ${GITHUB_REF})."
+            exit 1
+          fi
+
+      - name: Check deployment target configuration
+        run: |
+          # The target is fixed here; anything else stops the run.
+          if [ "${UAT_PROJECT_ID}" != "montessori-app-uat" ] \
+            || [ "${UAT_SITE_URL}" != "https://montessori-app-uat.web.app" ] \
+            || [ "${UAT_DEPLOYER_EMAIL}" != "github-uat-deployer@montessori-app-uat.iam.gserviceaccount.com" ]; then
+            echo "::error::The UAT target configuration has been changed."
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Check Firebase configuration is Hosting-only
+        run: |
+          # firebase.json must hold only the Flutter metadata and one Hosting
+          # configuration for the project's default site (no rules, indexes,
+          # Storage or Functions, no site/target override).
+          jq -e '
+            (keys - ["flutter", "hosting"] | length == 0)
+            and (.hosting | type == "object")
+            and (.hosting.public == "build/web")
+            and (.hosting | has("site") | not)
+            and (.hosting | has("target") | not)
+          ' firebase.json > /dev/null || {
+            echo "::error::firebase.json is not a Hosting-only configuration for the default site."
+            exit 1
+          }
+
+      - name: Validate UAT service account (nothing printed)
+        env:
+          SA_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_UAT }}
+        run: |
+          if [ -z "${SA_JSON}" ]; then
+            echo "::error::The uat environment secret FIREBASE_SERVICE_ACCOUNT_UAT is missing."
+            exit 1
+          fi
+          printf '%s' "${SA_JSON}" | jq -e \
+            --arg project "${UAT_PROJECT_ID}" \
+            --arg email "${UAT_DEPLOYER_EMAIL}" '
+              type == "object"
+              and .type == "service_account"
+              and .project_id == $project
+              and .client_email == $email
+              and ((.private_key // "") | length > 0)
+            ' > /dev/null 2>&1 || {
+            echo "::error::FIREBASE_SERVICE_ACCOUNT_UAT is not a valid key for ${UAT_DEPLOYER_EMAIL} in ${UAT_PROJECT_ID}."
+            exit 1
+          }
+          echo "UAT service account verified."
+
+      - name: Setup Flutter ${{ env.FLUTTER_VERSION }}
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Flutter Web (APP_ENV=prod, DEPLOY_TARGET=hosted, EXPECTED_PROJECT_ID=montessori-app-uat)
+        run: |
+          flutter build web --release \
+            --dart-define=APP_ENV=prod \
+            --dart-define=DEPLOY_TARGET=hosted \
+            --dart-define=EXPECTED_PROJECT_ID="${UAT_PROJECT_ID}"
+
+      - name: Install Firebase CLI ${{ env.FIREBASE_TOOLS_VERSION }}
+        run: npm install -g "firebase-tools@${FIREBASE_TOOLS_VERSION}"
+
+      - name: Deploy Hosting to montessori-app-uat
+        env:
+          SA_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_UAT }}
+        run: |
+          # The CLI needs the key as a file: private (0600), outside the
+          # repository, removed by the cleanup step whatever happens.
+          SA_FILE="${RUNNER_TEMP}/uat-deployer.json"
+          ( umask 077; printf '%s' "${SA_JSON}" > "${SA_FILE}" )
+          export GOOGLE_APPLICATION_CREDENTIALS="${SA_FILE}"
+          export NO_COLOR=1
+
+          set +e
+          firebase deploy --only hosting --project "${UAT_PROJECT_ID}" --non-interactive 2>&1 | tee "${RUNNER_TEMP}/firebase-deploy.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "${status}" -ne 0 ]; then
+            echo "::error::firebase deploy failed (exit ${status})."
+            exit "${status}"
+          fi
+
+          # The CLI must have released to the UAT site, and only to it.
+          # (Here-strings, not pipes into grep -q, so pipefail can't turn an
+          # early grep exit into a wrong result.)
+          log="$(sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' "${RUNNER_TEMP}/firebase-deploy.log")"
+          if ! grep -q "hosting\[${UAT_PROJECT_ID}\]: release complete" <<< "${log}"; then
+            echo "::error::The deploy log does not show a completed release to hosting[${UAT_PROJECT_ID}]."
+            exit 1
+          fi
+          sites="$(grep -oE 'hosting\[[^]]+\]' <<< "${log}" | sort -u || true)"
+          if [ "${sites}" != "hosting[${UAT_PROJECT_ID}]" ]; then
+            echo "::error::The deploy reported Hosting sites other than ${UAT_PROJECT_ID}: ${sites//$'\n'/, }"
+            exit 1
+          fi
+
+      - name: Verify hosted Firebase configuration
+        run: |
+          url="${UAT_SITE_URL}/__/firebase/init.json"
+          body="${RUNNER_TEMP}/init.json"
+          for attempt in 1 2 3 4 5 6; do
+            meta="$(curl -sS -o "${body}" -w '%{http_code} %{content_type}' "${url}" || echo '000 none')"
+            code="${meta%% *}"
+            ctype="${meta#* }"
+            if [ "${code}" = "200" ]; then break; fi
+            echo "Attempt ${attempt}: HTTP ${code}; retrying in 10s."
+            sleep 10
+          done
+          if [ "${code}" != "200" ]; then
+            echo "::error::${url} returned HTTP ${code}."
+            exit 1
+          fi
+          media="$(tr 'A-Z' 'a-z' <<< "${ctype}" | cut -d';' -f1 | tr -d ' ')"
+          if [ "${media}" != "application/json" ]; then
+            echo "::error::${url} returned '${ctype}', not JSON."
+            exit 1
+          fi
+          # Checked without printing any value except the project id.
+          jq -e --arg project "${UAT_PROJECT_ID}" '
+            type == "object"
+            and .projectId == $project
+            and ([.apiKey, .appId, .messagingSenderId, .authDomain, .storageBucket]
+                 | all(type == "string" and length > 0))
+          ' "${body}" > /dev/null || {
+            echo "::error::${url} is not a complete Firebase configuration for ${UAT_PROJECT_ID}."
+            exit 1
+          }
+          echo "Hosted configuration verified: projectId=$(jq -r .projectId "${body}")"
+
+      - name: Remove temporary credential and files
+        if: always()
+        run: |
+          rm -f "${RUNNER_TEMP}/uat-deployer.json" "${RUNNER_TEMP}/firebase-deploy.log" "${RUNNER_TEMP}/init.json"
