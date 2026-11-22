@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/config/deploy_target.dart';
 import 'core/config/firebase_environment.dart';
 import 'core/config/firestore_emulator.dart';
+import 'core/config/hosted_firebase_startup.dart';
 import 'core/navigation/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'modules/auth/utils/recaptcha_web_view.dart';
@@ -15,7 +16,14 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Clean web addresses (`/pages/about`); old `/#/...` links still work.
   configurePublicUrlStrategy();
-  await Firebase.initializeApp(options: firebaseOptionsFor(currentDeployTarget));
+  if (currentDeployTarget == DeployTarget.hosted) {
+    // Hosted web build: the serving Firebase Hosting project's own
+    // configuration, checked against EXPECTED_PROJECT_ID; an error with
+    // Retry otherwise — never compiled options.
+    await initializeHostedFirebase();
+  } else {
+    await Firebase.initializeApp(options: firebaseOptionsFor(currentDeployTarget));
+  }
   // Development only: --dart-define=FIRESTORE_EMULATOR_HOST (never prod).
   connectFirestoreEmulatorIfConfigured(FirebaseFirestore.instance);
   registerRecaptchaView();

@@ -24,6 +24,9 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          # Pinned to the version the app is developed and tested with, so a
+          # new Flutter release can't change the build unannounced.
+          flutter-version: 3.41.6
           cache: true
 
       - name: Flutter version
@@ -32,8 +35,11 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build Flutter Web (APP_ENV=prod, DEPLOY_TARGET=dev)
-        run: flutter build web --release --dart-define=APP_ENV=prod --dart-define=DEPLOY_TARGET=dev
+      # DEPLOY_TARGET=hosted: the app reads its Firebase configuration from
+      # this project's Hosting (/__/firebase/init.json) and refuses to start
+      # unless it is for EXPECTED_PROJECT_ID -- never compiled options.
+      - name: Build Flutter Web (APP_ENV=prod, DEPLOY_TARGET=hosted, EXPECTED_PROJECT_ID=montessori-app-95988)
+        run: flutter build web --release --dart-define=APP_ENV=prod --dart-define=DEPLOY_TARGET=hosted --dart-define=EXPECTED_PROJECT_ID=montessori-app-95988
 
       - name: Install Firebase CLI
         run: npm install -g firebase-tools

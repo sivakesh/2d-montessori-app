@@ -13,5 +13,14 @@ FirebaseOptions firebaseOptionsFor(DeployTarget target) {
       return dev_options.DefaultFirebaseOptions.currentPlatform;
     case DeployTarget.prod:
       return prod_options.DefaultFirebaseOptionsProd.currentPlatform;
+    case DeployTarget.hosted:
+      // Hosted builds read the serving project's options at startup
+      // (hosted_firebase_startup.dart). There is deliberately no compiled
+      // fallback: a hosted build must never reach the DEV or production
+      // project by accident.
+      throw StateError(
+        'DEPLOY_TARGET "hosted" has no compiled Firebase options; they are '
+        'loaded from Firebase Hosting at startup.',
+      );
   }
 }
